@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Save, X, FileSpreadsheet, Truck, Calendar, Package, DollarSign, Check, Clock } from 'lucide-react';
+import { ArrowLeft, Pencil, Save, X, FileSpreadsheet, Truck, Package, Check, Clock } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Badge } from '../../components/ui/Badge';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 interface PODetail {
   id: string;
@@ -73,8 +73,6 @@ export default function PurchaseOrderDetail() {
   const [editingETA, setEditingETA] = useState(false);
   const [etaValue, setEtaValue] = useState('');
   const [savingETA, setSavingETA] = useState(false);
-
-  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   useEffect(() => {
     if (id) fetchPO();
@@ -195,36 +193,123 @@ export default function PurchaseOrderDetail() {
     setSavingETA(false);
   };
 
-  const advanceStatus = async () => {
-    if (!po) return;
-    const next: Record<string, string> = {
-      draft: 'ordered',
-      ordered: 'partially_received',
-      partially_received: 'closed',
-    };
-    const nextStatus = next[po.status];
-    if (!nextStatus) return;
-    setUpdatingStatus(true);
+  const [markingOrdered, setMarkingOrdered] = useState(false);
+
+  const markAsOrdered = async () => {
+    if (!po || po.status !== 'draft') return;
+    setMarkingOrdered(true);
     await supabase
       .from('purchase_orders')
-      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .update({ status: 'ordered', updated_at: new Date().toISOString() })
       .eq('id', po.id);
-    setPo((prev) => prev ? { ...prev, status: nextStatus } : prev);
-    setUpdatingStatus(false);
+    setPo((prev) => prev ? { ...prev, status: 'ordered' } : prev);
+    setMarkingOrdered(false);
   };
 
-  const exportPackingList = () => {
+  const exportPackingList = async () => {
     if (!po) return;
-    const rows = items.map((item) => ({
-      SKU: item.sku,
-      'Product Name': item.product_name,
-      Quantity: item.ordered_quantity,
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Packing List');
-    ws['!cols'] = [{ wch: 20 }, { wch: 40 }, { wch: 12 }];
-    XLSX.writeFile(wb, `packing-list-${po.po_number}.xlsx`);
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'ERP System';
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet('Packing List', {
+      pageSetup: { orientation: 'portrait' },
+    });
+
+    sheet.columns = [
+      { header: '', key: 'image', width: 12 },
+      { header: 'SKU', key: 'sku', width: 18 },
+      { header: 'Product Name', key: 'product_name', width: 40 },
+      { header: 'Ordered Qty', key: 'ordered_qty', width: 14 },
+      { header: 'Received Qty', key: 'received_qty', width: 14 },
+    ];
+
+    const headerRow = sheet.getRow(1);
+    headerRow.height = 24;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } } };
+    });
+
+    const ROW_HEIGHT = 60;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const rowIndex = i + 2;
+      const row = sheet.getRow(rowIndex);
+      row.height = ROW_HEIGHT;
+
+      row.getCell(1).value = null;
+      row.getCell('sku').value = item.sku;
+      row.getCell('product_name').value = item.product_name;
+      row.getCell('ordered_qty').value = item.ordered_quantity;
+      row.getCell('received_qty').value = item.received_quantity;
+
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        cell.alignment = { vertical: 'middle', horizontal: colNumber === 3 ? 'left' : 'center', wrapText: true };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } } };
+        if (i % 2 === 1) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+        }
+      });
+
+      if (item.product_image_url) {
+        try {
+          const isSupabaseUrl = item.product_image_url.includes(supabaseUrl);
+          const fetchUrl = isSupabaseUrl
+            ? item.product_image_url
+            : `${supabaseUrl}/functions/v1/image-proxy?url=${encodeURIComponent(item.product_image_url)}`;
+          const fetchHeaders: Record<string, string> = isSupabaseUrl
+            ? {}
+            : { Authorization: `Bearer ${supabaseAnonKey}` };
+          const res = await fetch(fetchUrl, { headers: fetchHeaders });
+          if (res.ok) {
+            const buf = await res.arrayBuffer();
+            const contentType = res.headers.get('content-type') || 'image/jpeg';
+            const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : 'jpeg';
+            const imageId = workbook.addImage({
+              buffer: buf,
+              extension: ext as 'jpeg' | 'png' | 'gif',
+            });
+            sheet.addImage(imageId, {
+              tl: { col: 0, row: i + 1 },
+              br: { col: 1, row: i + 2 },
+              editAs: 'oneCell',
+            });
+          }
+        } catch (err) {
+          console.warn(`Error fetching image for ${item.product_name}:`, err);
+        }
+      }
+    }
+
+    const totalsRowIndex = items.length + 2;
+    const totalsRow = sheet.getRow(totalsRowIndex);
+    totalsRow.height = 28;
+    totalsRow.getCell('product_name').value = 'TOTAL';
+    totalsRow.getCell('ordered_qty').value = items.reduce((s, i) => s + i.ordered_quantity, 0);
+    totalsRow.getCell('received_qty').value = items.reduce((s, i) => s + i.received_quantity, 0);
+    totalsRow.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { bold: true, size: 11 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = { top: { style: 'medium', color: { argb: 'FF3B82F6' } } };
+    });
+    totalsRow.getCell('product_name').alignment = { vertical: 'middle', horizontal: 'left' };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `packing-list-${po.po_number}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const getItemStatus = (item: POItem) => {
@@ -239,12 +324,6 @@ export default function PurchaseOrderDetail() {
   const formatDate = (d: string | null | undefined) => {
     if (!d) return '—';
     return new Date(d).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
-  };
-
-  const NEXT_STATUS_LABEL: Record<string, string> = {
-    draft: 'Mark as Ordered',
-    ordered: 'Mark as Partially Received',
-    partially_received: 'Mark as Closed',
   };
 
   if (loading) {
@@ -291,18 +370,18 @@ export default function PurchaseOrderDetail() {
             <FileSpreadsheet className="w-4 h-4" />
             Create Packing List
           </button>
-          {NEXT_STATUS_LABEL[po.status] && (
+          {po.status === 'draft' && (
             <button
-              onClick={advanceStatus}
-              disabled={updatingStatus}
+              onClick={markAsOrdered}
+              disabled={markingOrdered}
               className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
             >
-              {updatingStatus ? (
+              {markingOrdered ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <Check className="w-4 h-4" />
               )}
-              {NEXT_STATUS_LABEL[po.status]}
+              Mark as Ordered
             </button>
           )}
         </div>

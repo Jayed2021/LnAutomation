@@ -208,9 +208,15 @@ export default function ReceiveGoods() {
           performed_by: user.id
         });
 
+        const { data: currentItem } = await supabase
+          .from('purchase_order_items')
+          .select('received_quantity')
+          .eq('id', line.po_item_id)
+          .maybeSingle();
+        const previousReceived = currentItem?.received_quantity ?? 0;
         await supabase
           .from('purchase_order_items')
-          .update({ received_quantity: supabase.rpc('coalesce', {}) })
+          .update({ received_quantity: previousReceived + line.qty_quality_passed })
           .eq('id', line.po_item_id);
 
         if (line.qty_damaged > 0 && damagedLoc) {
@@ -240,9 +246,13 @@ export default function ReceiveGoods() {
         }
       }
 
-      const totalOrdered = selectedPO.items.reduce((s, i) => s + i.ordered_quantity, 0);
-      const totalChecked = receivingLines.reduce((s, l) => s + l.qty_checked, 0);
-      const newStatus = totalChecked >= totalOrdered ? 'closed' : 'partially_received';
+      const { data: updatedItems } = await supabase
+        .from('purchase_order_items')
+        .select('ordered_quantity, received_quantity')
+        .eq('po_id', selectedPO.id);
+      const totalOrdered = (updatedItems || []).reduce((s, i) => s + (i.ordered_quantity ?? 0), 0);
+      const totalReceived = (updatedItems || []).reduce((s, i) => s + (i.received_quantity ?? 0), 0);
+      const newStatus = totalReceived >= totalOrdered ? 'closed' : 'partially_received';
       await supabase.from('purchase_orders').update({ status: newStatus }).eq('id', selectedPO.id);
 
       setCompletedShipmentId(shipmentIdInput);

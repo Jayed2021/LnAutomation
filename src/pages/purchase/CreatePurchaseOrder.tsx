@@ -47,6 +47,7 @@ interface PaymentRow {
   amount_original: number;
   cnY_to_usd_rate: number;
   amount_usd_equivalent: number;
+  amount_bdt: number;
   remarks: string;
   files: PaymentFile[];
 }
@@ -61,11 +62,11 @@ const CURRENCIES = ['USD', 'CNY', 'BDT'];
 function computeUsdEquivalent(
   paymentCurrency: string,
   amountOriginal: number,
-  cnyToUsdRate: number,
+  usdToCnyRate: number,
   usdToBdt: string
 ): number {
   if (paymentCurrency === 'USD') return amountOriginal;
-  if (paymentCurrency === 'CNY') return amountOriginal * cnyToUsdRate;
+  if (paymentCurrency === 'CNY') return usdToCnyRate > 0 ? amountOriginal / usdToCnyRate : 0;
   if (paymentCurrency === 'BDT') {
     const rate = parseFloat(usdToBdt) || 110;
     return amountOriginal / rate;
@@ -289,6 +290,7 @@ export default function CreatePurchaseOrder() {
       amount_original: p.amount_original || 0,
       cnY_to_usd_rate: p.cny_to_usd_rate || getDefaultCnyToUsdRate(),
       amount_usd_equivalent: p.amount_usd_equivalent || 0,
+      amount_bdt: p.amount_bdt || 0,
       remarks: p.remarks || '',
       files: filesMap[p.id] || [],
     }));
@@ -523,6 +525,7 @@ export default function CreatePurchaseOrder() {
         amount_original: 0,
         cnY_to_usd_rate: getDefaultCnyToUsdRate(),
         amount_usd_equivalent: 0,
+        amount_bdt: 0,
         remarks: '',
         files: [],
       },
@@ -542,6 +545,9 @@ export default function CreatePurchaseOrder() {
             updated.cnY_to_usd_rate,
             usdToBdt
           );
+          if (updated.payment_currency === 'BDT') {
+            updated.amount_bdt = updated.amount_original;
+          }
         }
         return updated;
       })
@@ -606,6 +612,10 @@ export default function CreatePurchaseOrder() {
   }, 0);
 
   const totalPaidUSD = payments.reduce((s, p) => s + (p.amount_usd_equivalent || 0), 0);
+  const totalPaidBDT = payments.reduce((s, p) => {
+    if (p.payment_currency === 'BDT') return s + (p.amount_original || 0);
+    return s + (p.amount_bdt || 0);
+  }, 0);
   const balanceUSD = totalUSD - totalPaidUSD;
   const isPaymentSufficient = totalUSD > 0 && totalPaidUSD >= totalUSD;
 
@@ -709,7 +719,7 @@ export default function CreatePurchaseOrder() {
             supplier_id: selectedSupplierId,
             payment_date: payment.date,
             amount: payment.amount_original,
-            amount_bdt: payment.payment_currency === 'BDT' ? payment.amount_original : 0,
+            amount_bdt: payment.payment_currency === 'BDT' ? payment.amount_original : (payment.amount_bdt || 0),
             currency: payment.payment_currency,
             payment_currency: payment.payment_currency,
             amount_original: payment.amount_original,
@@ -1455,25 +1465,75 @@ export default function CreatePurchaseOrder() {
                         {payment.payment_currency === 'CNY' && (
                           <div className="grid grid-cols-3 gap-3 items-end">
                             <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1.5">CNY → USD Rate</label>
+                              <label className="block text-xs font-medium text-gray-500 mb-1.5">USD → CNY Rate</label>
                               <input
                                 type="number"
                                 step="0.0001"
                                 min="0"
                                 value={payment.cnY_to_usd_rate || ''}
                                 onChange={(e) => updatePayment(payment.id, 'cnY_to_usd_rate', parseFloat(e.target.value) || 0)}
-                                placeholder="e.g. 0.1379"
+                                placeholder="e.g. 7.25"
                                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               />
-                              <p className="text-xs text-gray-400 mt-1">1 CNY = ? USD</p>
+                              <p className="text-xs text-gray-400 mt-1">1 USD = ? CNY</p>
                             </div>
-                            <div className="col-span-2">
-                              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between">
-                                <span className="text-xs text-blue-600 font-medium">USD Equivalent</span>
+                            <div>
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between h-[38px]">
+                                <span className="text-xs text-blue-600 font-medium">USD Equiv.</span>
                                 <span className="text-sm font-bold text-blue-700">
-                                  ${(payment.amount_original * payment.cnY_to_usd_rate).toFixed(2)}
+                                  ${payment.cnY_to_usd_rate > 0 ? (payment.amount_original / payment.cnY_to_usd_rate).toFixed(2) : '0.00'}
                                 </span>
                               </div>
+                              <p className="text-xs text-gray-400 mt-1">CNY ÷ rate</p>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-amber-600 mb-1.5 font-semibold">
+                                Paid in BDT <span className="text-red-500">*</span>
+                              </label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">৳</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={payment.amount_bdt || ''}
+                                  onChange={(e) => updatePayment(payment.id, 'amount_bdt', parseFloat(e.target.value) || 0)}
+                                  placeholder="0.00"
+                                  className="w-full border border-amber-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-amber-50 focus:ring-2 focus:ring-amber-400 focus:border-transparent font-medium"
+                                />
+                              </div>
+                              <p className="text-xs text-gray-400 mt-1">Actual BDT sent</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {payment.payment_currency === 'USD' && (
+                          <div className="grid grid-cols-3 gap-3 items-end">
+                            <div className="col-span-2">
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between h-[38px]">
+                                <span className="text-xs text-blue-600 font-medium">USD Equivalent</span>
+                                <span className="text-sm font-bold text-blue-700">
+                                  ${payment.amount_original.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-amber-600 mb-1.5 font-semibold">
+                                Paid in BDT <span className="text-red-500">*</span>
+                              </label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">৳</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={payment.amount_bdt || ''}
+                                  onChange={(e) => updatePayment(payment.id, 'amount_bdt', parseFloat(e.target.value) || 0)}
+                                  placeholder="0.00"
+                                  className="w-full border border-amber-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-amber-50 focus:ring-2 focus:ring-amber-400 focus:border-transparent font-medium"
+                                />
+                              </div>
+                              <p className="text-xs text-gray-400 mt-1">Actual BDT sent</p>
                             </div>
                           </div>
                         )}
@@ -1573,6 +1633,18 @@ export default function CreatePurchaseOrder() {
                   <span className="text-gray-600">Total Paid (USD equivalent):</span>
                   <span className="font-medium text-gray-900">${totalPaidUSD.toFixed(2)}</span>
                 </div>
+                {totalPaidBDT > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-amber-700 font-medium">Total Paid (BDT):</span>
+                    <span className="font-semibold text-amber-700">৳{totalPaidBDT.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+                {totalPaidBDT > 0 && totalPaidUSD > 0 && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Effective rate (BDT/USD):</span>
+                    <span className="text-gray-500">৳{(totalPaidBDT / totalPaidUSD).toFixed(2)} per $1</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">PO Total (USD):</span>
                   <span className="font-medium text-gray-900">${totalUSD.toFixed(2)}</span>

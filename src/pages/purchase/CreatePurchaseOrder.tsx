@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Save, Check, AlertCircle, Search, TrendingDown, Download } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Check, AlertCircle, Search, TrendingDown, Download, Paperclip, X, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRefresh } from '../../contexts/RefreshContext';
@@ -31,12 +31,24 @@ interface ProductRow {
   is_custom: boolean;
 }
 
+interface PaymentFile {
+  id: string;
+  file_url: string;
+  file_name: string;
+  file_size: number | null;
+  is_pending: boolean;
+  pending_file?: File;
+}
+
 interface PaymentRow {
   id: string;
   date: string;
-  amount_bdt: number;
-  slip_url: string | null;
-  slip_file: File | null;
+  payment_currency: 'USD' | 'CNY' | 'BDT';
+  amount_original: number;
+  cnY_to_usd_rate: number;
+  amount_usd_equivalent: number;
+  remarks: string;
+  files: PaymentFile[];
 }
 
 interface ChangeLogEntry {
@@ -45,6 +57,21 @@ interface ChangeLogEntry {
 }
 
 const CURRENCIES = ['USD', 'CNY', 'BDT'];
+
+function computeUsdEquivalent(
+  paymentCurrency: string,
+  amountOriginal: number,
+  cnyToUsdRate: number,
+  usdToBdt: string
+): number {
+  if (paymentCurrency === 'USD') return amountOriginal;
+  if (paymentCurrency === 'CNY') return amountOriginal * cnyToUsdRate;
+  if (paymentCurrency === 'BDT') {
+    const rate = parseFloat(usdToBdt) || 110;
+    return amountOriginal / rate;
+  }
+  return 0;
+}
 
 export default function CreatePurchaseOrder() {
   const navigate = useNavigate();
@@ -116,6 +143,12 @@ export default function CreatePurchaseOrder() {
     setRefreshing(false);
   };
 
+  const getDefaultCnyToUsdRate = () => {
+    const cnyToBdtVal = parseFloat(cnyToBdt) || 15.17;
+    const usdToBdtVal = parseFloat(usdToBdt) || 110;
+    return cnyToBdtVal > 0 ? usdToBdtVal / cnyToBdtVal : 1 / (parseFloat(usdToCny) || 7.25);
+  };
+
   const loadDraft = async (poId: string) => {
     setLoadingDraft(true);
 
@@ -153,9 +186,8 @@ export default function CreatePurchaseOrder() {
         .eq('po_id', poId),
       supabase
         .from('supplier_payments')
-        .select('id, payment_date, amount_bdt')
-        .eq('po_id', poId)
-        .gt('amount_bdt', 0),
+        .select('id, payment_date, payment_currency, amount_original, cny_to_usd_rate, amount_usd_equivalent, remarks')
+        .eq('po_id', poId),
       supabase
         .from('product_suppliers')
         .select(`
@@ -231,12 +263,34 @@ export default function CreatePurchaseOrder() {
     const extraItems = allProductRows.filter((r) => !savedSkuSet.has(r.sku));
     setLineItems([...restoredItems, ...extraItems]);
 
+    const paymentIds = savedPayments.map((p: any) => p.id);
+    let filesMap: Record<string, PaymentFile[]> = {};
+    if (paymentIds.length > 0) {
+      const { data: filesData } = await supabase
+        .from('supplier_payment_files')
+        .select('id, payment_id, file_url, file_name, file_size')
+        .in('payment_id', paymentIds);
+      (filesData || []).forEach((f: any) => {
+        if (!filesMap[f.payment_id]) filesMap[f.payment_id] = [];
+        filesMap[f.payment_id].push({
+          id: f.id,
+          file_url: f.file_url,
+          file_name: f.file_name,
+          file_size: f.file_size,
+          is_pending: false,
+        });
+      });
+    }
+
     const restoredPayments: PaymentRow[] = savedPayments.map((p: any) => ({
       id: p.id,
       date: p.payment_date ? p.payment_date.split('T')[0] : new Date().toISOString().split('T')[0],
-      amount_bdt: p.amount_bdt,
-      slip_url: null,
-      slip_file: null,
+      payment_currency: (p.payment_currency as 'USD' | 'CNY' | 'BDT') || 'BDT',
+      amount_original: p.amount_original || 0,
+      cnY_to_usd_rate: p.cny_to_usd_rate || getDefaultCnyToUsdRate(),
+      amount_usd_equivalent: p.amount_usd_equivalent || 0,
+      remarks: p.remarks || '',
+      files: filesMap[p.id] || [],
     }));
     setPayments(restoredPayments);
 
@@ -465,17 +519,56 @@ export default function CreatePurchaseOrder() {
       {
         id: crypto.randomUUID(),
         date: new Date().toISOString().split('T')[0],
-        amount_bdt: 0,
-        slip_url: null,
-        slip_file: null,
+        payment_currency: 'BDT',
+        amount_original: 0,
+        cnY_to_usd_rate: getDefaultCnyToUsdRate(),
+        amount_usd_equivalent: 0,
+        remarks: '',
+        files: [],
       },
     ]);
     addChangeLog('Payment entry added');
   };
 
-  const updatePayment = (id: string, field: string, value: any) => {
+  const updatePayment = (id: string, field: keyof PaymentRow, value: any) => {
     setPayments((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, [field]: value } : p))
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        const updated = { ...p, [field]: value };
+        if (field === 'amount_original' || field === 'payment_currency' || field === 'cnY_to_usd_rate') {
+          updated.amount_usd_equivalent = computeUsdEquivalent(
+            updated.payment_currency,
+            updated.amount_original,
+            updated.cnY_to_usd_rate,
+            usdToBdt
+          );
+        }
+        return updated;
+      })
+    );
+  };
+
+  const addFilesToPayment = (paymentId: string, files: FileList) => {
+    const newFiles: PaymentFile[] = Array.from(files).map((f) => ({
+      id: crypto.randomUUID(),
+      file_url: '',
+      file_name: f.name,
+      file_size: f.size,
+      is_pending: true,
+      pending_file: f,
+    }));
+    setPayments((prev) =>
+      prev.map((p) =>
+        p.id === paymentId ? { ...p, files: [...p.files, ...newFiles] } : p
+      )
+    );
+  };
+
+  const removeFileFromPayment = (paymentId: string, fileId: string) => {
+    setPayments((prev) =>
+      prev.map((p) =>
+        p.id === paymentId ? { ...p, files: p.files.filter((f) => f.id !== fileId) } : p
+      )
     );
   };
 
@@ -511,8 +604,34 @@ export default function CreatePurchaseOrder() {
     if (i.currency === 'CNY') return s + qty * cost * (parseFloat(cnyToBdt) || 15.17);
     return s + qty * cost;
   }, 0);
-  const totalPaid = payments.reduce((s, p) => s + (p.amount_bdt || 0), 0);
-  const balance = totalBDT - totalPaid;
+
+  const totalPaidUSD = payments.reduce((s, p) => s + (p.amount_usd_equivalent || 0), 0);
+  const balanceUSD = totalUSD - totalPaidUSD;
+  const isPaymentSufficient = totalUSD > 0 && totalPaidUSD >= totalUSD;
+
+  const uploadPaymentFiles = async (paymentId: string, files: PaymentFile[], poId: string): Promise<void> => {
+    const pendingFiles = files.filter((f) => f.is_pending && f.pending_file);
+    for (const pf of pendingFiles) {
+      const file = pf.pending_file!;
+      const ext = file.name.split('.').pop() || 'bin';
+      const path = `payment-slips/${poId}/${paymentId}/${pf.id}.${ext}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('payment-slips')
+        .upload(path, file, { upsert: true });
+      if (uploadError) {
+        console.error('File upload error:', uploadError);
+        continue;
+      }
+      const { data: urlData } = supabase.storage.from('payment-slips').getPublicUrl(path);
+      await supabase.from('supplier_payment_files').insert({
+        payment_id: paymentId,
+        file_url: urlData.publicUrl,
+        file_name: file.name,
+        file_size: file.size,
+        uploaded_by: user?.id,
+      });
+    }
+  };
 
   const saveDraft = async (): Promise<string | null> => {
     if (!selectedSupplierId) return null;
@@ -577,17 +696,42 @@ export default function CreatePurchaseOrder() {
       }
 
       for (const payment of payments) {
-        if (payment.amount_bdt > 0) {
+        if (payment.amount_original > 0) {
+          const usdEq = computeUsdEquivalent(
+            payment.payment_currency,
+            payment.amount_original,
+            payment.cnY_to_usd_rate,
+            usdToBdt
+          );
           await supabase.from('supplier_payments').upsert({
             id: payment.id,
             po_id: poId,
             supplier_id: selectedSupplierId,
             payment_date: payment.date,
-            amount: payment.amount_bdt,
-            amount_bdt: payment.amount_bdt,
-            currency: 'BDT',
+            amount: payment.amount_original,
+            amount_bdt: payment.payment_currency === 'BDT' ? payment.amount_original : 0,
+            currency: payment.payment_currency,
+            payment_currency: payment.payment_currency,
+            amount_original: payment.amount_original,
+            cny_to_usd_rate: payment.payment_currency === 'CNY' ? payment.cnY_to_usd_rate : null,
+            amount_usd_equivalent: usdEq,
+            remarks: payment.remarks || null,
             created_by: user?.id,
           });
+
+          await uploadPaymentFiles(payment.id, payment.files, poId);
+
+          setPayments((prev) =>
+            prev.map((p) =>
+              p.id === payment.id
+                ? {
+                    ...p,
+                    amount_usd_equivalent: usdEq,
+                    files: p.files.map((f) => ({ ...f, is_pending: false })),
+                  }
+                : p
+            )
+          );
         }
       }
     }
@@ -602,15 +746,17 @@ export default function CreatePurchaseOrder() {
   };
 
   const handleCreatePO = async () => {
-    if (!isPaymentComplete) return;
+    if (!isPaymentSufficient) return;
     setCreating(true);
 
     const poId = await saveDraft();
     if (!poId) { setCreating(false); return; }
 
+    const overpayUSD = totalPaidUSD - totalUSD;
+
     const { error } = await supabase
       .from('purchase_orders')
-      .update({ status: 'ordered', updated_at: new Date().toISOString() })
+      .update({ status: 'ordered', is_payment_complete: true, updated_at: new Date().toISOString() })
       .eq('id', poId);
 
     if (!error) {
@@ -619,6 +765,16 @@ export default function CreatePurchaseOrder() {
         message: 'Purchase order confirmed and created',
         created_by: user?.id,
       });
+
+      if (overpayUSD > 0.005) {
+        await supabase.from('po_change_log').insert({
+          po_id: poId,
+          message: `Overpayment of $${overpayUSD.toFixed(2)} USD recorded at PO creation`,
+          created_by: user?.id,
+        });
+        addChangeLog(`Overpayment of $${overpayUSD.toFixed(2)} USD recorded`);
+      }
+
       navigate(`/purchase/orders/${poId}`);
     }
     setCreating(false);
@@ -714,8 +870,6 @@ export default function CreatePurchaseOrder() {
                 br: { col: 1, row: i + 2 },
                 editAs: 'oneCell',
               });
-            } else {
-              console.warn(`Failed to fetch image for ${item.name}: HTTP ${res.status}`);
             }
           } catch (err) {
             console.warn(`Error fetching image for ${item.name}:`, err);
@@ -810,6 +964,13 @@ export default function CreatePurchaseOrder() {
   };
 
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
+
+  const formatFileSize = (bytes: number | null): string => {
+    if (!bytes) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   if (loadingDraft) {
     return (
@@ -1215,7 +1376,12 @@ export default function CreatePurchaseOrder() {
           {selectedSupplierId && (
             <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-800">Payment Tracking (BDT)</h2>
+                <div>
+                  <h2 className="text-base font-semibold text-gray-800">Payment Tracking</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Payments in any currency are tracked as USD equivalent against the PO total (${totalUSD.toFixed(2)} USD)
+                  </p>
+                </div>
                 <button
                   onClick={addPaymentRow}
                   className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
@@ -1226,84 +1392,223 @@ export default function CreatePurchaseOrder() {
               </div>
 
               {payments.length > 0 && (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-12 gap-3 text-xs font-medium text-gray-500 uppercase px-1 mb-1">
-                    <div className="col-span-3">Date</div>
-                    <div className="col-span-4">Amount (BDT)</div>
-                    <div className="col-span-4">Payment Slip/Invoice</div>
-                    <div className="col-span-1"></div>
-                  </div>
-                  {payments.map((payment) => (
-                    <div key={payment.id} className="grid grid-cols-12 gap-3 items-center">
-                      <div className="col-span-3">
-                        <input
-                          type="date"
-                          value={payment.date}
-                          onChange={(e) => updatePayment(payment.id, 'date', e.target.value)}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        />
+                <div className="space-y-4">
+                  {payments.map((payment, idx) => {
+                    const currencySymbol = payment.payment_currency === 'USD' ? '$' : payment.payment_currency === 'CNY' ? '¥' : '৳';
+                    return (
+                      <div key={payment.id} className="border border-gray-200 rounded-xl p-4 space-y-3 bg-gray-50/50">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            Payment #{idx + 1}
+                          </span>
+                          <button
+                            onClick={() => removePayment(payment.id)}
+                            className="text-red-400 hover:text-red-600 p-1 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1.5">Date</label>
+                            <input
+                              type="date"
+                              value={payment.date}
+                              onChange={(e) => updatePayment(payment.id, 'date', e.target.value)}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1.5">Payment Currency</label>
+                            <select
+                              value={payment.payment_currency}
+                              onChange={(e) => updatePayment(payment.id, 'payment_currency', e.target.value as 'USD' | 'CNY' | 'BDT')}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              <option value="BDT">BDT (Bangladeshi Taka)</option>
+                              <option value="USD">USD (US Dollar)</option>
+                              <option value="CNY">CNY (Chinese Yuan / RMB)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                              Amount ({payment.payment_currency})
+                            </label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">
+                                {currencySymbol}
+                              </span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={payment.amount_original || ''}
+                                onChange={(e) => updatePayment(payment.id, 'amount_original', parseFloat(e.target.value) || 0)}
+                                placeholder="0.00"
+                                className="w-full border border-gray-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {payment.payment_currency === 'CNY' && (
+                          <div className="grid grid-cols-3 gap-3 items-end">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-500 mb-1.5">CNY → USD Rate</label>
+                              <input
+                                type="number"
+                                step="0.0001"
+                                min="0"
+                                value={payment.cnY_to_usd_rate || ''}
+                                onChange={(e) => updatePayment(payment.id, 'cnY_to_usd_rate', parseFloat(e.target.value) || 0)}
+                                placeholder="e.g. 0.1379"
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                              <p className="text-xs text-gray-400 mt-1">1 CNY = ? USD</p>
+                            </div>
+                            <div className="col-span-2">
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between">
+                                <span className="text-xs text-blue-600 font-medium">USD Equivalent</span>
+                                <span className="text-sm font-bold text-blue-700">
+                                  ${(payment.amount_original * payment.cnY_to_usd_rate).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {payment.payment_currency === 'BDT' && payment.amount_original > 0 && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between">
+                            <span className="text-xs text-blue-600 font-medium">
+                              USD Equivalent (at ৳{usdToBdt} = $1)
+                            </span>
+                            <span className="text-sm font-bold text-blue-700">
+                              ${(payment.amount_original / (parseFloat(usdToBdt) || 110)).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1.5">Remarks</label>
+                          <input
+                            type="text"
+                            value={payment.remarks}
+                            onChange={(e) => updatePayment(payment.id, 'remarks', e.target.value)}
+                            placeholder="e.g., Wire transfer via HSBC, ref #12345"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                            Payment Slips / Invoices
+                          </label>
+                          <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-gray-300 rounded-lg cursor-pointer hover:bg-white hover:border-blue-400 transition-colors w-fit">
+                            <Paperclip className="w-4 h-4 text-gray-400" />
+                            <span className="text-sm text-gray-600">Attach files</span>
+                            <input
+                              type="file"
+                              multiple
+                              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                              className="hidden"
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files.length > 0) {
+                                  addFilesToPayment(payment.id, e.target.files);
+                                  e.target.value = '';
+                                }
+                              }}
+                            />
+                          </label>
+
+                          {payment.files.length > 0 && (
+                            <div className="mt-2 space-y-1.5">
+                              {payment.files.map((file) => (
+                                <div
+                                  key={file.id}
+                                  className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg group"
+                                >
+                                  <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    {file.is_pending ? (
+                                      <span className="text-sm text-gray-700 truncate block">{file.file_name}</span>
+                                    ) : (
+                                      <a
+                                        href={file.file_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-sm text-blue-600 hover:text-blue-800 hover:underline truncate block"
+                                      >
+                                        {file.file_name}
+                                      </a>
+                                    )}
+                                    {file.file_size && (
+                                      <span className="text-xs text-gray-400">{formatFileSize(file.file_size)}</span>
+                                    )}
+                                  </div>
+                                  {file.is_pending && (
+                                    <span className="text-xs text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded flex-shrink-0">
+                                      Pending
+                                    </span>
+                                  )}
+                                  <button
+                                    onClick={() => removeFileFromPayment(payment.id, file.id)}
+                                    className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="col-span-4">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={payment.amount_bdt || ''}
-                          onChange={(e) => updatePayment(payment.id, 'amount_bdt', parseFloat(e.target.value) || 0)}
-                          placeholder="Enter amount"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div className="col-span-4">
-                        <input
-                          type="file"
-                          accept="image/*,.pdf"
-                          onChange={(e) => updatePayment(payment.id, 'slip_file', e.target.files?.[0] || null)}
-                          className="w-full text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border file:border-gray-300 file:text-xs file:font-medium file:text-gray-700 file:bg-white hover:file:bg-gray-50"
-                        />
-                      </div>
-                      <div className="col-span-1 flex justify-center">
-                        <button
-                          onClick={() => removePayment(payment.id)}
-                          className="text-red-400 hover:text-red-600 p-1"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
-              <div className="border-t border-gray-100 pt-4 space-y-2">
+              <div className="border-t border-gray-100 pt-4 space-y-2.5">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Total Paid:</span>
-                  <span className="font-medium text-gray-900">৳{totalPaid.toLocaleString('en-US', { minimumFractionDigits: 0 })}</span>
+                  <span className="text-gray-600">Total Paid (USD equivalent):</span>
+                  <span className="font-medium text-gray-900">${totalPaidUSD.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Total Cost (BDT):</span>
-                  <span className="font-medium text-gray-900">৳{Math.round(totalBDT).toLocaleString('en-US')}</span>
+                  <span className="text-gray-600">PO Total (USD):</span>
+                  <span className="font-medium text-gray-900">${totalUSD.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-sm font-semibold">
-                  <span className="text-gray-700">Balance:</span>
-                  <span className={balance > 0 ? 'text-red-600' : 'text-emerald-600'}>
-                    ৳{Math.round(balance).toLocaleString('en-US')}
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">PO Total (CNY):</span>
+                  <span className="font-medium text-gray-900">¥{totalCNY.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm font-semibold border-t border-gray-100 pt-2">
+                  <span className="text-gray-700">Remaining Balance (USD):</span>
+                  <span className={balanceUSD > 0 ? 'text-red-600' : 'text-emerald-600'}>
+                    {balanceUSD > 0 ? `-$${balanceUSD.toFixed(2)}` : balanceUSD < -0.005 ? `+$${Math.abs(balanceUSD).toFixed(2)} overpaid` : '$0.00'}
                   </span>
                 </div>
+                {balanceUSD < -0.005 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                    Overpayment of ${Math.abs(balanceUSD).toFixed(2)} USD will be recorded in the change log on PO creation.
+                  </div>
+                )}
               </div>
 
               <button
                 onClick={() => {
+                  if (!isPaymentSufficient) return;
                   setIsPaymentComplete(!isPaymentComplete);
                   if (!isPaymentComplete) addChangeLog('Payment marked as complete');
                 }}
-                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-medium transition-colors ${
-                  isPaymentComplete
-                    ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
-                    : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                disabled={!isPaymentSufficient}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                  isPaymentSufficient
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-700 cursor-pointer hover:bg-emerald-100'
+                    : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                 }`}
               >
-                {isPaymentComplete && <Check className="w-4 h-4" />}
-                Payment Complete
+                {isPaymentSufficient && <Check className="w-4 h-4" />}
+                {isPaymentSufficient ? 'Payment Complete' : `Payment Complete — Pay $${balanceUSD.toFixed(2)} more to unlock`}
               </button>
             </div>
           )}
@@ -1366,9 +1671,9 @@ export default function CreatePurchaseOrder() {
             <div className="space-y-2">
               <button
                 onClick={handleCreatePO}
-                disabled={!isPaymentComplete || creating || !selectedSupplierId}
+                disabled={!isPaymentSufficient || creating || !selectedSupplierId}
                 className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-                  isPaymentComplete && selectedSupplierId
+                  isPaymentSufficient && selectedSupplierId
                     ? 'bg-gray-900 text-white hover:bg-gray-800'
                     : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 }`}
@@ -1414,9 +1719,9 @@ export default function CreatePurchaseOrder() {
                 Cancel
               </button>
 
-              {!isPaymentComplete && selectedSupplierId && (
+              {!isPaymentSufficient && selectedSupplierId && totalUSD > 0 && (
                 <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-700 text-center">
-                  Complete payment to enable PO creation
+                  Pay ${balanceUSD.toFixed(2)} more (USD equiv.) to enable PO creation
                 </div>
               )}
             </div>

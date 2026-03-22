@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Save, X, FileSpreadsheet, Truck, Package, Check, Clock } from 'lucide-react';
+import { ArrowLeft, Pencil, Save, X, FileSpreadsheet, Truck, Package, Check, Clock, CreditCard } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Badge } from '../../components/ui/Badge';
 import ExcelJS from 'exceljs';
@@ -56,12 +56,22 @@ const STATUS_COLORS: Record<string, string> = {
 
 const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥', BDT: '৳' };
 
+interface POPayment {
+  id: string;
+  payment_currency: string;
+  amount_original: number;
+  amount_bdt: number;
+  amount_usd_equivalent: number;
+  payment_date: string;
+}
+
 export default function PurchaseOrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
   const [po, setPo] = useState<PODetail | null>(null);
   const [items, setItems] = useState<POItem[]>([]);
+  const [payments, setPayments] = useState<POPayment[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [editingShipping, setEditingShipping] = useState(false);
@@ -134,6 +144,14 @@ export default function PurchaseOrderDetail() {
       .order('sku');
 
     setItems(itemsData || []);
+
+    const { data: paymentsData } = await supabase
+      .from('supplier_payments')
+      .select('id, payment_currency, amount_original, amount_bdt, amount_usd_equivalent, payment_date')
+      .eq('po_id', id)
+      .order('payment_date');
+
+    setPayments(paymentsData || []);
     setLoading(false);
   };
 
@@ -577,6 +595,78 @@ export default function PurchaseOrderDetail() {
           </div>
         )}
       </div>
+
+      {po.status !== 'draft' && (() => {
+        const totalPaidBdt = payments.reduce((s, p) => s + (p.amount_bdt || 0), 0);
+        const totalPaidUsd = payments.reduce((s, p) => {
+          if (p.payment_currency === 'USD') return s + (p.amount_original || 0);
+          return s + (p.amount_usd_equivalent || 0);
+        }, 0);
+        const totalPaidCny = payments.reduce((s, p) => {
+          if (p.payment_currency === 'CNY') return s + (p.amount_original || 0);
+          return s;
+        }, 0);
+        const poValueUsd = po.currency === 'USD' ? totalValue : po.currency === 'CNY' ? totalValue / (po.usd_to_cny_rate || 7.25) : totalValue / (po.usd_to_bdt_rate || 110);
+        const effectiveRate = totalPaidUsd > 0 && totalPaidBdt > 0 ? totalPaidBdt / totalPaidUsd : null;
+
+        return (
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <CreditCard className="w-4 h-4 text-gray-400" />
+              <h2 className="text-sm font-semibold text-gray-700">Payment Summary</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Paid (BDT)</p>
+                <p className="text-base font-bold text-gray-900">
+                  {totalPaidBdt > 0 ? `৳${totalPaidBdt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  of ৳{(poValueUsd * (po.usd_to_bdt_rate || 110)).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} total
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Paid (USD)</p>
+                <p className="text-base font-bold text-gray-900">
+                  {totalPaidUsd > 0 ? `$${totalPaidUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  of ${poValueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
+                </p>
+              </div>
+              {totalPaidCny > 0 && (
+                <div>
+                  <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Paid (CNY)</p>
+                  <p className="text-base font-bold text-gray-900">
+                    ¥{totalPaidCny.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {po.currency === 'CNY' ? `of ¥${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total` : 'CNY payments'}
+                  </p>
+                </div>
+              )}
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Effective Rate</p>
+                {effectiveRate ? (
+                  <>
+                    <p className="text-base font-bold text-gray-900">
+                      ৳{effectiveRate.toFixed(2)}
+                    </p>
+                    <p className={`text-xs mt-0.5 ${Math.abs(effectiveRate - (po.usd_to_bdt_rate || 110)) > 1 ? 'text-amber-500' : 'text-emerald-600'}`}>
+                      vs ৳{po.usd_to_bdt_rate} booked rate
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-base font-bold text-gray-400">—</p>
+                    <p className="text-xs text-gray-400 mt-0.5">no payments yet</p>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="px-6 py-4 border-b border-gray-100">

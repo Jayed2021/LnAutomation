@@ -589,6 +589,9 @@ export default function CreatePurchaseOrder() {
     return 1;
   };
 
+  const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
+  const isLocalSupplier = selectedSupplier?.supplier_type === 'local';
+
   const totalUnits = lineItems.reduce((s, i) => s + (i.order_qty || 0), 0);
   const totalUSD = lineItems.reduce((s, i) => {
     const qty = i.order_qty || 0;
@@ -993,9 +996,6 @@ export default function CreatePurchaseOrder() {
     setShowProductSearch(false);
     setProductSearch('');
   };
-
-  const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
-  const isLocalSupplier = selectedSupplier?.supplier_type === 'local';
 
   const formatFileSize = (bytes: number | null): string => {
     if (!bytes) return '';

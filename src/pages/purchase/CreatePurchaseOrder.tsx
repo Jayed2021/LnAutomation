@@ -12,6 +12,7 @@ interface Supplier {
   code: string;
   short_name: string | null;
   currency?: string;
+  supplier_type: 'chinese' | 'local';
 }
 
 interface ProductRow {
@@ -137,7 +138,7 @@ export default function CreatePurchaseOrder() {
   const fetchSuppliers = async () => {
     const { data } = await supabase
       .from('suppliers')
-      .select('id, name, code, short_name')
+      .select('id, name, code, short_name, supplier_type')
       .eq('is_active', true)
       .order('name');
     setSuppliers(data || []);
@@ -617,7 +618,9 @@ export default function CreatePurchaseOrder() {
     return s + (p.amount_bdt || 0);
   }, 0);
   const balanceUSD = totalUSD - totalPaidUSD;
-  const isPaymentSufficient = totalUSD > 0 && totalPaidUSD >= totalUSD;
+  const isPaymentSufficient = isLocalSupplier
+    ? totalBDT > 0 && totalPaidBDT >= totalBDT
+    : totalUSD > 0 && totalPaidUSD >= totalUSD;
 
   const uploadPaymentFiles = async (paymentId: string, files: PaymentFile[], poId: string): Promise<void> => {
     const pendingFiles = files.filter((f) => f.is_pending && f.pending_file);
@@ -707,23 +710,31 @@ export default function CreatePurchaseOrder() {
 
       for (const payment of payments) {
         if (payment.amount_original > 0) {
-          const usdEq = computeUsdEquivalent(
-            payment.payment_currency,
-            payment.amount_original,
-            payment.cnY_to_usd_rate,
-            usdToBdt
-          );
+          const effectiveCurrency = isLocalSupplier ? 'BDT' : payment.payment_currency;
+          const usdEq = isLocalSupplier
+            ? 0
+            : computeUsdEquivalent(
+                payment.payment_currency,
+                payment.amount_original,
+                payment.cnY_to_usd_rate,
+                usdToBdt
+              );
+          const bdtAmount = isLocalSupplier
+            ? payment.amount_original
+            : payment.payment_currency === 'BDT'
+            ? payment.amount_original
+            : (payment.amount_bdt || 0);
           await supabase.from('supplier_payments').upsert({
             id: payment.id,
             po_id: poId,
             supplier_id: selectedSupplierId,
             payment_date: payment.date,
             amount: payment.amount_original,
-            amount_bdt: payment.payment_currency === 'BDT' ? payment.amount_original : (payment.amount_bdt || 0),
-            currency: payment.payment_currency,
-            payment_currency: payment.payment_currency,
+            amount_bdt: bdtAmount,
+            currency: effectiveCurrency,
+            payment_currency: effectiveCurrency,
             amount_original: payment.amount_original,
-            cny_to_usd_rate: payment.payment_currency === 'CNY' ? payment.cnY_to_usd_rate : null,
+            cny_to_usd_rate: effectiveCurrency === 'CNY' ? payment.cnY_to_usd_rate : null,
             amount_usd_equivalent: usdEq,
             remarks: payment.remarks || null,
             created_by: user?.id,
@@ -762,7 +773,8 @@ export default function CreatePurchaseOrder() {
     const poId = await saveDraft();
     if (!poId) { setCreating(false); return; }
 
-    const overpayUSD = totalPaidUSD - totalUSD;
+    const overpayUSD = isLocalSupplier ? 0 : totalPaidUSD - totalUSD;
+    const overpayBDT = isLocalSupplier ? totalPaidBDT - totalBDT : 0;
 
     const { error } = await supabase
       .from('purchase_orders')
@@ -776,13 +788,22 @@ export default function CreatePurchaseOrder() {
         created_by: user?.id,
       });
 
-      if (overpayUSD > 0.005) {
+      if (!isLocalSupplier && overpayUSD > 0.005) {
         await supabase.from('po_change_log').insert({
           po_id: poId,
           message: `Overpayment of $${overpayUSD.toFixed(2)} USD recorded at PO creation`,
           created_by: user?.id,
         });
         addChangeLog(`Overpayment of $${overpayUSD.toFixed(2)} USD recorded`);
+      }
+
+      if (isLocalSupplier && overpayBDT > 0.005) {
+        await supabase.from('po_change_log').insert({
+          po_id: poId,
+          message: `Overpayment of ৳${overpayBDT.toFixed(2)} BDT recorded at PO creation`,
+          created_by: user?.id,
+        });
+        addChangeLog(`Overpayment of ৳${overpayBDT.toFixed(2)} BDT recorded`);
       }
 
       navigate(`/purchase/orders/${poId}`);
@@ -974,6 +995,7 @@ export default function CreatePurchaseOrder() {
   };
 
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
+  const isLocalSupplier = selectedSupplier?.supplier_type === 'local';
 
   const formatFileSize = (bytes: number | null): string => {
     if (!bytes) return '';
@@ -1076,67 +1098,75 @@ export default function CreatePurchaseOrder() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Currency</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                >
-                  {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                {isLocalSupplier ? (
+                  <div className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500">
+                    BDT — Local supplier
+                  </div>
+                ) : (
+                  <select
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                  >
+                    {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                )}
               </div>
             </div>
 
-            <div className="border border-gray-200 rounded-lg p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-gray-700">Exchange Rates</h3>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="date"
-                    value={rateDate}
-                    onChange={(e) => setRateDate(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
-                  />
-                  <button
-                    onClick={handleSaveRates}
-                    className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700 transition-colors"
-                  >
-                    Save Rates
-                  </button>
+            {!isLocalSupplier && (
+              <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-700">Exchange Rates</h3>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={rateDate}
+                      onChange={(e) => setRateDate(e.target.value)}
+                      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                    />
+                    <button
+                      onClick={handleSaveRates}
+                      className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700 transition-colors"
+                    >
+                      Save Rates
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">USD to CNY</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={usdToCny}
+                      onChange={(e) => setUsdToCny(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">CNY to BDT</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={cnyToBdt}
+                      onChange={(e) => setCnyToBdt(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">USD to BDT</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={usdToBdt}
+                      onChange={(e) => setUsdToBdt(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">USD to CNY</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={usdToCny}
-                    onChange={(e) => setUsdToCny(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">CNY to BDT</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={cnyToBdt}
-                    onChange={(e) => setCnyToBdt(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">USD to BDT</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={usdToBdt}
-                    onChange={(e) => setUsdToBdt(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-            </div>
+            )}
           </div>
 
           {!selectedSupplierId ? (
@@ -1389,7 +1419,9 @@ export default function CreatePurchaseOrder() {
                 <div>
                   <h2 className="text-base font-semibold text-gray-800">Payment Tracking</h2>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Payments in any currency are tracked as USD equivalent against the PO total (${totalUSD.toFixed(2)} USD)
+                    {isLocalSupplier
+                      ? `Payments in BDT against the PO total (৳${totalBDT.toFixed(2)})`
+                      : `Payments in any currency are tracked as USD equivalent against the PO total ($${totalUSD.toFixed(2)} USD)`}
                   </p>
                 </div>
                 <button
@@ -1419,134 +1451,165 @@ export default function CreatePurchaseOrder() {
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-3">
-                          <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1.5">Date</label>
-                            <input
-                              type="date"
-                              value={payment.date}
-                              onChange={(e) => updatePayment(payment.id, 'date', e.target.value)}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1.5">Payment Currency</label>
-                            <select
-                              value={payment.payment_currency}
-                              onChange={(e) => updatePayment(payment.id, 'payment_currency', e.target.value as 'USD' | 'CNY' | 'BDT')}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            >
-                              <option value="BDT">BDT (Bangladeshi Taka)</option>
-                              <option value="USD">USD (US Dollar)</option>
-                              <option value="CNY">CNY (Chinese Yuan / RMB)</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1.5">
-                              Amount ({payment.payment_currency})
-                            </label>
-                            <div className="relative">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">
-                                {currencySymbol}
-                              </span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={payment.amount_original || ''}
-                                onChange={(e) => updatePayment(payment.id, 'amount_original', parseFloat(e.target.value) || 0)}
-                                placeholder="0.00"
-                                className="w-full border border-gray-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {payment.payment_currency === 'CNY' && (
-                          <div className="grid grid-cols-3 gap-3 items-end">
+                        {isLocalSupplier ? (
+                          <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1.5">USD → CNY Rate</label>
+                              <label className="block text-xs font-medium text-gray-500 mb-1.5">Date</label>
                               <input
-                                type="number"
-                                step="0.0001"
-                                min="0"
-                                value={payment.cnY_to_usd_rate || ''}
-                                onChange={(e) => updatePayment(payment.id, 'cnY_to_usd_rate', parseFloat(e.target.value) || 0)}
-                                placeholder="e.g. 7.25"
+                                type="date"
+                                value={payment.date}
+                                onChange={(e) => updatePayment(payment.id, 'date', e.target.value)}
                                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               />
-                              <p className="text-xs text-gray-400 mt-1">1 USD = ? CNY</p>
                             </div>
                             <div>
-                              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between h-[38px]">
-                                <span className="text-xs text-blue-600 font-medium">USD Equiv.</span>
-                                <span className="text-sm font-bold text-blue-700">
-                                  ${payment.cnY_to_usd_rate > 0 ? (payment.amount_original / payment.cnY_to_usd_rate).toFixed(2) : '0.00'}
-                                </span>
-                              </div>
-                              <p className="text-xs text-gray-400 mt-1">CNY ÷ rate</p>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-amber-600 mb-1.5 font-semibold">
-                                Paid in BDT <span className="text-red-500">*</span>
-                              </label>
+                              <label className="block text-xs font-medium text-gray-500 mb-1.5">Amount (BDT)</label>
                               <div className="relative">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">৳</span>
                                 <input
                                   type="number"
                                   step="0.01"
                                   min="0"
-                                  value={payment.amount_bdt || ''}
-                                  onChange={(e) => updatePayment(payment.id, 'amount_bdt', parseFloat(e.target.value) || 0)}
+                                  value={payment.amount_original || ''}
+                                  onChange={(e) => updatePayment(payment.id, 'amount_original', parseFloat(e.target.value) || 0)}
                                   placeholder="0.00"
-                                  className="w-full border border-amber-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-amber-50 focus:ring-2 focus:ring-amber-400 focus:border-transparent font-medium"
+                                  className="w-full border border-gray-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 />
                               </div>
-                              <p className="text-xs text-gray-400 mt-1">Actual BDT sent</p>
                             </div>
                           </div>
-                        )}
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-3 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Date</label>
+                                <input
+                                  type="date"
+                                  value={payment.date}
+                                  onChange={(e) => updatePayment(payment.id, 'date', e.target.value)}
+                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Payment Currency</label>
+                                <select
+                                  value={payment.payment_currency}
+                                  onChange={(e) => updatePayment(payment.id, 'payment_currency', e.target.value as 'USD' | 'CNY' | 'BDT')}
+                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                  <option value="BDT">BDT (Bangladeshi Taka)</option>
+                                  <option value="USD">USD (US Dollar)</option>
+                                  <option value="CNY">CNY (Chinese Yuan / RMB)</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                                  Amount ({payment.payment_currency})
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">
+                                    {currencySymbol}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={payment.amount_original || ''}
+                                    onChange={(e) => updatePayment(payment.id, 'amount_original', parseFloat(e.target.value) || 0)}
+                                    placeholder="0.00"
+                                    className="w-full border border-gray-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  />
+                                </div>
+                              </div>
+                            </div>
 
-                        {payment.payment_currency === 'USD' && (
-                          <div className="grid grid-cols-3 gap-3 items-end">
-                            <div className="col-span-2">
-                              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between h-[38px]">
-                                <span className="text-xs text-blue-600 font-medium">USD Equivalent</span>
+                            {payment.payment_currency === 'CNY' && (
+                              <div className="grid grid-cols-3 gap-3 items-end">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-500 mb-1.5">USD → CNY Rate</label>
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    min="0"
+                                    value={payment.cnY_to_usd_rate || ''}
+                                    onChange={(e) => updatePayment(payment.id, 'cnY_to_usd_rate', parseFloat(e.target.value) || 0)}
+                                    placeholder="e.g. 7.25"
+                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  />
+                                  <p className="text-xs text-gray-400 mt-1">1 USD = ? CNY</p>
+                                </div>
+                                <div>
+                                  <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between h-[38px]">
+                                    <span className="text-xs text-blue-600 font-medium">USD Equiv.</span>
+                                    <span className="text-sm font-bold text-blue-700">
+                                      ${payment.cnY_to_usd_rate > 0 ? (payment.amount_original / payment.cnY_to_usd_rate).toFixed(2) : '0.00'}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-gray-400 mt-1">CNY ÷ rate</p>
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-amber-600 mb-1.5 font-semibold">
+                                    Paid in BDT <span className="text-red-500">*</span>
+                                  </label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">৳</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={payment.amount_bdt || ''}
+                                      onChange={(e) => updatePayment(payment.id, 'amount_bdt', parseFloat(e.target.value) || 0)}
+                                      placeholder="0.00"
+                                      className="w-full border border-amber-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-amber-50 focus:ring-2 focus:ring-amber-400 focus:border-transparent font-medium"
+                                    />
+                                  </div>
+                                  <p className="text-xs text-gray-400 mt-1">Actual BDT sent</p>
+                                </div>
+                              </div>
+                            )}
+
+                            {payment.payment_currency === 'USD' && (
+                              <div className="grid grid-cols-3 gap-3 items-end">
+                                <div className="col-span-2">
+                                  <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between h-[38px]">
+                                    <span className="text-xs text-blue-600 font-medium">USD Equivalent</span>
+                                    <span className="text-sm font-bold text-blue-700">
+                                      ${payment.amount_original.toFixed(2)}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-amber-600 mb-1.5 font-semibold">
+                                    Paid in BDT <span className="text-red-500">*</span>
+                                  </label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">৳</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={payment.amount_bdt || ''}
+                                      onChange={(e) => updatePayment(payment.id, 'amount_bdt', parseFloat(e.target.value) || 0)}
+                                      placeholder="0.00"
+                                      className="w-full border border-amber-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-amber-50 focus:ring-2 focus:ring-amber-400 focus:border-transparent font-medium"
+                                    />
+                                  </div>
+                                  <p className="text-xs text-gray-400 mt-1">Actual BDT sent</p>
+                                </div>
+                              </div>
+                            )}
+
+                            {payment.payment_currency === 'BDT' && payment.amount_original > 0 && (
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between">
+                                <span className="text-xs text-blue-600 font-medium">
+                                  USD Equivalent (at ৳{usdToBdt} = $1)
+                                </span>
                                 <span className="text-sm font-bold text-blue-700">
-                                  ${payment.amount_original.toFixed(2)}
+                                  ${(payment.amount_original / (parseFloat(usdToBdt) || 110)).toFixed(2)}
                                 </span>
                               </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-amber-600 mb-1.5 font-semibold">
-                                Paid in BDT <span className="text-red-500">*</span>
-                              </label>
-                              <div className="relative">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">৳</span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={payment.amount_bdt || ''}
-                                  onChange={(e) => updatePayment(payment.id, 'amount_bdt', parseFloat(e.target.value) || 0)}
-                                  placeholder="0.00"
-                                  className="w-full border border-amber-300 rounded-lg pl-7 pr-3 py-2 text-sm bg-amber-50 focus:ring-2 focus:ring-amber-400 focus:border-transparent font-medium"
-                                />
-                              </div>
-                              <p className="text-xs text-gray-400 mt-1">Actual BDT sent</p>
-                            </div>
-                          </div>
-                        )}
-
-                        {payment.payment_currency === 'BDT' && payment.amount_original > 0 && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center justify-between">
-                            <span className="text-xs text-blue-600 font-medium">
-                              USD Equivalent (at ৳{usdToBdt} = $1)
-                            </span>
-                            <span className="text-sm font-bold text-blue-700">
-                              ${(payment.amount_original / (parseFloat(usdToBdt) || 110)).toFixed(2)}
-                            </span>
-                          </div>
+                            )}
+                          </>
                         )}
 
                         <div>
@@ -1629,40 +1692,65 @@ export default function CreatePurchaseOrder() {
               )}
 
               <div className="border-t border-gray-100 pt-4 space-y-2.5">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Total Paid (USD equivalent):</span>
-                  <span className="font-medium text-gray-900">${totalPaidUSD.toFixed(2)}</span>
-                </div>
-                {totalPaidBDT > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-amber-700 font-medium">Total Paid (BDT):</span>
-                    <span className="font-semibold text-amber-700">৳{totalPaidBDT.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-                )}
-                {totalPaidBDT > 0 && totalPaidUSD > 0 && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-400">Effective rate (BDT/USD):</span>
-                    <span className="text-gray-500">৳{(totalPaidBDT / totalPaidUSD).toFixed(2)} per $1</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">PO Total (USD):</span>
-                  <span className="font-medium text-gray-900">${totalUSD.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">PO Total (CNY):</span>
-                  <span className="font-medium text-gray-900">¥{totalCNY.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm font-semibold border-t border-gray-100 pt-2">
-                  <span className="text-gray-700">Remaining Balance (USD):</span>
-                  <span className={balanceUSD > 0 ? 'text-red-600' : 'text-emerald-600'}>
-                    {balanceUSD > 0 ? `-$${balanceUSD.toFixed(2)}` : balanceUSD < -0.005 ? `+$${Math.abs(balanceUSD).toFixed(2)} overpaid` : '$0.00'}
-                  </span>
-                </div>
-                {balanceUSD < -0.005 && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
-                    Overpayment of ${Math.abs(balanceUSD).toFixed(2)} USD will be recorded in the change log on PO creation.
-                  </div>
+                {isLocalSupplier ? (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Total Paid (BDT):</span>
+                      <span className="font-medium text-gray-900">৳{totalPaidBDT.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">PO Total (BDT):</span>
+                      <span className="font-medium text-gray-900">৳{totalBDT.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-semibold border-t border-gray-100 pt-2">
+                      <span className="text-gray-700">Remaining Balance (BDT):</span>
+                      <span className={totalBDT - totalPaidBDT > 0 ? 'text-red-600' : 'text-emerald-600'}>
+                        {totalBDT - totalPaidBDT > 0
+                          ? `-৳${(totalBDT - totalPaidBDT).toFixed(2)}`
+                          : totalBDT - totalPaidBDT < -0.005
+                          ? `+৳${Math.abs(totalBDT - totalPaidBDT).toFixed(2)} overpaid`
+                          : '৳0.00'}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Total Paid (USD equivalent):</span>
+                      <span className="font-medium text-gray-900">${totalPaidUSD.toFixed(2)}</span>
+                    </div>
+                    {totalPaidBDT > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-amber-700 font-medium">Total Paid (BDT):</span>
+                        <span className="font-semibold text-amber-700">৳{totalPaidBDT.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                    {totalPaidBDT > 0 && totalPaidUSD > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-400">Effective rate (BDT/USD):</span>
+                        <span className="text-gray-500">৳{(totalPaidBDT / totalPaidUSD).toFixed(2)} per $1</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">PO Total (USD):</span>
+                      <span className="font-medium text-gray-900">${totalUSD.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">PO Total (CNY):</span>
+                      <span className="font-medium text-gray-900">¥{totalCNY.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-semibold border-t border-gray-100 pt-2">
+                      <span className="text-gray-700">Remaining Balance (USD):</span>
+                      <span className={balanceUSD > 0 ? 'text-red-600' : 'text-emerald-600'}>
+                        {balanceUSD > 0 ? `-$${balanceUSD.toFixed(2)}` : balanceUSD < -0.005 ? `+$${Math.abs(balanceUSD).toFixed(2)} overpaid` : '$0.00'}
+                      </span>
+                    </div>
+                    {balanceUSD < -0.005 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                        Overpayment of ${Math.abs(balanceUSD).toFixed(2)} USD will be recorded in the change log on PO creation.
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -1680,7 +1768,11 @@ export default function CreatePurchaseOrder() {
                 }`}
               >
                 {isPaymentSufficient && <Check className="w-4 h-4" />}
-                {isPaymentSufficient ? 'Payment Complete' : `Payment Complete — Pay $${balanceUSD.toFixed(2)} more to unlock`}
+                {isPaymentSufficient
+                  ? 'Payment Complete'
+                  : isLocalSupplier
+                  ? `Payment Complete — Pay ৳${(totalBDT - totalPaidBDT).toFixed(2)} more to unlock`
+                  : `Payment Complete — Pay $${balanceUSD.toFixed(2)} more to unlock`}
               </button>
             </div>
           )}

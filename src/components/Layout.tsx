@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useRefresh } from '../contexts/RefreshContext';
+import { supabase } from '../lib/supabase';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -31,6 +32,18 @@ export const Layout: React.FC = () => {
   const { triggerRefresh, isRefreshing } = useRefresh();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
+  const [receiveGoodsCount, setReceiveGoodsCount] = useState(0);
+
+  useEffect(() => {
+    const fetchCount = async () => {
+      const { count } = await supabase
+        .from('purchase_orders')
+        .select('id', { count: 'exact', head: true })
+        .in('status', ['ordered', 'confirmed', 'partially_received']);
+      setReceiveGoodsCount(count ?? 0);
+    };
+    fetchCount();
+  }, [isRefreshing]);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -180,11 +193,16 @@ export const Layout: React.FC = () => {
                           <Link
                             key={child.path}
                             to={child.path}
-                            className={`block px-12 py-2 text-sm hover:bg-gray-700 transition-colors ${
+                            className={`flex items-center justify-between px-12 py-2 text-sm hover:bg-gray-700 transition-colors ${
                               location.pathname === child.path || location.pathname.startsWith(child.path + '/') ? 'bg-gray-700 text-blue-400' : ''
                             }`}
                           >
-                            {child.name}
+                            <span>{child.name}</span>
+                            {child.path === '/inventory/receive' && receiveGoodsCount > 0 && (
+                              <span className="ml-2 min-w-[20px] h-5 px-1 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                                {receiveGoodsCount}
+                              </span>
+                            )}
                           </Link>
                         ))}
                     </div>

@@ -73,7 +73,7 @@ export default function ReceiveGoods() {
         supabase
           .from('purchase_orders')
           .select(`id, po_number, expected_delivery_date, notes, suppliers(name), purchase_order_items(id, sku, product_name, ordered_quantity, received_quantity, landed_cost_per_unit)`)
-          .eq('status', 'confirmed')
+          .in('status', ['ordered', 'confirmed', 'partially_received'])
           .order('expected_delivery_date'),
         supabase
           .from('warehouse_locations')
@@ -490,7 +490,7 @@ export default function ReceiveGoods() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Receive Goods</h1>
-        <p className="text-sm text-gray-500 mt-1">Confirmed POs awaiting physical receipt</p>
+        <p className="text-sm text-gray-500 mt-1">Ordered POs awaiting physical receipt</p>
       </div>
 
       {loading ? (
@@ -499,9 +499,9 @@ export default function ReceiveGoods() {
         <Card>
           <div className="py-20 text-center">
             <Truck className="w-14 h-14 mx-auto text-gray-300 mb-4" />
-            <h3 className="text-lg font-semibold text-gray-700">No Confirmed POs</h3>
+            <h3 className="text-lg font-semibold text-gray-700">No POs Ready to Receive</h3>
             <p className="text-sm text-gray-400 mt-2">
-              POs in <span className="font-mono bg-gray-100 px-1 rounded">confirmed</span> status (fully paid) will appear here for receiving.
+              POs in <span className="font-mono bg-gray-100 px-1 rounded">ordered</span> or <span className="font-mono bg-gray-100 px-1 rounded">partially received</span> status will appear here.
             </p>
           </div>
         </Card>
@@ -513,7 +513,7 @@ export default function ReceiveGoods() {
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <h3 className="font-bold text-gray-900 text-lg">{po.po_number}</h3>
-                    <Badge variant="blue">Confirmed — Ready to Receive</Badge>
+                    <Badge variant="blue">Ready to Receive</Badge>
                   </div>
                   <p className="text-sm text-gray-500 mb-3">{po.supplier_name}</p>
                   {po.expected_delivery_date && (

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Save, Check, AlertCircle, Search, TrendingDown, Download } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { useRefresh } from '../../contexts/RefreshContext';
 import ExcelJS from 'exceljs';
 
 interface Supplier {
@@ -49,6 +50,7 @@ export default function CreatePurchaseOrder() {
   const navigate = useNavigate();
   const { id: editId } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const { lastRefreshed, setRefreshing } = useRefresh();
   const [loadingDraft, setLoadingDraft] = useState(!!editId);
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -98,11 +100,11 @@ export default function CreatePurchaseOrder() {
 
   useEffect(() => {
     fetchSuppliers();
-  }, []);
+  }, [lastRefreshed]);
 
   useEffect(() => {
     if (editId) loadDraft(editId);
-  }, [editId]);
+  }, [editId, lastRefreshed]);
 
   const fetchSuppliers = async () => {
     const { data } = await supabase
@@ -111,6 +113,7 @@ export default function CreatePurchaseOrder() {
       .eq('is_active', true)
       .order('name');
     setSuppliers(data || []);
+    setRefreshing(false);
   };
 
   const loadDraft = async (poId: string) => {

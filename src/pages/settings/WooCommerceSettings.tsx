@@ -362,23 +362,21 @@ export default function WooCommerceSettings() {
 
       setOrderSyncProgress({ imported: 0, skipped: 0, total });
 
-      const webhookUrl = `${supabaseUrl}/functions/v1/woo-webhook`;
-
       for (const order of orders) {
         try {
-          const res = await fetch(webhookUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${supabaseAnonKey}`,
-            },
-            body: JSON.stringify(order),
+          const result = await callProxy({
+            action: 'import-order',
+            store_url: form.store_url,
+            consumer_key: form.consumer_key,
+            consumer_secret: form.consumer_secret,
+            order,
           });
-          const result = await res.json();
-          if (result.message?.includes('already exists')) {
+          if (result.skipped) {
             skipped++;
-          } else {
+          } else if (result.order_id) {
             imported++;
+          } else {
+            skipped++;
           }
         } catch {
           skipped++;

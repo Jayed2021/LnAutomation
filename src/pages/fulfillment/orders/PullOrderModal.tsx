@@ -51,7 +51,7 @@ export function PullOrderModal({ onClose, onImported }: Props) {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const res = await fetch(`${supabaseUrl}/functions/v1/woo-proxy`, {
+      const fetchRes = await fetch(`${supabaseUrl}/functions/v1/woo-proxy`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -66,30 +66,35 @@ export function PullOrderModal({ onClose, onImported }: Props) {
         }),
       });
 
-      const result = await res.json();
-      if (!res.ok || result.error) {
-        setError(result.error || 'Failed to fetch order from WooCommerce.');
+      const fetchResult = await fetchRes.json();
+      if (!fetchRes.ok || fetchResult.error) {
+        setError(fetchResult.error || 'Failed to fetch order from WooCommerce.');
         setLoading(false);
         return;
       }
 
-      const webhookUrl = `${supabaseUrl}/functions/v1/woo-webhook`;
-      const webhookRes = await fetch(webhookUrl, {
+      const importRes = await fetch(`${supabaseUrl}/functions/v1/woo-proxy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${supabaseKey}` },
-        body: JSON.stringify(result.order),
+        body: JSON.stringify({
+          action: 'import-order',
+          store_url: config.store_url,
+          consumer_key: config.consumer_key,
+          consumer_secret: config.consumer_secret,
+          order: fetchResult.order,
+        }),
       });
 
-      const webhookResult = await webhookRes.json();
-      if (!webhookRes.ok || webhookResult.error) {
-        setError(webhookResult.error || 'Failed to import order.');
+      const importResult = await importRes.json();
+      if (!importRes.ok || importResult.error) {
+        setError(importResult.error || 'Failed to import order.');
         setLoading(false);
         return;
       }
 
-      setSuccess(`Order imported successfully as ${webhookResult.order_number}.`);
+      setSuccess(`Order imported successfully as ${importResult.order_number}.`);
       setTimeout(() => {
-        onImported(webhookResult.order_id);
+        onImported(importResult.order_id);
         onClose();
       }, 1500);
     } catch (err: any) {

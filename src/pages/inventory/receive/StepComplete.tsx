@@ -13,7 +13,7 @@ function exportToExcel(po: POForReceiving, session: ReceiptSession) {
 
   const rows = session.lines.map(l => {
     const shortOver = l.qty_checked - l.ordered_qty;
-    const shortOverLabel = shortOver === 0 ? '—' : shortOver > 0 ? `+${shortOver} Over` : `${Math.abs(shortOver)} Short`;
+    const shortOverLabel = shortOver === 0 ? '-' : shortOver > 0 ? `+${shortOver} Over` : `${Math.abs(shortOver)} Short`;
     return [
       l.sku,
       l.product_name,
@@ -41,7 +41,7 @@ function exportToExcel(po: POForReceiving, session: ReceiptSession) {
     totalChecked,
     totalGood,
     totalDamaged,
-    totalShortOver === 0 ? '—' : totalShortOver > 0 ? `+${totalShortOver} Over` : `${Math.abs(totalShortOver)} Short`,
+    totalShortOver === 0 ? '-' : totalShortOver > 0 ? `+${totalShortOver} Over` : `${Math.abs(totalShortOver)} Short`,
     '',
     totalValue.toFixed(2)
   ];
@@ -50,16 +50,17 @@ function exportToExcel(po: POForReceiving, session: ReceiptSession) {
     ['PO Number', po.po_number],
     ['Supplier', po.supplier_name],
     ['Shipment Name', session.shipment_name],
-    ['Qty Check Date', session.qty_check_date || '—'],
-    ['QC Date', session.qc_date || '—'],
-    ['Notes — Qty Check', session.qty_check_notes || '—'],
-    ['Notes — QC', session.qc_notes || '—']
+    ['Qty Check Date', session.qty_check_date || '-'],
+    ['QC Date', session.qc_date || '-'],
+    ['Notes - Qty Check', session.qty_check_notes || '-'],
+    ['Notes - QC', session.qc_notes || '-']
   ];
 
-  const csvContent = [
-    `# RECEIVING REPORT — ${po.po_number} — ${session.shipment_name}`,
+  const BOM = '\uFEFF';
+  const csvContent = BOM + [
+    `# RECEIVING REPORT - ${po.po_number} - ${session.shipment_name}`,
     '',
-    headers.join(','),
+    headers.map(v => `"${v}"`).join(','),
     ...rows.map(r => r.map(v => `"${v}"`).join(',')),
     summaryRow.map(v => `"${v}"`).join(','),
     '',

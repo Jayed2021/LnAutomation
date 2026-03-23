@@ -15,7 +15,7 @@ interface PackagingProduct {
   id: string;
   sku: string;
   name: string;
-  cost_price: number;
+  selling_price: number;
 }
 
 export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
@@ -54,7 +54,7 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
       setSearching(true);
       const { data } = await supabase
         .from('products')
-        .select('id, sku, name, cost_price')
+        .select('id, sku, name, selling_price')
         .eq('is_active', true)
         .or(`name.ilike.%${searchQuery.trim()}%,sku.ilike.%${searchQuery.trim()}%`)
         .order('name')
@@ -83,14 +83,14 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
     if (!selectedProduct) return;
     setSaving(true);
     try {
-      const lineTotal = quantity * selectedProduct.cost_price;
+      const lineTotal = quantity * selectedProduct.selling_price;
       await supabase.from('order_packaging_items').insert({
         order_id: orderId,
         product_id: selectedProduct.id,
         sku: selectedProduct.sku,
         product_name: selectedProduct.name,
         quantity,
-        unit_cost: selectedProduct.cost_price,
+        unit_cost: selectedProduct.selling_price,
         line_total: lineTotal,
       });
       await logActivity(orderId, `Added packaging: ${selectedProduct.name} x${quantity}`, userId);
@@ -201,7 +201,7 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
                         <span className="font-medium">{product.name}</span>
                         <span className="ml-2 text-xs opacity-70">{product.sku}</span>
                       </div>
-                      {product.cost_price > 0 && <span className="text-xs opacity-70 shrink-0">৳{product.cost_price}</span>}
+                      {product.selling_price > 0 && <span className="text-xs opacity-70 shrink-0">৳{product.selling_price}</span>}
                     </button>
                   ))}
                 </div>
@@ -219,7 +219,7 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
           {selectedProduct && (
             <div className="text-xs text-gray-500 flex items-center gap-2">
               <span className="font-medium text-gray-700">{selectedProduct.name}</span>
-              {selectedProduct.cost_price > 0 && <span>· ৳{selectedProduct.cost_price} / unit</span>}
+              {selectedProduct.selling_price > 0 && <span>· ৳{selectedProduct.selling_price} / unit</span>}
             </div>
           )}
           <div className="flex gap-2">

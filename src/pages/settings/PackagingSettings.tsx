@@ -7,7 +7,7 @@ interface PackagingProduct {
   id: string;
   sku: string;
   name: string;
-  cost_price: number;
+  selling_price: number;
 }
 
 interface DefaultItem {
@@ -57,7 +57,7 @@ export default function PackagingSettings() {
       setSearching(true);
       const { data } = await supabase
         .from('products')
-        .select('id, sku, name, cost_price')
+        .select('id, sku, name, selling_price')
         .eq('is_active', true)
         .or(`name.ilike.%${searchQuery.trim()}%,sku.ilike.%${searchQuery.trim()}%`)
         .order('name')
@@ -96,7 +96,7 @@ export default function PackagingSettings() {
       product_id: product.id,
       sku: product.sku,
       product_name: product.name,
-      unit_cost: product.cost_price ?? 0,
+      unit_cost: product.selling_price ?? 0,
       quantity: 1,
     }]);
     setSearchQuery('');
@@ -201,7 +201,7 @@ export default function PackagingSettings() {
                         </div>
                         <div className="flex items-center gap-2 text-xs opacity-70 shrink-0">
                           {alreadyAdded && <span>Already added</span>}
-                          {!alreadyAdded && product.cost_price > 0 && <span>৳{product.cost_price}</span>}
+                          {!alreadyAdded && product.selling_price > 0 && <span>৳{product.selling_price}</span>}
                           {!alreadyAdded && <Plus className="w-3.5 h-3.5" />}
                         </div>
                       </button>

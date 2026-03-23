@@ -140,11 +140,18 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
       <div className="space-y-2">
         {items.map(item => (
           <div key={item.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-lg">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
-              <div className="text-xs text-gray-400">{item.sku}</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-gray-400">{item.sku}</span>
+                {item.source_item_name && (
+                  <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">
+                    For: {item.source_item_name}
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <span className="text-xs text-gray-500">Qty:</span>
               <input
                 type="number"
@@ -154,10 +161,10 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
                 className={`${inputCls} w-16 text-center`}
               />
             </div>
-            <span className="text-sm text-gray-700 w-20 text-right">
+            <span className="text-sm text-gray-700 w-20 text-right shrink-0">
               ৳{item.line_total.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
             </span>
-            <button onClick={() => handleRemove(item)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+            <button onClick={() => handleRemove(item)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors shrink-0">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>

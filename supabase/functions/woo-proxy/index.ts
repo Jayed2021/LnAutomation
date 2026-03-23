@@ -370,35 +370,51 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
         meta_data: filteredMeta.length > 0 ? filteredMeta : null,
       };
     });
-    await supabase.from("order_items").insert(itemsToInsert);
+    const { data: insertedItems } = await supabase.from("order_items").insert(itemsToInsert).select("id, unit_price");
+    const insertedOrderItems: Array<{ id: string; unit_price: number }> = insertedItems ?? [];
+
+    const { data: pkgSetting } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "default_packaging_materials")
+      .maybeSingle();
+
+    if (pkgSetting?.value && insertedOrderItems.length > 0) {
+      try {
+        const defaults = Array.isArray(pkgSetting.value) ? pkgSetting.value : JSON.parse(pkgSetting.value);
+        if (defaults.length > 0) {
+          const pkgRows: any[] = [];
+          for (const orderItem of insertedOrderItems) {
+            const unitPrice = orderItem.unit_price ?? 0;
+            for (const d of defaults) {
+              const minPrice = d.min_price != null ? Number(d.min_price) : null;
+              const maxPrice = d.max_price != null ? Number(d.max_price) : null;
+              const meetsMin = minPrice === null || unitPrice >= minPrice;
+              const meetsMax = maxPrice === null || unitPrice <= maxPrice;
+              if (meetsMin && meetsMax) {
+                pkgRows.push({
+                  order_id: orderId,
+                  product_id: d.product_id || null,
+                  sku: d.sku || "",
+                  product_name: d.product_name || "",
+                  quantity: d.quantity || 1,
+                  unit_cost: d.unit_cost || 0,
+                  line_total: (d.quantity || 1) * (d.unit_cost || 0),
+                  source_order_item_id: orderItem.id,
+                });
+              }
+            }
+          }
+          if (pkgRows.length > 0) {
+            await supabase.from("order_packaging_items").insert(pkgRows);
+          }
+        }
+      } catch {}
+    }
   }
 
   if (hasPrescription) {
     await supabase.from("orders").update({ has_prescription: true }).eq("id", orderId);
-  }
-
-  const { data: pkgSetting } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("key", "default_packaging_materials")
-    .maybeSingle();
-
-  if (pkgSetting?.value) {
-    try {
-      const defaults = Array.isArray(pkgSetting.value) ? pkgSetting.value : JSON.parse(pkgSetting.value);
-      if (defaults.length > 0) {
-        const pkgRows = defaults.map((d: any) => ({
-          order_id: orderId,
-          product_id: d.product_id || null,
-          sku: d.sku || "",
-          product_name: d.product_name || "",
-          quantity: d.quantity || 1,
-          unit_cost: d.unit_cost || 0,
-          line_total: (d.quantity || 1) * (d.unit_cost || 0),
-        }));
-        await supabase.from("order_packaging_items").insert(pkgRows);
-      }
-    } catch {}
   }
 
   await supabase.from("order_activity_log").insert({

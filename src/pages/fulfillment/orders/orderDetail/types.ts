@@ -135,4 +135,6 @@ export interface PackagingItem {
   quantity: number;
   unit_cost: number;
   line_total: number;
+  source_order_item_id: string | null;
+  source_item_name: string | null;
 }

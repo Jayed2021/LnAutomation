@@ -91,11 +91,21 @@ export async function fetchActivityLog(orderId: string): Promise<ActivityLog[]> 
 export async function fetchPackagingItems(orderId: string): Promise<PackagingItem[]> {
   const { data, error } = await supabase
     .from('order_packaging_items')
-    .select('id, product_id, sku, product_name, quantity, unit_cost, line_total')
+    .select('id, product_id, sku, product_name, quantity, unit_cost, line_total, source_order_item_id, source_item:order_items!order_packaging_items_source_order_item_id_fkey(product_name)')
     .eq('order_id', orderId)
     .order('created_at');
   if (error) throw error;
-  return (data ?? []) as PackagingItem[];
+  return ((data ?? []) as any[]).map(row => ({
+    id: row.id,
+    product_id: row.product_id,
+    sku: row.sku,
+    product_name: row.product_name,
+    quantity: row.quantity,
+    unit_cost: row.unit_cost,
+    line_total: row.line_total,
+    source_order_item_id: row.source_order_item_id ?? null,
+    source_item_name: row.source_item?.product_name ?? null,
+  }));
 }
 
 export async function logActivity(orderId: string, action: string, userId: string | null) {

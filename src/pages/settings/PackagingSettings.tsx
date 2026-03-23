@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, Plus, Trash2, Save, Package } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Trash2, Save, Package, Info } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface PackagingProduct {
@@ -16,6 +16,8 @@ interface DefaultItem {
   product_name: string;
   unit_cost: number;
   quantity: number;
+  min_price: number | null;
+  max_price: number | null;
 }
 
 export default function PackagingSettings() {
@@ -78,7 +80,13 @@ export default function PackagingSettings() {
     if (data?.value) {
       try {
         const parsed = typeof data.value === 'string' ? JSON.parse(data.value) : data.value;
-        setDefaults(Array.isArray(parsed) ? parsed as DefaultItem[] : []);
+        if (Array.isArray(parsed)) {
+          setDefaults(parsed.map((d: any) => ({
+            ...d,
+            min_price: d.min_price ?? null,
+            max_price: d.max_price ?? null,
+          })));
+        }
       } catch {
         setDefaults([]);
       }
@@ -98,6 +106,8 @@ export default function PackagingSettings() {
       product_name: product.name,
       unit_cost: product.selling_price ?? 0,
       quantity: 1,
+      min_price: null,
+      max_price: null,
     }]);
     setSearchQuery('');
     setDropdownOpen(false);
@@ -108,9 +118,9 @@ export default function PackagingSettings() {
     setDefaults(prev => prev.filter(d => d.product_id !== productId));
   };
 
-  const handleQtyChange = (productId: string, qty: number) => {
+  const handleFieldChange = (productId: string, field: keyof DefaultItem, value: number | null) => {
     setDefaults(prev => prev.map(d =>
-      d.product_id === productId ? { ...d, quantity: Math.max(1, qty) } : d
+      d.product_id === productId ? { ...d, [field]: value } : d
     ));
   };
 
@@ -139,9 +149,10 @@ export default function PackagingSettings() {
   };
 
   const inputCls = 'px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500';
+  const priceInputCls = 'px-2 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-24 text-center';
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-5xl">
       <div className="flex items-center gap-3">
         <button
           onClick={() => navigate('/settings')}
@@ -152,9 +163,16 @@ export default function PackagingSettings() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Default Packaging Materials</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            These packaging materials will be automatically added to every new order imported from WooCommerce.
+            These packaging rules are applied per matching item in every new order imported from WooCommerce.
           </p>
         </div>
+      </div>
+
+      <div className="flex items-start gap-2.5 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-800">
+        <Info className="w-4 h-4 mt-0.5 shrink-0 text-blue-500" />
+        <p>
+          Each rule is applied once per order item. Use the <strong>Min Price</strong> and <strong>Max Price</strong> fields to restrict a rule to items within a price range (in ৳). Leave both blank to apply the rule to every item regardless of price.
+        </p>
       </div>
 
       {loading ? (
@@ -166,7 +184,7 @@ export default function PackagingSettings() {
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
           <div>
-            <div className="text-sm font-medium text-gray-700 mb-2">Add packaging material</div>
+            <div className="text-sm font-medium text-gray-700 mb-2">Add packaging rule</div>
             <div className="relative" ref={searchRef}>
               <div
                 className={`flex items-center gap-2 px-3 py-2 border rounded-lg text-sm cursor-text ${dropdownOpen ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-200'}`}
@@ -216,19 +234,21 @@ export default function PackagingSettings() {
             {defaults.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-gray-400">
                 <Package className="w-8 h-8 mb-2 opacity-40" />
-                <p className="text-sm">No default packaging materials configured.</p>
+                <p className="text-sm">No default packaging rules configured.</p>
                 <p className="text-xs mt-1">Search above to add items.</p>
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 pb-1">
+                <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-3 px-3 pb-1 items-center">
                   <span className="text-xs font-semibold text-gray-500">Product</span>
-                  <span className="text-xs font-semibold text-gray-500 w-24 text-center">Qty</span>
+                  <span className="text-xs font-semibold text-gray-500 w-16 text-center">Qty</span>
                   <span className="text-xs font-semibold text-gray-500 w-24 text-right">Unit Cost</span>
+                  <span className="text-xs font-semibold text-gray-500 w-24 text-center">Min Price (৳)</span>
+                  <span className="text-xs font-semibold text-gray-500 w-24 text-center">Max Price (৳)</span>
                   <span className="w-8" />
                 </div>
                 {defaults.map(item => (
-                  <div key={item.product_id} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center p-3 border border-gray-100 rounded-lg hover:border-gray-200 transition-colors">
+                  <div key={item.product_id} className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-3 items-center p-3 border border-gray-100 rounded-lg hover:border-gray-200 transition-colors">
                     <div>
                       <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
                       <div className="text-xs text-gray-400">{item.sku}</div>
@@ -237,12 +257,30 @@ export default function PackagingSettings() {
                       type="number"
                       min={1}
                       value={item.quantity}
-                      onChange={e => handleQtyChange(item.product_id, parseInt(e.target.value) || 1)}
-                      className={`${inputCls} w-24 text-center`}
+                      onChange={e => handleFieldChange(item.product_id, 'quantity', parseInt(e.target.value) || 1)}
+                      className={`${inputCls} w-16 text-center`}
                     />
                     <span className="text-sm text-gray-600 w-24 text-right">
                       {item.unit_cost > 0 ? `৳${item.unit_cost}` : '—'}
                     </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={item.min_price ?? ''}
+                      onChange={e => handleFieldChange(item.product_id, 'min_price', e.target.value === '' ? null : parseFloat(e.target.value))}
+                      placeholder="Any"
+                      className={priceInputCls}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={item.max_price ?? ''}
+                      onChange={e => handleFieldChange(item.product_id, 'max_price', e.target.value === '' ? null : parseFloat(e.target.value))}
+                      placeholder="Any"
+                      className={priceInputCls}
+                    />
                     <button
                       onClick={() => handleRemove(item.product_id)}
                       className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -257,7 +295,7 @@ export default function PackagingSettings() {
 
           <div className="flex items-center justify-between pt-2 border-t border-gray-100">
             <p className="text-xs text-gray-400">
-              {defaults.length} item{defaults.length !== 1 ? 's' : ''} will be added to new orders
+              {defaults.length} rule{defaults.length !== 1 ? 's' : ''} will be applied per matching item on new orders
             </p>
             <button
               onClick={handleSave}
@@ -265,7 +303,7 @@ export default function PackagingSettings() {
               className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition-colors"
             >
               <Save className="w-4 h-4" />
-              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Defaults'}
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Rules'}
             </button>
           </div>
         </div>

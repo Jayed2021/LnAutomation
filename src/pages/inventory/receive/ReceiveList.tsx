@@ -9,9 +9,10 @@ import type { POForReceiving, Location } from './types';
 interface Props {
   onSelectPO: (po: POForReceiving, locations: Location[], resumeSessionId?: string) => void;
   refreshTrigger: number;
+  onLoadComplete?: () => void;
 }
 
-export default function ReceiveList({ onSelectPO, refreshTrigger }: Props) {
+export default function ReceiveList({ onSelectPO, refreshTrigger, onLoadComplete }: Props) {
   const [pos, setPos] = useState<POForReceiving[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +29,7 @@ export default function ReceiveList({ onSelectPO, refreshTrigger }: Props) {
       setLocations(data.locations);
     } finally {
       setLoading(false);
+      onLoadComplete?.();
     }
   };
 

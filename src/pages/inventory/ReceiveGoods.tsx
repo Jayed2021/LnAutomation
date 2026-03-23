@@ -45,6 +45,7 @@ export default function ReceiveGoods() {
         <ReceiveList
           onSelectPO={handleSelectPO}
           refreshTrigger={listRefresh + lastRefreshed}
+          onLoadComplete={() => setRefreshing(false)}
         />
       </div>
     );

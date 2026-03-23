@@ -55,7 +55,6 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
       const { data } = await supabase
         .from('products')
         .select('id, sku, name, cost_price')
-        .eq('product_type', 'packaging_material')
         .eq('is_active', true)
         .or(`name.ilike.%${searchQuery.trim()}%,sku.ilike.%${searchQuery.trim()}%`)
         .order('name')

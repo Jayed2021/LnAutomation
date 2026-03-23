@@ -289,50 +289,56 @@ export default function PurchaseOrderDetail() {
     if (!po || completedSessions.length === 0) return;
 
     const allLines = completedSessions.flatMap(s => s.lines);
-    const headers = ['Shipment', 'SKU', 'Product Name', 'Ordered', 'Received', 'QC Passed', 'Damaged', 'Short/Over', 'Landed Cost', 'Total Value'];
+    const headers = ['Shipment', 'SKU', 'Product Name', 'PO Ordered', 'Received', 'QC Passed', 'Damaged', 'Landed Cost', 'Total Value'];
+
+    const orderedBySku: Record<string, number> = {};
+    for (const item of items) {
+      orderedBySku[item.sku] = item.ordered_quantity;
+    }
 
     const rows = completedSessions.flatMap(session =>
       session.lines.map(l => {
-        const diff = l.qty_checked - l.ordered_qty;
         return [
           session.shipment_name,
           l.sku,
           l.product_name,
-          l.ordered_qty,
+          orderedBySku[l.sku] ?? l.ordered_qty,
           l.qty_checked,
           l.qty_good,
           l.qty_damaged,
-          diff === 0 ? 'Match' : diff > 0 ? `+${diff} Over` : `${Math.abs(diff)} Short`,
           l.landed_cost_per_unit,
           (l.qty_good * l.landed_cost_per_unit).toFixed(2)
         ];
       })
     );
 
-    const totalOrdered = allLines.reduce((s, l) => s + l.ordered_qty, 0);
+    const totalOrdered = items.reduce((s, i) => s + i.ordered_quantity, 0);
     const totalChecked = allLines.reduce((s, l) => s + l.qty_checked, 0);
     const totalGood = allLines.reduce((s, l) => s + l.qty_good, 0);
     const totalDamaged = allLines.reduce((s, l) => s + l.qty_damaged, 0);
     const totalValue = allLines.reduce((s, l) => s + l.qty_good * l.landed_cost_per_unit, 0);
     const totalDiff = totalChecked - totalOrdered;
+    const shortOver = totalDiff === 0 ? 'Match' : totalDiff > 0 ? `+${totalDiff} Over` : `${Math.abs(totalDiff)} Short`;
 
     const summaryRow = [
       'TOTAL', '', '', totalOrdered, totalChecked, totalGood, totalDamaged,
-      totalDiff === 0 ? 'Match' : totalDiff > 0 ? `+${totalDiff} Over` : `${Math.abs(totalDiff)} Short`,
-      '', totalValue.toFixed(2)
+      `${shortOver}`, totalValue.toFixed(2)
     ];
 
     const metaRows = [
       ['PO Number', po.po_number],
       ['Supplier', po.supplier.name],
       ['Shipments', completedSessions.map(s => s.shipment_name).join(', ')],
+      ['Total Ordered', totalOrdered],
+      ['Total Received (Good)', totalGood],
+      ['Total Damaged', totalDamaged],
       ['Report Date', new Date().toLocaleDateString()],
     ];
 
     const csvContent = [
-      `# RECEIVING REPORT — ${po.po_number}`,
+      `\uFEFF# RECEIVING REPORT - ${po.po_number}`,
       '',
-      headers.join(','),
+      headers.map(h => `"${h}"`).join(','),
       ...rows.map(r => r.map(v => `"${v}"`).join(',')),
       summaryRow.map(v => `"${v}"`).join(','),
       '',

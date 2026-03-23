@@ -222,7 +222,7 @@ export async function finalizeQtyCheck(
     updatedLines.push({ ...line, lot_id: lot?.id || null });
   }
 
-  await updatePOStatus(po.id);
+  await updatePOStatus(po.id, false);
 
   const updatedSession: ReceiptSession = {
     ...session,
@@ -354,7 +354,7 @@ export async function finalizeQC(
     });
   }
 
-  await updatePOStatus(po.id);
+  await updatePOStatus(po.id, true);
 
   const completedSession: ReceiptSession = {
     ...session,
@@ -364,18 +364,25 @@ export async function finalizeQC(
   return upsertSession(completedSession, userId);
 }
 
-async function updatePOStatus(poId: string) {
+async function updatePOStatus(poId: string, allowComplete: boolean) {
   const { data: updatedItems } = await supabase
     .from('purchase_order_items')
     .select('ordered_quantity, received_quantity')
     .eq('po_id', poId);
   const totalOrdered = (updatedItems || []).reduce((s, i) => s + (i.ordered_quantity ?? 0), 0);
   const totalReceived = (updatedItems || []).reduce((s, i) => s + (i.received_quantity ?? 0), 0);
-  if (totalReceived >= totalOrdered) {
-    await supabase.from('purchase_orders').update({ status: 'received_complete' }).eq('id', poId);
-  } else {
-    await supabase.from('purchase_orders').update({ status: 'partially_received' }).eq('id', poId);
+  if (allowComplete && totalReceived >= totalOrdered) {
+    const { data: incompleteSessions } = await supabase
+      .from('goods_receipt_sessions')
+      .select('id')
+      .eq('po_id', poId)
+      .neq('step', 'complete');
+    if ((incompleteSessions || []).length === 0) {
+      await supabase.from('purchase_orders').update({ status: 'received_complete' }).eq('id', poId);
+      return;
+    }
   }
+  await supabase.from('purchase_orders').update({ status: 'partially_received' }).eq('id', poId);
 }
 
 export async function uploadReceiptPhoto(

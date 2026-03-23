@@ -22,7 +22,7 @@ function buildDefaultLines(po: POForReceiving, shipmentName: string, defaultLoca
     sku: item.sku,
     product_name: item.product_name,
     product_image_url: item.product_image_url,
-    ordered_qty: item.remaining,
+    ordered_qty: item.ordered_quantity,
     qty_checked: item.remaining,
     qty_good: item.remaining,
     qty_damaged: 0,

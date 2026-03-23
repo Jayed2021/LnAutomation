@@ -648,7 +648,6 @@ export default function Orders() {
                           <div className="text-sm font-semibold text-gray-900">
                             #{order.woo_order_id ?? order.order_number}
                           </div>
-                          <div className="text-xs text-gray-400">{order.order_number}</div>
                         </div>
                         {order.has_prescription && (
                           <div

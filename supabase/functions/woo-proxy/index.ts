@@ -185,7 +185,8 @@ function mapWooStatus(wooStatus: string): string {
   }
 }
 
-function isPrescriptionMeta(key: string): boolean {
+function isPrescriptionMeta(key: any): boolean {
+  if (typeof key !== "string") return false;
   const lower = key.toLowerCase();
   return (
     lower.includes("prescription") ||
@@ -204,7 +205,8 @@ function isPrescriptionMeta(key: string): boolean {
 
 const LENS_FEE_KEYWORDS = ["lens", "power", "anti-blue", "antiblue", "anti blue", "coating", "prescription", "rx"];
 
-function isLensFee(name: string): boolean {
+function isLensFee(name: any): boolean {
+  if (typeof name !== "string") return false;
   const lower = name.toLowerCase();
   return LENS_FEE_KEYWORDS.some((kw) => lower.includes(kw));
 }
@@ -350,8 +352,8 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
       skuMap[p.sku] = p.id;
     }
     const itemsToInsert = lineItems.map((item: any) => {
-      const rawMeta: Array<{ key: string; value: string }> = item.meta_data || [];
-      const filteredMeta = rawMeta.filter((m) => !m.key.startsWith("_"));
+      const rawMeta: Array<{ key: any; value: any }> = item.meta_data || [];
+      const filteredMeta = rawMeta.filter((m) => typeof m.key === "string" && !m.key.startsWith("_"));
       if (filteredMeta.some((m) => isPrescriptionMeta(m.key) || isPrescriptionMeta(m.value))) {
         hasPrescription = true;
       }
@@ -458,8 +460,8 @@ async function resyncOrderFromWoo(
 
   const lineItems = wooOrder.line_items || [];
   for (const item of lineItems) {
-    const rawMeta: Array<{ key: string; value: string }> = item.meta_data || [];
-    const filteredMeta = rawMeta.filter((m) => !m.key.startsWith("_"));
+    const rawMeta: Array<{ key: any; value: any }> = item.meta_data || [];
+    const filteredMeta = rawMeta.filter((m) => typeof m.key === "string" && !m.key.startsWith("_"));
     if (filteredMeta.some((m) => isPrescriptionMeta(m.key) || isPrescriptionMeta(m.value))) {
       hasPrescription = true;
     }

@@ -1,18 +1,24 @@
+import { useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { BarChart3, TrendingUp, Package, DollarSign, Users, FileText } from 'lucide-react';
+import { BarChart3, TrendingUp, Package, DollarSign, Users, FileText, Lock, ArrowRight } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Reports() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const isAdmin = user?.role === 'admin';
+
   const reportCategories = [
     {
       title: 'Sales Reports',
       icon: TrendingUp,
       color: 'emerald',
       reports: [
-        'Daily Sales Summary',
-        'Sales by Product',
-        'Sales by Customer',
-        'Sales Trend Analysis'
+        { name: 'Daily Sales Summary', route: null },
+        { name: 'Sales by Product', route: null },
+        { name: 'Sales by Customer', route: null },
+        { name: 'Sales Trend Analysis', route: null },
       ]
     },
     {
@@ -20,10 +26,10 @@ export default function Reports() {
       icon: Package,
       color: 'blue',
       reports: [
-        'Stock Level Report',
-        'Low Stock Alert',
-        'Inventory Valuation',
-        'Movement History'
+        { name: 'Stock Level Report', route: null },
+        { name: 'Low Stock Alert', route: null },
+        { name: 'Inventory Valuation', route: null },
+        { name: 'Movement History', route: null },
       ]
     },
     {
@@ -31,10 +37,10 @@ export default function Reports() {
       icon: DollarSign,
       color: 'green',
       reports: [
-        'Profit & Loss',
-        'Cash Flow Statement',
-        'Outstanding Payments',
-        'Expense Analysis'
+        { name: 'Profit & Loss', route: '/reports/profit-loss', adminOnly: true },
+        { name: 'Cash Flow Statement', route: null },
+        { name: 'Outstanding Payments', route: null },
+        { name: 'Expense Analysis', route: null },
       ]
     },
     {
@@ -42,10 +48,10 @@ export default function Reports() {
       icon: Users,
       color: 'amber',
       reports: [
-        'Customer Analytics',
-        'Top Customers',
-        'Customer Payment History',
-        'Customer Returns'
+        { name: 'Customer Analytics', route: null },
+        { name: 'Top Customers', route: null },
+        { name: 'Customer Payment History', route: null },
+        { name: 'Customer Returns', route: null },
       ]
     },
   ];
@@ -81,22 +87,54 @@ export default function Reports() {
                 </div>
               </div>
               <div className="p-6 space-y-3">
-                {category.reports.map((report) => (
-                  <div
-                    key={report}
-                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
-                      <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
-                        {report}
-                      </span>
+                {category.reports.map((report) => {
+                  const isLocked = report.adminOnly && !isAdmin;
+                  const isClickable = !!report.route && !isLocked;
+
+                  return (
+                    <div
+                      key={report.name}
+                      onClick={() => isClickable && navigate(report.route!)}
+                      className={`flex items-center justify-between p-3 rounded-lg transition-colors group ${
+                        isClickable
+                          ? 'bg-gray-50 hover:bg-blue-50 hover:border-blue-200 border border-transparent cursor-pointer'
+                          : isLocked
+                          ? 'bg-gray-50 border border-transparent opacity-60 cursor-not-allowed'
+                          : 'bg-gray-50 border border-transparent cursor-default'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {isLocked
+                          ? <Lock className="w-4 h-4 text-gray-400 shrink-0" />
+                          : <FileText className={`w-4 h-4 shrink-0 transition-colors ${isClickable ? 'text-gray-400 group-hover:text-blue-500' : 'text-gray-400'}`} />
+                        }
+                        <div>
+                          <span className={`text-sm font-medium transition-colors ${
+                            isClickable ? 'text-gray-700 group-hover:text-blue-700' : 'text-gray-700'
+                          }`}>
+                            {report.name}
+                          </span>
+                          {report.adminOnly && isAdmin && (
+                            <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">
+                              Live
+                            </span>
+                          )}
+                          {isLocked && (
+                            <span className="ml-2 text-xs text-gray-400">Admin only</span>
+                          )}
+                        </div>
+                      </div>
+                      {isClickable && (
+                        <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100" />
+                      )}
+                      {!isClickable && !isLocked && (
+                        <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity" disabled>
+                          Coming Soon
+                        </Button>
+                      )}
                     </div>
-                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                      Generate
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           );
@@ -113,8 +151,8 @@ export default function Reports() {
             <p className="text-sm text-gray-500">Build custom reports with filters and date ranges</p>
           </div>
         </div>
-        <Button className="w-full md:w-auto">
-          Create Custom Report
+        <Button className="w-full md:w-auto" disabled>
+          Coming Soon
         </Button>
       </Card>
     </div>

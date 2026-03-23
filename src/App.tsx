@@ -33,6 +33,7 @@ import WooCommerceSettings from './pages/settings/WooCommerceSettings';
 import BarcodeSettings from './pages/settings/BarcodeSettings';
 import PackagingSettings from './pages/settings/PackagingSettings';
 import ComingSoon from './pages/ComingSoon';
+import ProfitLoss from './pages/reports/ProfitLoss';
 
 function App() {
   return (
@@ -83,6 +84,7 @@ function App() {
 
             <Route path="customers" element={<ComingSoon moduleName="Customers" />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="reports/profit-loss" element={<ProfitLoss />} />
             <Route path="settings" element={<Settings />} />
             <Route path="settings/woocommerce" element={<WooCommerceSettings />} />
             <Route path="settings/barcode" element={<BarcodeSettings />} />

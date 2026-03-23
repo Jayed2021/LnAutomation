@@ -8,6 +8,7 @@ interface PackagingProduct {
   sku: string;
   name: string;
   selling_price: number;
+  avg_landed_cost: number;
 }
 
 interface DefaultItem {
@@ -57,14 +58,39 @@ export default function PackagingSettings() {
     }
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
-      const { data } = await supabase
+      const { data: products } = await supabase
         .from('products')
         .select('id, sku, name, selling_price')
         .eq('is_active', true)
+        .eq('product_type', 'packaging_material')
         .or(`name.ilike.%${searchQuery.trim()}%,sku.ilike.%${searchQuery.trim()}%`)
         .order('name')
         .limit(20);
-      setSearchResults((data ?? []) as PackagingProduct[]);
+
+      if (!products || products.length === 0) {
+        setSearchResults([]);
+        setDropdownOpen(true);
+        setSearching(false);
+        return;
+      }
+
+      const productIds = products.map(p => p.id);
+      const { data: costData } = await supabase
+        .from('product_avg_landed_cost')
+        .select('product_id, avg_landed_cost')
+        .in('product_id', productIds);
+
+      const costMap = new Map((costData ?? []).map(c => [c.product_id, Number(c.avg_landed_cost)]));
+
+      const results: PackagingProduct[] = products.map(p => ({
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        selling_price: p.selling_price ?? 0,
+        avg_landed_cost: costMap.get(p.id) ?? 0,
+      }));
+
+      setSearchResults(results);
       setDropdownOpen(true);
       setSearching(false);
     }, 250);
@@ -104,7 +130,7 @@ export default function PackagingSettings() {
       product_id: product.id,
       sku: product.sku,
       product_name: product.name,
-      unit_cost: product.selling_price ?? 0,
+      unit_cost: product.avg_landed_cost > 0 ? product.avg_landed_cost : (product.selling_price ?? 0),
       quantity: 1,
       min_price: null,
       max_price: null,
@@ -219,7 +245,7 @@ export default function PackagingSettings() {
                         </div>
                         <div className="flex items-center gap-2 text-xs opacity-70 shrink-0">
                           {alreadyAdded && <span>Already added</span>}
-                          {!alreadyAdded && product.selling_price > 0 && <span>৳{product.selling_price}</span>}
+                          {!alreadyAdded && product.avg_landed_cost > 0 && <span>avg cost ৳{product.avg_landed_cost}</span>}
                           {!alreadyAdded && <Plus className="w-3.5 h-3.5" />}
                         </div>
                       </button>

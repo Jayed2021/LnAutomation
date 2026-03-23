@@ -95,8 +95,9 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     }
   };
 
-  const isConfirmable = ['new_not_called', 'new_called'].includes(order.cs_status);
-  const isConfirmed = !['new_not_called', 'new_called'].includes(order.cs_status);
+  const CONFIRMABLE_STATUSES = ['new_not_called', 'new_called', 'in_lab', 'awaiting_payment', 'late_delivery'];
+  const isConfirmable = CONFIRMABLE_STATUSES.includes(order.cs_status);
+  const isConfirmed = !CONFIRMABLE_STATUSES.includes(order.cs_status);
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">

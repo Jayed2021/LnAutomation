@@ -21,11 +21,11 @@ interface CancellationReason {
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
 
 const AVAILABLE_ACTIONS: Record<string, string[]> = {
-  new_not_called:    ['new_called', 'send_to_lab', 'confirmed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  new_called:        ['confirmed', 'send_to_lab', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  new_not_called:    ['new_called', 'send_to_lab', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  new_called:        ['send_to_lab', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
   confirmed:         ['send_to_lab', 'not_printed', 'awaiting_payment', 'late_delivery', 'exchange', 'cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
-  awaiting_payment:  ['confirmed', 'cancel_before_dispatch', 'refund'],
-  late_delivery:     ['confirmed', 'cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
+  awaiting_payment:  ['cancel_before_dispatch', 'refund'],
+  late_delivery:     ['cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
   send_to_lab:       ['in_lab', 'cancel_before_dispatch', 'refund'],
   in_lab:            ['packed', 'cancel_before_dispatch', 'refund'],
   not_printed:       ['printed', 'exchange', 'cancel_before_dispatch', 'cancel_after_dispatch', 'mark_processing', 'refund'],
@@ -427,7 +427,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
                 <ChevronDown className="w-4 h-4 text-gray-400" />
               </button>
               {showDropdown && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 max-h-64 overflow-y-auto">
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 overflow-y-auto">
                   {availableActions.map(action => {
                     const isLocked = action === 'mark_processing' && !isWarehouseRole;
                     return (

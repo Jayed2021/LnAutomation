@@ -354,23 +354,28 @@ export async function finalizeQC(
     });
   }
 
-  await updatePOStatus(po.id, true);
-
   const completedSession: ReceiptSession = {
     ...session,
     step: 'complete',
     shipment_db_id: shipmentDbId
   };
-  return upsertSession(completedSession, userId);
+  const sessionId = await upsertSession(completedSession, userId);
+  await updatePOStatus(po.id, true);
+  return sessionId;
 }
 
 async function updatePOStatus(poId: string, allowComplete: boolean) {
-  const { data: updatedItems } = await supabase
-    .from('purchase_order_items')
-    .select('ordered_quantity, received_quantity')
-    .eq('po_id', poId);
-  const totalOrdered = (updatedItems || []).reduce((s, i) => s + (i.ordered_quantity ?? 0), 0);
-  const totalReceived = (updatedItems || []).reduce((s, i) => s + (i.received_quantity ?? 0), 0);
+  const [itemsRes, currentPORes] = await Promise.all([
+    supabase.from('purchase_order_items').select('ordered_quantity, received_quantity').eq('po_id', poId),
+    supabase.from('purchase_orders').select('status').eq('id', poId).maybeSingle()
+  ]);
+
+  const currentStatus = currentPORes.data?.status;
+  if (currentStatus === 'closed' || currentStatus === 'received_complete') return;
+
+  const totalOrdered = (itemsRes.data || []).reduce((s, i) => s + (i.ordered_quantity ?? 0), 0);
+  const totalReceived = (itemsRes.data || []).reduce((s, i) => s + (i.received_quantity ?? 0), 0);
+
   if (allowComplete && totalReceived >= totalOrdered) {
     const { data: incompleteSessions } = await supabase
       .from('goods_receipt_sessions')
@@ -382,7 +387,10 @@ async function updatePOStatus(poId: string, allowComplete: boolean) {
       return;
     }
   }
-  await supabase.from('purchase_orders').update({ status: 'partially_received' }).eq('id', poId);
+
+  if (totalReceived > 0) {
+    await supabase.from('purchase_orders').update({ status: 'partially_received' }).eq('id', poId);
+  }
 }
 
 export async function uploadReceiptPhoto(

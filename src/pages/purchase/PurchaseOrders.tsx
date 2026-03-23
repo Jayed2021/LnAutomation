@@ -16,6 +16,7 @@ interface PurchaseOrder {
   currency: string;
   created_at: string;
   status: string;
+  closed_as_partial: boolean;
   items_count: number;
   total_value: number;
 }
@@ -61,6 +62,7 @@ export default function PurchaseOrders() {
         currency,
         created_at,
         status,
+        closed_as_partial,
         suppliers!inner(name, code),
         purchase_order_items(ordered_quantity, unit_price)
       `)
@@ -87,6 +89,7 @@ export default function PurchaseOrders() {
         currency: row.currency,
         created_at: row.created_at,
         status: row.status,
+        closed_as_partial: row.closed_as_partial || false,
         items_count: items.length,
         total_value,
       };
@@ -263,12 +266,20 @@ export default function PurchaseOrders() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <Badge variant={STATUS_COLORS[order.status] as any}>
-                        <span className="flex items-center gap-1">
-                          {getStatusIcon(order.status)}
-                          {STATUS_LABELS[order.status] || order.status}
-                        </span>
-                      </Badge>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant={STATUS_COLORS[order.status] as any}>
+                          <span className="flex items-center gap-1">
+                            {getStatusIcon(order.status)}
+                            {STATUS_LABELS[order.status] || order.status}
+                          </span>
+                        </Badge>
+                        {order.status === 'closed' && order.closed_as_partial && (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                            <Clock className="w-3 h-3" />
+                            Partial
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <Button

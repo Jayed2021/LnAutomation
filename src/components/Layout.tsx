@@ -36,11 +36,29 @@ export const Layout: React.FC = () => {
 
   useEffect(() => {
     const fetchCount = async () => {
-      const { count } = await supabase
-        .from('purchase_orders')
-        .select('id', { count: 'exact', head: true })
-        .in('status', ['ordered', 'confirmed', 'partially_received']);
-      setReceiveGoodsCount(count ?? 0);
+      const [directRes, partialRes, sessionsRes] = await Promise.all([
+        supabase
+          .from('purchase_orders')
+          .select('id', { count: 'exact', head: true })
+          .in('status', ['ordered', 'confirmed']),
+        supabase
+          .from('purchase_orders')
+          .select('id, purchase_order_items!inner(ordered_quantity, received_quantity)')
+          .eq('status', 'partially_received'),
+        supabase
+          .from('goods_receipt_sessions')
+          .select('po_id')
+          .neq('step', 'complete')
+      ]);
+
+      const activePOIds = new Set((sessionsRes.data || []).map((s: any) => s.po_id));
+      const partialWithWork = (partialRes.data || []).filter((po: any) => {
+        if (activePOIds.has(po.id)) return true;
+        const items = po.purchase_order_items || [];
+        return items.some((i: any) => (i.ordered_quantity ?? 0) > (i.received_quantity ?? 0));
+      });
+
+      setReceiveGoodsCount((directRes.count ?? 0) + partialWithWork.length);
     };
     fetchCount();
   }, [isRefreshing]);

@@ -10,6 +10,7 @@ interface PODetail {
   po_number: string;
   shipment_name: string | null;
   status: string;
+  closed_as_partial: boolean;
   currency: string;
   usd_to_bdt_rate: number;
   cny_to_bdt_rate: number;
@@ -124,7 +125,7 @@ export default function PurchaseOrderDetail() {
     const { data: poData, error: poError } = await supabase
       .from('purchase_orders')
       .select(`
-        id, po_number, shipment_name, status, currency,
+        id, po_number, shipment_name, status, closed_as_partial, currency,
         usd_to_bdt_rate, cny_to_bdt_rate, usd_to_cny_rate, exchange_rate_to_bdt,
         expected_delivery_date, created_at,
         total_weight_kg, number_of_cartons, shipping_cost_bdt, is_payment_complete,
@@ -143,6 +144,7 @@ export default function PurchaseOrderDetail() {
       po_number: poData.po_number,
       shipment_name: poData.shipment_name,
       status: poData.status,
+      closed_as_partial: (poData as any).closed_as_partial || false,
       currency: poData.currency,
       usd_to_bdt_rate: poData.usd_to_bdt_rate || 110,
       cny_to_bdt_rate: poData.cny_to_bdt_rate || 15.17,
@@ -359,11 +361,12 @@ export default function PurchaseOrderDetail() {
   const closePO = async () => {
     if (!po || !reportGenerated) return;
     setClosingPO(true);
+    const isPartialClose = po.status === 'partially_received';
     await supabase
       .from('purchase_orders')
-      .update({ status: 'closed', updated_at: new Date().toISOString() })
+      .update({ status: 'closed', closed_as_partial: isPartialClose, updated_at: new Date().toISOString() })
       .eq('id', po.id);
-    setPo(prev => prev ? { ...prev, status: 'closed' } : prev);
+    setPo(prev => prev ? { ...prev, status: 'closed', closed_as_partial: isPartialClose } : prev);
     setClosingPO(false);
   };
 
@@ -545,7 +548,7 @@ export default function PurchaseOrderDetail() {
               Mark as Ordered
             </button>
           )}
-          {po.status === 'received_complete' && (
+          {(po.status === 'received_complete' || po.status === 'partially_received') && (
             <>
               <button
                 onClick={generateReceivingReport}
@@ -589,6 +592,23 @@ export default function PurchaseOrderDetail() {
         </div>
       )}
 
+      {po.status === 'partially_received' && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-amber-800">Partially received — admin close available</p>
+            <p className="text-sm text-amber-700 mt-0.5">
+              Not all items have been fully received. You may still generate a report and close this PO. The closed order will be marked as partially received.
+            </p>
+          </div>
+          {reportGenerated && (
+            <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-1 rounded-full shrink-0">
+              Report downloaded
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Supplier</p>
@@ -605,13 +625,19 @@ export default function PurchaseOrderDetail() {
 
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Status</p>
-          <div className="mb-2">
+          <div className="flex items-center flex-wrap gap-2 mb-2">
             <Badge variant={STATUS_COLORS[po.status] as any}>
               <span className="flex items-center gap-1">
                 {po.status === 'closed' ? <Check className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
                 {STATUS_LABELS[po.status] || po.status}
               </span>
             </Badge>
+            {po.status === 'closed' && po.closed_as_partial && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                <Clock className="w-3 h-3" />
+                Partially Received
+              </span>
+            )}
           </div>
           <p className="text-xs text-gray-500">
             Created {formatDate(po.created_at)}

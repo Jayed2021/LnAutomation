@@ -39,7 +39,7 @@ export function PullOrderModal({ onClose, onImported }: Props) {
       const { data: config } = await supabase
         .from('woocommerce_config')
         .select('store_url, consumer_key, consumer_secret')
-        .eq('is_active', true)
+        .eq('is_connected', true)
         .maybeSingle();
 
       if (!config) {

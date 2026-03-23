@@ -1,0 +1,114 @@
+export interface OrderDetail {
+  id: string;
+  order_number: string;
+  woo_order_id: number | null;
+  woo_order_number: string | null;
+  order_date: string;
+  created_at: string;
+  cs_status: string;
+  fulfillment_status: string | null;
+  payment_method: string | null;
+  payment_status: string;
+  payment_reference: string | null;
+  subtotal: number;
+  discount_amount: number;
+  shipping_fee: number;
+  total_amount: number;
+  order_source: string | null;
+  conversation_url: string | null;
+  meta_screenshot_url: string | null;
+  confirmation_type: string | null;
+  courier_entry_method: string | null;
+  late_delivery_reason: string | null;
+  expected_delivery_date: string | null;
+  exchange_return_id: string | null;
+  cancellation_reason: string | null;
+  partial_delivery_notes: string | null;
+  notes: string | null;
+  customer: {
+    id: string;
+    full_name: string;
+    phone_primary: string;
+    email: string | null;
+    address_line1: string | null;
+    city: string | null;
+    district: string | null;
+  };
+  assigned_user: { id: string; full_name: string } | null;
+  confirmed_user: { id: string; full_name: string } | null;
+}
+
+export interface OrderItem {
+  id: string;
+  product_id: string | null;
+  sku: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  discount_amount: number;
+  pick_location: string | null;
+}
+
+export interface OrderCourierInfo {
+  id: string;
+  courier_company: string | null;
+  tracking_number: string | null;
+  courier_area: string | null;
+  total_receivable: number;
+  collected_amount: number;
+  delivery_charge: number;
+  cod_charge: number;
+}
+
+export interface OrderPrescription {
+  id: string;
+  prescription_type: string | null;
+  lens_type: string | null;
+  custom_lens_type: string | null;
+  lens_price: number;
+  fitting_charge: number;
+  od_sph: string | null;
+  od_cyl: string | null;
+  od_axis: string | null;
+  od_pd: string | null;
+  os_sph: string | null;
+  os_cyl: string | null;
+  os_axis: string | null;
+  os_pd: string | null;
+  rx_file_url: string | null;
+  lab_status: string;
+  lab_sent_date: string | null;
+  lab_return_date: string | null;
+}
+
+export interface OrderNote {
+  id: string;
+  note_text: string;
+  created_at: string;
+  created_by_user: { full_name: string } | null;
+}
+
+export interface CallLog {
+  id: string;
+  notes: string | null;
+  created_at: string;
+  called_by_user: { full_name: string } | null;
+}
+
+export interface ActivityLog {
+  id: string;
+  action: string;
+  created_at: string;
+  performed_by_user: { full_name: string } | null;
+}
+
+export interface PackagingItem {
+  id: string;
+  product_id: string | null;
+  sku: string;
+  product_name: string;
+  quantity: number;
+  unit_cost: number;
+  line_total: number;
+}

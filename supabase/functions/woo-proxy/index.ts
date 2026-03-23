@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 interface WooRequestBody {
-  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders";
+  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "cancel-order" | "update-order-status";
   store_url: string;
   consumer_key: string;
   consumer_secret: string;
@@ -15,6 +15,9 @@ interface WooRequestBody {
   min_order_id?: number;
   per_page?: number;
   page?: number;
+  order_id?: number;
+  status?: string;
+  note?: string;
 }
 
 function buildAuthHeader(consumerKey: string, consumerSecret: string): string {
@@ -248,6 +251,93 @@ Deno.serve(async (req: Request) => {
 
       return new Response(
         JSON.stringify({ orders: allOrders, total: allOrders.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "fetch-single-order") {
+      const { order_id } = body;
+      if (!order_id) {
+        return new Response(
+          JSON.stringify({ error: "order_id is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const res = await wooFetch(store_url, consumer_key, consumer_secret, `orders/${order_id}`);
+      if (!res.ok) {
+        const errText = await res.text();
+        return new Response(
+          JSON.stringify({ error: `HTTP ${res.status}: ${errText}` }),
+          { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const order = await res.json();
+      return new Response(
+        JSON.stringify({ order }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "cancel-order") {
+      const { order_id, note } = body;
+      if (!order_id) {
+        return new Response(
+          JSON.stringify({ error: "order_id is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const url = new URL(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/orders/${order_id}`);
+      const payload: any = { status: "cancelled" };
+      if (note) payload.customer_note = note;
+      const res = await fetch(url.toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: buildAuthHeader(consumer_key, consumer_secret),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        return new Response(
+          JSON.stringify({ error: `HTTP ${res.status}: ${errText}` }),
+          { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const updated = await res.json();
+      return new Response(
+        JSON.stringify({ order: updated }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "update-order-status") {
+      const { order_id, status } = body;
+      if (!order_id || !status) {
+        return new Response(
+          JSON.stringify({ error: "order_id and status are required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const url = new URL(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/orders/${order_id}`);
+      const res = await fetch(url.toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: buildAuthHeader(consumer_key, consumer_secret),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        return new Response(
+          JSON.stringify({ error: `HTTP ${res.status}: ${errText}` }),
+          { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const updated = await res.json();
+      return new Response(
+        JSON.stringify({ order: updated }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

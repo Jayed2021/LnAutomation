@@ -20,6 +20,8 @@ import InventoryAudit from './pages/inventory/InventoryAudit';
 import AuditDetail from './pages/inventory/AuditDetail';
 import ReceiveGoods from './pages/inventory/ReceiveGoods';
 import Stock from './pages/inventory/Stock';
+import Orders from './pages/fulfillment/orders/Orders';
+import OrderDetail from './pages/fulfillment/orders/orderDetail/OrderDetail';
 import Operations from './pages/fulfillment/Operations';
 import Returns from './pages/fulfillment/Returns';
 import ReturnDetail from './pages/fulfillment/ReturnDetail';
@@ -68,7 +70,8 @@ function App() {
             <Route path="inventory/receive" element={<ReceiveGoods />} />
             <Route path="inventory/warehouse" element={<WarehouseLocations />} />
 
-            <Route path="fulfillment/orders" element={<ComingSoon moduleName="Orders" />} />
+            <Route path="fulfillment/orders" element={<Orders />} />
+            <Route path="fulfillment/orders/:id" element={<OrderDetail />} />
             <Route path="fulfillment/operations" element={<Operations />} />
             <Route path="fulfillment/returns" element={<Returns />} />
             <Route path="fulfillment/returns/:id" element={<ReturnDetail />} />

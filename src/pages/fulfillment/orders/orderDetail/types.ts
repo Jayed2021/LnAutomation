@@ -69,6 +69,7 @@ export interface OrderItem {
   discount_amount: number;
   pick_location: string | null;
   meta_data: WooMetaEntry[] | null;
+  woo_item_id: number | null;
 }
 
 export interface OrderCourierInfo {
@@ -84,9 +85,11 @@ export interface OrderCourierInfo {
 
 export interface OrderPrescription {
   id: string;
+  order_item_id: string | null;
   prescription_type: string | null;
   lens_type: string | null;
   custom_lens_type: string | null;
+  customer_price: number;
   lens_price: number;
   fitting_charge: number;
   od_sph: string | null;

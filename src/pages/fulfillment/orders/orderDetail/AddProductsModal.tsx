@@ -117,36 +117,38 @@ export function AddProductsModal({ onClose, onAdd }: Props) {
           </button>
         </div>
 
-        <div className="px-6 py-4 overflow-y-auto flex-1">
+        <div className="px-6 py-4 flex-1 flex flex-col min-h-0">
           <div className="grid grid-cols-[1fr_auto] gap-3 mb-1">
             <span className="text-xs font-semibold text-blue-600">Product</span>
             <span className="text-xs font-semibold text-blue-600 w-24 text-right">Quantity</span>
           </div>
 
-          {rows.map((row, idx) => (
-            <div key={idx} className="grid grid-cols-[1fr_auto] gap-3 mb-3 items-center">
-              <div className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-sm text-gray-800">
-                <span className="flex-1 truncate">
-                  {row.product.name} ({row.product.sku}) – Stock: {row.product.stock}
-                </span>
-                <button
-                  onClick={() => handleRemoveRow(idx)}
-                  className="text-gray-400 hover:text-gray-600 shrink-0"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+          <div className="overflow-y-auto flex-1">
+            {rows.map((row, idx) => (
+              <div key={idx} className="grid grid-cols-[1fr_auto] gap-3 mb-3 items-center">
+                <div className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-sm text-gray-800">
+                  <span className="flex-1 truncate">
+                    {row.product.name} ({row.product.sku}) – Stock: {row.product.stock}
+                  </span>
+                  <button
+                    onClick={() => handleRemoveRow(idx)}
+                    className="text-gray-400 hover:text-gray-600 shrink-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  value={row.quantity}
+                  onChange={e => handleQtyChange(idx, parseInt(e.target.value) || 1)}
+                  className={`${inputCls} w-24 text-right`}
+                />
               </div>
-              <input
-                type="number"
-                min={1}
-                value={row.quantity}
-                onChange={e => handleQtyChange(idx, parseInt(e.target.value) || 1)}
-                className={`${inputCls} w-24 text-right`}
-              />
-            </div>
-          ))}
+            ))}
+          </div>
 
-          <div className="grid grid-cols-[1fr_auto] gap-3 items-start" ref={searchRef}>
+          <div className="grid grid-cols-[1fr_auto] gap-3 items-start mt-1" ref={searchRef}>
             <div className="relative">
               <div
                 className={`flex items-center gap-2 px-3 py-2 border rounded-lg text-sm cursor-text ${dropdownOpen ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-200'}`}

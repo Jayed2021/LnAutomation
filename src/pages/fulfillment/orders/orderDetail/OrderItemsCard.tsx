@@ -25,6 +25,19 @@ function isLikelyUrl(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
 }
 
+const RX_KEYS = ['prescription', 'lens', 'sph', 'cyl', 'axis', 'pd', 'rx', 'power', 'bifocal', 'progressive', 'vision'];
+
+function hasPrescriptionMeta(meta_data: { key: string; value: string }[]): boolean {
+  return meta_data.some(m => {
+    const k = m.key.toLowerCase();
+    return RX_KEYS.some(rx => k.includes(rx));
+  });
+}
+
+function hasFeeMeta(meta_data: { key: string; value: string }[]): boolean {
+  return meta_data.some(m => m.key.toLowerCase().includes('fee'));
+}
+
 function fmt(n: number): string {
   return '৳' + n.toLocaleString('en-BD', { minimumFractionDigits: 2 });
 }
@@ -184,7 +197,7 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
       ];
 
       const removedWooIds = deletedItems
-        .map(i => (i as any).woo_item_id)
+        .map(i => i.woo_item_id)
         .filter((id): id is number => typeof id === 'number');
 
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -252,6 +265,7 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
       discount_amount: 0,
       pick_location: null,
       meta_data: null,
+      woo_item_id: null,
       woo_product_id: row.product.woo_product_id ?? undefined,
       woo_variation_id: row.product.woo_variation_id ?? undefined,
     } as any));
@@ -331,7 +345,7 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                   {item.pick_location && (
                     <div className="text-xs text-teal-600 mt-0.5">Loc: {item.pick_location}</div>
                   )}
-                  {item.meta_data && item.meta_data.length > 0 && (
+                  {item.meta_data && item.meta_data.length > 0 && hasPrescriptionMeta(item.meta_data) && (
                     <div className="mt-1.5">
                       <button
                         onClick={() => setExpandedMeta(prev => {
@@ -360,6 +374,14 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                           ))}
                         </div>
                       )}
+                    </div>
+                  )}
+                  {item.meta_data && item.meta_data.length > 0 && !hasPrescriptionMeta(item.meta_data) && hasFeeMeta(item.meta_data) && (
+                    <div className="mt-1.5">
+                      <span className="inline-flex items-center gap-1 text-xs text-orange-700 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full">
+                        <Receipt className="w-3 h-3" />
+                        Fee
+                      </span>
                     </div>
                   )}
                 </td>

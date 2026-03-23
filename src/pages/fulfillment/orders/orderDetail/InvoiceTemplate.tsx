@@ -4,7 +4,7 @@ import { OrderDetail, OrderItem, OrderPrescription, PackagingItem } from './type
 interface Props {
   order: OrderDetail;
   items: OrderItem[];
-  prescription: OrderPrescription | null;
+  prescriptions: OrderPrescription[];
   packagingItems: PackagingItem[];
   storeSettings?: {
     name: string;
@@ -22,7 +22,7 @@ const DEFAULT_STORE = {
   email: 'info@eyewear.com',
 };
 
-export function InvoiceTemplate({ order, items, prescription, packagingItems, storeSettings }: Props) {
+export function InvoiceTemplate({ order, items, prescriptions, packagingItems, storeSettings }: Props) {
   const store = storeSettings ?? DEFAULT_STORE;
   const formatDate = (d: string) => new Date(d).toLocaleDateString('en-BD', { year: 'numeric', month: 'long', day: 'numeric' });
   const fmt = (v: number) => `৳${v.toLocaleString('en-BD', { minimumFractionDigits: 2 })}`;
@@ -91,51 +91,47 @@ export function InvoiceTemplate({ order, items, prescription, packagingItems, st
         </tbody>
       </table>
 
-      {/* Prescription */}
-      {prescription?.prescription_type && (
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <div className="font-semibold text-blue-900 mb-2 text-xs uppercase tracking-widest">Prescription Details</div>
-          <div className="grid grid-cols-2 gap-4 text-xs">
-            <div>
-              <span className="font-medium">Type:</span> {prescription.prescription_type}
+      {/* Prescriptions */}
+      {prescriptions.filter(p => p.prescription_type).length > 0 && (
+        <div className="mb-6 space-y-3">
+          {prescriptions.filter(p => p.prescription_type).map((prescription, pi) => (
+            <div key={prescription.id} className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="font-semibold text-blue-900 mb-2 text-xs uppercase tracking-widest">
+                Prescription {prescriptions.filter(p => p.prescription_type).length > 1 ? `#${pi + 1}` : 'Details'}
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div><span className="font-medium">Type:</span> {prescription.prescription_type}</div>
+                <div><span className="font-medium">Lens:</span> {prescription.lens_type ?? '—'}</div>
+              </div>
+              <table className="w-full mt-3 text-xs">
+                <thead>
+                  <tr className="border-b border-blue-200">
+                    <th className="text-left py-1">Eye</th>
+                    <th className="text-center py-1">SPH</th>
+                    <th className="text-center py-1">CYL</th>
+                    <th className="text-center py-1">AXIS</th>
+                    <th className="text-center py-1">PD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="py-1 font-medium">Right (OD)</td>
+                    <td className="text-center py-1">{prescription.od_sph ?? '—'}</td>
+                    <td className="text-center py-1">{prescription.od_cyl ?? '—'}</td>
+                    <td className="text-center py-1">{prescription.od_axis ?? '—'}</td>
+                    <td className="text-center py-1">{prescription.od_pd ?? '—'}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 font-medium">Left (OS)</td>
+                    <td className="text-center py-1">{prescription.os_sph ?? '—'}</td>
+                    <td className="text-center py-1">{prescription.os_cyl ?? '—'}</td>
+                    <td className="text-center py-1">{prescription.os_axis ?? '—'}</td>
+                    <td className="text-center py-1">{prescription.os_pd ?? '—'}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <div>
-              <span className="font-medium">Lens:</span> {prescription.lens_type ?? '—'}
-            </div>
-          </div>
-          <table className="w-full mt-3 text-xs">
-            <thead>
-              <tr className="border-b border-blue-200">
-                <th className="text-left py-1">Eye</th>
-                <th className="text-center py-1">SPH</th>
-                <th className="text-center py-1">CYL</th>
-                <th className="text-center py-1">AXIS</th>
-                <th className="text-center py-1">PD</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="py-1 font-medium">Right (OD)</td>
-                <td className="text-center py-1">{prescription.od_sph ?? '—'}</td>
-                <td className="text-center py-1">{prescription.od_cyl ?? '—'}</td>
-                <td className="text-center py-1">{prescription.od_axis ?? '—'}</td>
-                <td className="text-center py-1">{prescription.od_pd ?? '—'}</td>
-              </tr>
-              <tr>
-                <td className="py-1 font-medium">Left (OS)</td>
-                <td className="text-center py-1">{prescription.os_sph ?? '—'}</td>
-                <td className="text-center py-1">{prescription.os_cyl ?? '—'}</td>
-                <td className="text-center py-1">{prescription.os_axis ?? '—'}</td>
-                <td className="text-center py-1">{prescription.os_pd ?? '—'}</td>
-              </tr>
-            </tbody>
-          </table>
-          {(prescription.lens_price > 0 || prescription.fitting_charge > 0) && (
-            <div className="mt-2 flex gap-6 text-xs">
-              <span><span className="font-medium">Lens Price:</span> {fmt(prescription.lens_price)}</span>
-              <span><span className="font-medium">Fitting:</span> {fmt(prescription.fitting_charge)}</span>
-            </div>
-          )}
+          ))}
         </div>
       )}
 
@@ -146,12 +142,6 @@ export function InvoiceTemplate({ order, items, prescription, packagingItems, st
             <span className="text-gray-600">Subtotal</span>
             <span>{fmt(order.subtotal)}</span>
           </div>
-          {prescription && (prescription.lens_price > 0 || prescription.fitting_charge > 0) && (
-            <div className="flex justify-between">
-              <span className="text-gray-600">Lens &amp; Fitting</span>
-              <span>{fmt((prescription.lens_price ?? 0) + (prescription.fitting_charge ?? 0))}</span>
-            </div>
-          )}
           <div className="flex justify-between">
             <span className="text-gray-600">Shipping</span>
             <span>{fmt(order.shipping_fee)}</span>

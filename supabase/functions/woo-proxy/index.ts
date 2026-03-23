@@ -377,6 +377,30 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
     await supabase.from("orders").update({ has_prescription: true }).eq("id", orderId);
   }
 
+  const { data: pkgSetting } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "default_packaging_materials")
+    .maybeSingle();
+
+  if (pkgSetting?.value) {
+    try {
+      const defaults = Array.isArray(pkgSetting.value) ? pkgSetting.value : JSON.parse(pkgSetting.value);
+      if (defaults.length > 0) {
+        const pkgRows = defaults.map((d: any) => ({
+          order_id: orderId,
+          product_id: d.product_id || null,
+          sku: d.sku || "",
+          product_name: d.product_name || "",
+          quantity: d.quantity || 1,
+          unit_cost: d.unit_cost || 0,
+          line_total: (d.quantity || 1) * (d.unit_cost || 0),
+        }));
+        await supabase.from("order_packaging_items").insert(pkgRows);
+      }
+    } catch {}
+  }
+
   await supabase.from("order_activity_log").insert({
     order_id: orderId,
     action: "Order imported from WooCommerce REST API",

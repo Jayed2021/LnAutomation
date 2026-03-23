@@ -10,7 +10,7 @@ import {
 } from './types';
 import {
   fetchOrderDetail, fetchOrderItems, fetchOrderCourierInfo,
-  fetchOrderPrescription, fetchOrderNotes, fetchCallLog,
+  fetchOrderPrescriptions, fetchOrderNotes, fetchCallLog,
   fetchActivityLog, fetchPackagingItems
 } from './service';
 import { OrderHeader } from './OrderHeader';
@@ -34,7 +34,7 @@ export default function OrderDetail() {
   const [order, setOrder] = useState<OrderDetailType | null>(null);
   const [items, setItems] = useState<OrderItem[]>([]);
   const [courier, setCourier] = useState<OrderCourierInfo | null>(null);
-  const [prescription, setPrescription] = useState<OrderPrescription | null>(null);
+  const [prescriptions, setPrescriptions] = useState<OrderPrescription[]>([]);
   const [notes, setNotes] = useState<OrderNote[]>([]);
   const [callLog, setCallLog] = useState<CallLog[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityLog[]>([]);
@@ -48,11 +48,11 @@ export default function OrderDetail() {
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const [ord, its, cou, presc, nts, calls, acts, pkg] = await Promise.all([
+      const [ord, its, cou, prescs, nts, calls, acts, pkg] = await Promise.all([
         fetchOrderDetail(id),
         fetchOrderItems(id),
         fetchOrderCourierInfo(id),
-        fetchOrderPrescription(id),
+        fetchOrderPrescriptions(id),
         fetchOrderNotes(id),
         fetchCallLog(id),
         fetchActivityLog(id),
@@ -62,7 +62,7 @@ export default function OrderDetail() {
       setOrder(ord);
       setItems(its);
       setCourier(cou);
-      setPrescription(presc);
+      setPrescriptions(prescs);
       setNotes(nts);
       setCallLog(calls);
       setActivityLog(acts);
@@ -104,7 +104,7 @@ export default function OrderDetail() {
   const handlePrintInvoice = () => {
     if (!order) return;
     printContent(
-      <InvoiceTemplate order={order} items={items} prescription={prescription} packagingItems={packagingItems} />
+      <InvoiceTemplate order={order} items={items} prescriptions={prescriptions} packagingItems={packagingItems} />
     );
   };
 
@@ -186,7 +186,7 @@ export default function OrderDetail() {
       <PackagingCard orderId={order.id} items={packagingItems} userId={user?.id ?? null} onUpdated={load} />
 
       {/* Prescription */}
-      <PrescriptionCard orderId={order.id} prescription={prescription} userId={user?.id ?? null} onUpdated={load} />
+      <PrescriptionCard orderId={order.id} prescriptions={prescriptions} items={items} userId={user?.id ?? null} onUpdated={load} />
 
       {/* SMS */}
       <SmsCard phone={order.customer?.phone_primary ?? ''} />

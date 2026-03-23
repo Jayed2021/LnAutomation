@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Package, Plus, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Package, Plus, Trash2, Search } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { PackagingItem } from './types';
 import { logActivity } from './service';
@@ -11,29 +11,91 @@ interface Props {
   onUpdated: () => void;
 }
 
+interface PackagingProduct {
+  id: string;
+  sku: string;
+  name: string;
+  cost_price: number;
+}
+
 export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [newItem, setNewItem] = useState({ sku: '', product_name: '', quantity: 1, unit_cost: 0 });
+  const [quantity, setQuantity] = useState(1);
+  const [selectedProduct, setSelectedProduct] = useState<PackagingProduct | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<PackagingProduct[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const totalCost = items.reduce((s, i) => s + i.line_total, 0);
 
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      setDropdownOpen(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      const { data } = await supabase
+        .from('products')
+        .select('id, sku, name, cost_price')
+        .eq('product_type', 'packaging_material')
+        .eq('is_active', true)
+        .or(`name.ilike.%${searchQuery.trim()}%,sku.ilike.%${searchQuery.trim()}%`)
+        .order('name')
+        .limit(20);
+      setSearchResults((data ?? []) as PackagingProduct[]);
+      setDropdownOpen(true);
+      setSearching(false);
+    }, 250);
+  }, [searchQuery]);
+
+  const handleSelectProduct = (product: PackagingProduct) => {
+    setSelectedProduct(product);
+    setSearchQuery(product.name);
+    setDropdownOpen(false);
+    setSearchResults([]);
+  };
+
+  const resetForm = () => {
+    setAdding(false);
+    setSelectedProduct(null);
+    setSearchQuery('');
+    setQuantity(1);
+  };
+
   const handleAdd = async () => {
-    if (!newItem.sku || !newItem.product_name) return;
+    if (!selectedProduct) return;
     setSaving(true);
     try {
-      const lineTotal = newItem.quantity * newItem.unit_cost;
+      const lineTotal = quantity * selectedProduct.cost_price;
       await supabase.from('order_packaging_items').insert({
         order_id: orderId,
-        sku: newItem.sku,
-        product_name: newItem.product_name,
-        quantity: newItem.quantity,
-        unit_cost: newItem.unit_cost,
+        product_id: selectedProduct.id,
+        sku: selectedProduct.sku,
+        product_name: selectedProduct.name,
+        quantity,
+        unit_cost: selectedProduct.cost_price,
         line_total: lineTotal,
       });
-      await logActivity(orderId, `Added packaging: ${newItem.product_name} x${newItem.quantity}`, userId);
-      setNewItem({ sku: '', product_name: '', quantity: 1, unit_cost: 0 });
-      setAdding(false);
+      await logActivity(orderId, `Added packaging: ${selectedProduct.name} x${quantity}`, userId);
+      resetForm();
       onUpdated();
     } catch (err) {
       console.error(err);
@@ -68,7 +130,7 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
           <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{items.length} items</span>
         </div>
         <button
-          onClick={() => setAdding(!adding)}
+          onClick={() => { setAdding(!adding); if (adding) resetForm(); }}
           className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2.5 py-1.5 rounded-lg transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
@@ -110,15 +172,66 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
       {adding && (
         <div className="mt-3 border border-dashed border-gray-300 rounded-lg p-4 space-y-3">
           <div className="text-sm font-medium text-gray-700">Add Packaging Material</div>
-          <div className="grid grid-cols-2 gap-3">
-            <input value={newItem.sku} onChange={e => setNewItem(p => ({ ...p, sku: e.target.value }))} className={`${inputCls} w-full`} placeholder="SKU" />
-            <input value={newItem.product_name} onChange={e => setNewItem(p => ({ ...p, product_name: e.target.value }))} className={`${inputCls} w-full`} placeholder="Name" />
-            <input type="number" min={1} value={newItem.quantity} onChange={e => setNewItem(p => ({ ...p, quantity: parseInt(e.target.value) || 1 }))} className={`${inputCls} w-full`} placeholder="Qty" />
-            <input type="number" value={newItem.unit_cost} onChange={e => setNewItem(p => ({ ...p, unit_cost: parseFloat(e.target.value) || 0 }))} className={`${inputCls} w-full`} placeholder="Unit Cost" />
+          <div className="grid grid-cols-[1fr_auto] gap-3 items-start" ref={searchRef}>
+            <div className="relative">
+              <div
+                className={`flex items-center gap-2 px-3 py-2 border rounded-lg text-sm cursor-text ${dropdownOpen ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-200'}`}
+                onClick={() => document.getElementById('pkg-add-search')?.focus()}
+              >
+                <Search className="w-4 h-4 text-gray-400 shrink-0" />
+                <input
+                  id="pkg-add-search"
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => { setSearchQuery(e.target.value); setSelectedProduct(null); }}
+                  onFocus={() => searchResults.length > 0 && setDropdownOpen(true)}
+                  placeholder="Search packaging materials..."
+                  className="flex-1 outline-none bg-transparent text-sm text-gray-800 placeholder-gray-400"
+                />
+                {searching && <span className="text-xs text-gray-400 shrink-0">Searching...</span>}
+              </div>
+              {dropdownOpen && searchResults.length > 0 && (
+                <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {searchResults.map(product => (
+                    <button
+                      key={product.id}
+                      onMouseDown={e => { e.preventDefault(); handleSelectProduct(product); }}
+                      className="w-full text-left px-3 py-2.5 text-sm hover:bg-blue-600 hover:text-white transition-colors flex items-center justify-between"
+                    >
+                      <div>
+                        <span className="font-medium">{product.name}</span>
+                        <span className="ml-2 text-xs opacity-70">{product.sku}</span>
+                      </div>
+                      {product.cost_price > 0 && <span className="text-xs opacity-70 shrink-0">৳{product.cost_price}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <input
+              type="number"
+              min={1}
+              value={quantity}
+              onChange={e => setQuantity(parseInt(e.target.value) || 1)}
+              className={`${inputCls} w-20 text-center`}
+              placeholder="Qty"
+            />
           </div>
+          {selectedProduct && (
+            <div className="text-xs text-gray-500 flex items-center gap-2">
+              <span className="font-medium text-gray-700">{selectedProduct.name}</span>
+              {selectedProduct.cost_price > 0 && <span>· ৳{selectedProduct.cost_price} / unit</span>}
+            </div>
+          )}
           <div className="flex gap-2">
-            <button onClick={() => setAdding(false)} className="px-3 py-1.5 border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-            <button onClick={handleAdd} disabled={saving} className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition-colors">Add</button>
+            <button onClick={resetForm} className="px-3 py-1.5 border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+            <button
+              onClick={handleAdd}
+              disabled={saving || !selectedProduct}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {saving ? 'Adding...' : 'Add'}
+            </button>
           </div>
         </div>
       )}

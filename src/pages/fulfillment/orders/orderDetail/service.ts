@@ -1,7 +1,7 @@
 import { supabase } from '../../../../lib/supabase';
 import {
   OrderDetail, OrderItem, OrderCourierInfo, OrderPrescription,
-  OrderNote, CallLog, ActivityLog, PackagingItem
+  OrderNote, CallLog, ActivityLog, PackagingItem,
 } from './types';
 
 export async function fetchOrderDetail(id: string): Promise<OrderDetail | null> {
@@ -31,7 +31,7 @@ export async function fetchOrderDetail(id: string): Promise<OrderDetail | null> 
 export async function fetchOrderItems(orderId: string): Promise<OrderItem[]> {
   const { data, error } = await supabase
     .from('order_items')
-    .select('id, product_id, sku, product_name, quantity, unit_price, line_total, discount_amount, pick_location, meta_data')
+    .select('id, product_id, sku, product_name, quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id')
     .eq('order_id', orderId)
     .order('created_at');
   if (error) throw error;
@@ -48,14 +48,14 @@ export async function fetchOrderCourierInfo(orderId: string): Promise<OrderCouri
   return data as OrderCourierInfo | null;
 }
 
-export async function fetchOrderPrescription(orderId: string): Promise<OrderPrescription | null> {
+export async function fetchOrderPrescriptions(orderId: string): Promise<OrderPrescription[]> {
   const { data, error } = await supabase
     .from('order_prescriptions')
-    .select('id, prescription_type, lens_type, custom_lens_type, lens_price, fitting_charge, od_sph, od_cyl, od_axis, od_pd, os_sph, os_cyl, os_axis, os_pd, rx_file_url, lab_status, lab_sent_date, lab_return_date')
+    .select('id, order_item_id, prescription_type, lens_type, custom_lens_type, customer_price, lens_price, fitting_charge, od_sph, od_cyl, od_axis, od_pd, os_sph, os_cyl, os_axis, os_pd, rx_file_url, lab_status, lab_sent_date, lab_return_date')
     .eq('order_id', orderId)
-    .maybeSingle();
+    .order('created_at');
   if (error) throw error;
-  return data as OrderPrescription | null;
+  return (data ?? []) as OrderPrescription[];
 }
 
 export async function fetchOrderNotes(orderId: string): Promise<OrderNote[]> {

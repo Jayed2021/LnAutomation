@@ -9,7 +9,8 @@ import {
   Barcode,
   ShoppingCart,
   Lock,
-  Bell
+  Bell,
+  Package
 } from 'lucide-react';
 
 export default function Settings() {
@@ -46,6 +47,13 @@ export default function Settings() {
       icon: Barcode,
       color: 'blue',
       route: '/settings/barcode'
+    },
+    {
+      title: 'Default Packaging',
+      description: 'Set packaging materials to auto-add to every new order',
+      icon: Package,
+      color: 'teal',
+      route: '/settings/packaging'
     },
     {
       title: 'WooCommerce Integration',

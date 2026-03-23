@@ -14,7 +14,9 @@ export type CsStatus =
   | 'cancelled'
   | 'refund'
   | 'exchange'
-  | 'partial_delivery';
+  | 'partial_delivery'
+  | 'reverse_pick'
+  | 'exchange_returnable';
 
 export interface OrderListItem {
   id: string;
@@ -62,6 +64,8 @@ export const STATUS_CONFIG: Record<string, StatusConfig> = {
   delivered:      { label: 'Delivered',         color: 'text-green-800', bg: 'bg-green-100', border: 'border-green-300' },
   cancelled:      { label: 'Cancelled',         color: 'text-red-700', bg: 'bg-red-50', border: 'border-red-200' },
   refund:         { label: 'Refund',            color: 'text-red-800', bg: 'bg-red-100', border: 'border-red-300' },
-  exchange:       { label: 'Exchange',          color: 'text-blue-800', bg: 'bg-blue-100', border: 'border-blue-300' },
-  partial_delivery: { label: 'Partial Delivery', color: 'text-orange-800', bg: 'bg-orange-100', border: 'border-orange-300' },
+  exchange:           { label: 'Exchange',                   color: 'text-blue-800',  bg: 'bg-blue-100',  border: 'border-blue-300' },
+  partial_delivery:   { label: 'Partial Delivery',           color: 'text-orange-800', bg: 'bg-orange-100', border: 'border-orange-300' },
+  reverse_pick:       { label: 'Reverse Pick',               color: 'text-rose-700',  bg: 'bg-rose-50',   border: 'border-rose-200' },
+  exchange_returnable: { label: 'Exchange Returnable (EXR)', color: 'text-teal-800',  bg: 'bg-teal-100',  border: 'border-teal-300' },
 };

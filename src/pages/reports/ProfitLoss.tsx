@@ -32,6 +32,7 @@ interface OrderProfit {
   cs_status: string;
   fulfillment_status: string;
   revenue: number;
+  delivery_charge: number;
   product_cogs: number;
   packaging_cost: number;
   total_cogs: number;
@@ -154,13 +155,14 @@ function ProfitLossContent() {
   const totals = rows.reduce(
     (acc, r) => {
       acc.revenue += r.revenue;
+      acc.delivery_charge += r.delivery_charge;
       acc.product_cogs += r.product_cogs;
       acc.packaging_cost += r.packaging_cost;
       acc.total_cogs += r.total_cogs;
       acc.gross_profit += r.gross_profit;
       return acc;
     },
-    { revenue: 0, product_cogs: 0, packaging_cost: 0, total_cogs: 0, gross_profit: 0 }
+    { revenue: 0, delivery_charge: 0, product_cogs: 0, packaging_cost: 0, total_cogs: 0, gross_profit: 0 }
   );
 
   const avgMargin = totals.revenue > 0
@@ -191,7 +193,7 @@ function ProfitLossContent() {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Profit & Loss</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Gross profit per order — product COGS + packaging cost</p>
+          <p className="text-sm text-gray-500 mt-0.5">Final-status orders only — revenue from collected amounts, costs include COGS, packaging, and delivery</p>
         </div>
         <button
           onClick={fetchData}
@@ -376,6 +378,9 @@ function ProfitLossContent() {
                     <ThBtn field="revenue" label="Revenue" className="ml-auto" />
                   </th>
                   <th className="px-4 py-3 text-right">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Delivery</span>
+                  </th>
+                  <th className="px-4 py-3 text-right">
                     <ThBtn field="product_cogs" label="Product COGS" className="ml-auto" />
                   </th>
                   <th className="px-4 py-3 text-right">
@@ -404,6 +409,9 @@ function ProfitLossContent() {
                     <td className="px-4 py-3 text-right font-medium text-gray-900 whitespace-nowrap">
                       ৳{fmt(row.revenue)}
                     </td>
+                    <td className="px-4 py-3 text-right text-slate-600 whitespace-nowrap">
+                      ৳{fmt(row.delivery_charge)}
+                    </td>
                     <td className="px-4 py-3 text-right text-amber-700 whitespace-nowrap">
                       ৳{fmt(row.product_cogs)}
                     </td>
@@ -430,6 +438,9 @@ function ProfitLossContent() {
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-gray-900 whitespace-nowrap">
                     ৳{fmt(totals.revenue)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-bold text-slate-600 whitespace-nowrap">
+                    ৳{fmt(totals.delivery_charge)}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-amber-700 whitespace-nowrap">
                     ৳{fmt(totals.product_cogs)}

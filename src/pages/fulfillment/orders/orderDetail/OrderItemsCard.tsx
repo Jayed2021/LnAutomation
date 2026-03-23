@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CreditCard as Edit2, Plus, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Tag } from 'lucide-react';
+import { CreditCard as Edit2, Plus, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Tag, Receipt } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderItem, OrderDetail } from './types';
 import { logActivity } from './service';
@@ -166,6 +166,8 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
 
   const couponLines = order.coupon_lines ?? [];
   const hasCoupons = couponLines.length > 0;
+  const feeLines = order.fee_lines ?? [];
+  const hasFees = feeLines.length > 0;
 
   const inputCls = "px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full";
 
@@ -359,6 +361,24 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
           <span className="text-gray-500">Subtotal:</span>
           <span>{fmt(subtotal)}</span>
         </div>
+
+        {hasFees && (
+          <div className="space-y-1.5">
+            {feeLines.map((fee, i) => {
+              const feeTotal = parseFloat(fee.total) || parseFloat(fee.amount) || 0;
+              return (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-1.5 text-gray-500">
+                    <Receipt className="w-3.5 h-3.5 shrink-0 text-orange-400" />
+                    {fee.name}:
+                  </span>
+                  <span className="text-gray-700 font-medium">{fmt(feeTotal)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <div className="flex justify-between text-sm">
           <span className="text-gray-500">Shipping Fee:</span>
           <span>{fmt(order.shipping_fee)}</span>

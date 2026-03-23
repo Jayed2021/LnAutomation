@@ -189,12 +189,31 @@ function isPrescriptionMeta(key: string): boolean {
     lower.includes("prescription") ||
     lower.includes("upload") ||
     lower.includes("rx") ||
-    lower.includes("pewc_group") ||
+    lower.startsWith("pewc_group") ||
     lower.includes("power lens") ||
     lower.includes("lens brand") ||
     lower.includes("lens option") ||
-    lower.includes("extra lens")
+    lower.includes("extra lens") ||
+    lower.includes("need extra lens") ||
+    lower.includes("power lens option") ||
+    lower.includes("choose lens")
   );
+}
+
+const LENS_FEE_KEYWORDS = ["lens", "power", "anti-blue", "antiblue", "anti blue", "coating", "prescription", "rx"];
+
+function isLensFee(name: string): boolean {
+  const lower = name.toLowerCase();
+  return LENS_FEE_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+function extractFeeLines(payload: any): Array<{ name: string; amount: string; total: string }> {
+  const lines = payload.fee_lines || [];
+  return lines.map((f: any) => ({
+    name: f.name || "",
+    amount: f.amount || f.total || "0",
+    total: f.total || "0",
+  }));
 }
 
 function generateOrderNumber(): string {
@@ -272,6 +291,8 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
   const totalAmount = parseFloat(payload.total || "0");
   const paymentMethod = payload.payment_method_title || payload.payment_method || "COD";
   const couponLines = extractCouponLines(payload);
+  const feeLines = extractFeeLines(payload);
+  const customerNote = (payload.customer_note || "").trim() || null;
 
   let orderNumber = generateOrderNumber();
   let attempts = 0;
@@ -304,6 +325,8 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
       total_amount: totalAmount,
       order_source: "website",
       coupon_lines: couponLines.length > 0 ? couponLines : null,
+      fee_lines: feeLines.length > 0 ? feeLines : null,
+      customer_note: customerNote,
     })
     .select("id")
     .single();
@@ -314,6 +337,10 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
   const lineItems = payload.line_items || [];
   let hasPrescription = false;
 
+  if (feeLines.some((f) => isLensFee(f.name))) {
+    hasPrescription = true;
+  }
+
   if (lineItems.length > 0) {
     const { data: products } = await supabase.from("products").select("id, sku");
     const skuMap: Record<string, string> = {};
@@ -323,7 +350,7 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
     const itemsToInsert = lineItems.map((item: any) => {
       const rawMeta: Array<{ key: string; value: string }> = item.meta_data || [];
       const filteredMeta = rawMeta.filter((m) => !m.key.startsWith("_"));
-      if (filteredMeta.some((m) => isPrescriptionMeta(m.key))) {
+      if (filteredMeta.some((m) => isPrescriptionMeta(m.key) || isPrescriptionMeta(m.value))) {
         hasPrescription = true;
       }
       const itemSubtotal = parseFloat(item.subtotal || "0");
@@ -382,17 +409,18 @@ async function resyncOrderFromWoo(
 
   const wooOrder = await res.json();
   const couponLines = extractCouponLines(wooOrder);
+  const feeLines = extractFeeLines(wooOrder);
+  const customerNote = (wooOrder.customer_note || "").trim() || null;
 
-  await supabase
-    .from("orders")
-    .update({
-      coupon_lines: couponLines.length > 0 ? couponLines : null,
-      woo_order_status: wooOrder.status,
-    })
-    .eq("id", internalOrderId);
+  let hasPrescription = feeLines.some((f) => isLensFee(f.name));
 
   const lineItems = wooOrder.line_items || [];
   for (const item of lineItems) {
+    const rawMeta: Array<{ key: string; value: string }> = item.meta_data || [];
+    const filteredMeta = rawMeta.filter((m) => !m.key.startsWith("_"));
+    if (filteredMeta.some((m) => isPrescriptionMeta(m.key) || isPrescriptionMeta(m.value))) {
+      hasPrescription = true;
+    }
     if (!item.id) continue;
     const itemSubtotal = parseFloat(item.subtotal || "0");
     const itemTotal = parseFloat(item.total || "0");
@@ -406,6 +434,17 @@ async function resyncOrderFromWoo(
       .eq("order_id", internalOrderId)
       .eq("woo_item_id", item.id);
   }
+
+  await supabase
+    .from("orders")
+    .update({
+      coupon_lines: couponLines.length > 0 ? couponLines : null,
+      fee_lines: feeLines.length > 0 ? feeLines : null,
+      customer_note: customerNote,
+      woo_order_status: wooOrder.status,
+      has_prescription: hasPrescription || undefined,
+    })
+    .eq("id", internalOrderId);
 
   await supabase.from("order_activity_log").insert({
     order_id: internalOrderId,

@@ -4,6 +4,12 @@ export interface CouponLine {
   discount_tax: string;
 }
 
+export interface FeeLine {
+  name: string;
+  amount: string;
+  total: string;
+}
+
 export interface OrderDetail {
   id: string;
   order_number: string;
@@ -32,6 +38,8 @@ export interface OrderDetail {
   partial_delivery_notes: string | null;
   notes: string | null;
   coupon_lines: CouponLine[] | null;
+  fee_lines: FeeLine[] | null;
+  customer_note: string | null;
   customer: {
     id: string;
     full_name: string;

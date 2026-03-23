@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Phone, Save, X, CreditCard as Edit2 } from 'lucide-react';
+import { Phone, Save, X, CreditCard as Edit2, MessageSquare } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail } from './types';
 
@@ -196,6 +196,16 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
               ? <input value={edit.payment_reference} onChange={e => setEdit(p => ({ ...p, payment_reference: e.target.value }))} className={inputCls} placeholder="Ref / TxID" />
               : <div className="text-sm text-gray-900">{order.payment_reference || '—'}</div>}
           </Field>
+        )}
+
+        {order.customer_note && (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <MessageSquare className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span className="text-xs font-semibold text-amber-700">Customer Note</span>
+            </div>
+            <p className="text-sm text-amber-900 leading-relaxed whitespace-pre-wrap">{order.customer_note}</p>
+          </div>
         )}
       </div>
     </div>

@@ -124,12 +124,13 @@ export async function upsertSession(session: ReceiptSession, userId: string): Pr
   if (sessionId) {
     await supabase.from('goods_receipt_sessions').update(sessionData).eq('id', sessionId);
   } else {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('goods_receipt_sessions')
       .insert({ ...sessionData, created_by: userId })
       .select('id')
       .single();
-    sessionId = data!.id;
+    if (error || !data) throw new Error(`Failed to create receipt session: ${error?.message ?? 'no data returned'}`);
+    sessionId = data.id;
   }
 
   if (session.lines.length > 0) {
@@ -163,17 +164,18 @@ export async function finalizeQtyCheck(
   po: { id: string; po_number: string },
   userId: string
 ): Promise<{ sessionId: string; shipmentDbId: string }> {
-  const { data: shipment } = await supabase
+  const { data: shipment, error: shipmentError } = await supabase
     .from('shipments')
-    .insert({
+    .upsert({
       shipment_id: session.shipment_name,
       po_id: po.id,
       received_date: session.qty_check_date || new Date().toISOString().slice(0, 10),
       received_by: userId,
       notes: `Received via Receive Goods flow`
-    })
+    }, { onConflict: 'shipment_id' })
     .select()
     .single();
+  if (shipmentError || !shipment) throw new Error(`Failed to create shipment record: ${shipmentError?.message ?? 'no data returned'}`);
 
   const updatedLines: ReceiptLine[] = [];
 
@@ -226,12 +228,12 @@ export async function finalizeQtyCheck(
     ...session,
     step: 'qty_checked',
     stock_added_at_qty_check: true,
-    shipment_db_id: shipment!.id,
+    shipment_db_id: shipment.id,
     lines: updatedLines
   };
 
   const sessionId = await upsertSession(updatedSession, userId);
-  return { sessionId, shipmentDbId: shipment!.id };
+  return { sessionId, shipmentDbId: shipment.id };
 }
 
 export async function finalizeQC(
@@ -248,18 +250,19 @@ export async function finalizeQC(
   let shipmentDbId = session.shipment_db_id;
 
   if (!session.stock_added_at_qty_check) {
-    const { data: shipment } = await supabase
+    const { data: shipment, error: shipmentError } = await supabase
       .from('shipments')
-      .insert({
+      .upsert({
         shipment_id: session.shipment_name,
         po_id: po.id,
         received_date: session.qty_check_date || new Date().toISOString().slice(0, 10),
         received_by: userId,
         notes: `Received via two-step Receive Goods flow`
-      })
+      }, { onConflict: 'shipment_id' })
       .select()
       .single();
-    shipmentDbId = shipment!.id;
+    if (shipmentError || !shipment) throw new Error(`Failed to create shipment record: ${shipmentError?.message ?? 'no data returned'}`);
+    shipmentDbId = shipment.id;
 
     for (const line of session.lines) {
       if (!line.product_id || line.qty_good <= 0) continue;
@@ -268,7 +271,7 @@ export async function finalizeQC(
       await supabase.from('inventory_lots').insert({
         lot_number: lotNumber,
         product_id: line.product_id,
-        shipment_id: shipment!.id,
+        shipment_id: shipment.id,
         po_id: po.id,
         location_id: line.location_id,
         received_date: session.qc_date || new Date().toISOString().slice(0, 10),

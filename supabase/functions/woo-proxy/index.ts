@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 interface WooRequestBody {
-  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status" | "resync-order";
+  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status" | "resync-order" | "sync-order-items";
   store_url: string;
   consumer_key: string;
   consumer_secret: string;
@@ -21,6 +21,8 @@ interface WooRequestBody {
   status?: string;
   note?: string;
   internal_order_id?: string;
+  line_items?: Array<{ product_id?: number; variation_id?: number; sku: string; name: string; quantity: number; price: string }>;
+  removed_item_ids?: number[];
 }
 
 function buildAuthHeader(consumerKey: string, consumerSecret: string): string {
@@ -667,6 +669,73 @@ Deno.serve(async (req: Request) => {
       const updated = await res.json();
       return new Response(
         JSON.stringify({ order: updated }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "sync-order-items") {
+      const { internal_order_id, line_items, removed_item_ids } = body;
+      if (!internal_order_id) {
+        return new Response(
+          JSON.stringify({ error: "internal_order_id is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+      const { data: order, error: orderFetchErr } = await supabase
+        .from("orders")
+        .select("id, woo_order_id, order_number")
+        .eq("id", internal_order_id)
+        .maybeSingle();
+
+      if (orderFetchErr) throw orderFetchErr;
+      if (!order) throw new Error("Order not found");
+      if (!order.woo_order_id) throw new Error("Order has no WooCommerce ID — cannot sync items");
+
+      const wooPayload: any = {};
+
+      if (line_items && line_items.length > 0) {
+        wooPayload.line_items = line_items;
+      }
+
+      if (removed_item_ids && removed_item_ids.length > 0) {
+        const removeItems = removed_item_ids.map((id: number) => ({ id, quantity: 0 }));
+        wooPayload.line_items = [...(wooPayload.line_items || []), ...removeItems];
+      }
+
+      if (!wooPayload.line_items || wooPayload.line_items.length === 0) {
+        return new Response(
+          JSON.stringify({ success: true, message: "No item changes to sync" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const url = new URL(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/orders/${order.woo_order_id}`);
+      const res = await fetch(url.toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: buildAuthHeader(consumer_key, consumer_secret),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(wooPayload),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`WooCommerce API error (${res.status}): ${errText}`);
+      }
+
+      await supabase.from("order_activity_log").insert({
+        order_id: internal_order_id,
+        action: "Order items synced back to WooCommerce",
+        performed_by: null,
+      });
+
+      return new Response(
+        JSON.stringify({ success: true, message: `Order ${order.order_number} items synced to WooCommerce` }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

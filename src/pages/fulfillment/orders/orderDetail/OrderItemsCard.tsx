@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { CreditCard as Edit2, Plus, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Tag, Receipt } from 'lucide-react';
+import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderItem, OrderDetail } from './types';
 import { logActivity } from './service';
+import { AddProductsModal } from './AddProductsModal';
 
 interface Props {
   order: OrderDetail;
@@ -10,6 +11,15 @@ interface Props {
   userId: string | null;
   onUpdated: () => void;
 }
+
+interface FeeRow {
+  _type: 'fee';
+  _tempId: string;
+  name: string;
+  amount: number;
+}
+
+type EditableItem = OrderItem & { _deleted?: boolean };
 
 function isLikelyUrl(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
@@ -21,110 +31,161 @@ function fmt(n: number): string {
 
 export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
-  const [editItems, setEditItems] = useState<OrderItem[]>([]);
+  const [editItems, setEditItems] = useState<EditableItem[]>([]);
+  const [feeRows, setFeeRows] = useState<FeeRow[]>([]);
   const [saving, setSaving] = useState(false);
-  const [newItem, setNewItem] = useState({ sku: '', product_name: '', quantity: 1, unit_price: 0 });
-  const [addingItem, setAddingItem] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [expandedMeta, setExpandedMeta] = useState<Set<string>>(new Set());
-  const [resyncing, setResyncing] = useState(false);
-  const [resyncError, setResyncError] = useState<string | null>(null);
+  const [showAddProducts, setShowAddProducts] = useState(false);
+  const [addingFee, setAddingFee] = useState(false);
 
   const startEdit = () => {
     setEditItems(items.map(i => ({ ...i })));
+    setFeeRows([]);
     setEditing(true);
+    setSyncStatus('idle');
+    setSyncMessage(null);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setFeeRows([]);
+    setSyncStatus('idle');
+    setSyncMessage(null);
   };
 
   const handleSave = async () => {
     setSaving(true);
+    setSyncStatus('idle');
+    setSyncMessage(null);
+
+    const originalIds = new Set(items.map(i => i.id));
+    const remainingIds = new Set(editItems.filter(i => !i._deleted).map(i => i.id));
+    const deletedItems = editItems.filter(i => i._deleted);
+    const addedItems = editItems.filter(i => !originalIds.has(i.id));
+    const itemsChanged = deletedItems.length > 0 || addedItems.length > 0;
+
     try {
-      for (const item of editItems) {
+      for (const item of editItems.filter(i => !i._deleted)) {
         const lineTotal = item.quantity * item.unit_price;
-        await supabase.from('order_items').update({
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          line_total: lineTotal,
-          discount_amount: item.discount_amount,
-        }).eq('id', item.id);
+        if (originalIds.has(item.id)) {
+          await supabase.from('order_items').update({
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            line_total: lineTotal,
+            discount_amount: item.discount_amount,
+          }).eq('id', item.id);
+        } else {
+          await supabase.from('order_items').insert({
+            id: item.id,
+            order_id: order.id,
+            product_id: item.product_id,
+            sku: item.sku,
+            product_name: item.product_name,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            line_total: lineTotal,
+            discount_amount: item.discount_amount ?? 0,
+            woo_item_id: (item as any).woo_item_id ?? null,
+          });
+        }
       }
-      const subtotal = editItems.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+
+      for (const item of deletedItems) {
+        if (originalIds.has(item.id)) {
+          await supabase.from('order_items').delete().eq('id', item.id);
+        }
+      }
+
+      for (const fee of feeRows) {
+        await supabase.from('order_items').insert({
+          order_id: order.id,
+          product_id: null,
+          sku: 'FEE',
+          product_name: fee.name,
+          quantity: 1,
+          unit_price: fee.amount,
+          line_total: fee.amount,
+          discount_amount: 0,
+        });
+      }
+
+      const activeItems = editItems.filter(i => !i._deleted);
+      const subtotal = activeItems.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+        + feeRows.reduce((s, f) => s + f.amount, 0);
       const total = subtotal + order.shipping_fee - order.discount_amount;
       await supabase.from('orders').update({
         subtotal,
         total_amount: Math.max(0, total),
         updated_at: new Date().toISOString(),
       }).eq('id', order.id);
+
       await logActivity(order.id, 'Order items updated', userId);
-      setEditing(false);
-      onUpdated();
-    } catch (err) {
+
+      if (itemsChanged || feeRows.length > 0) {
+        setSyncStatus('syncing');
+        await syncToWooCommerce(addedItems, deletedItems, feeRows);
+      } else {
+        setEditing(false);
+        setFeeRows([]);
+        onUpdated();
+      }
+    } catch (err: any) {
       console.error(err);
+      setSyncMessage(err?.message || 'Save failed');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleAddItem = async () => {
-    if (!newItem.sku || !newItem.product_name) return;
-    setSaving(true);
-    try {
-      const lineTotal = newItem.quantity * newItem.unit_price;
-      const { data: product } = await supabase.from('products').select('id').eq('sku', newItem.sku).maybeSingle();
-      await supabase.from('order_items').insert({
-        order_id: order.id,
-        product_id: product?.id ?? null,
-        sku: newItem.sku,
-        product_name: newItem.product_name,
-        quantity: newItem.quantity,
-        unit_price: newItem.unit_price,
-        line_total: lineTotal,
-        discount_amount: 0,
-      });
-      const newSubtotal = items.reduce((s, i) => s + i.line_total, 0) + lineTotal;
-      await supabase.from('orders').update({
-        subtotal: newSubtotal,
-        total_amount: newSubtotal + order.shipping_fee - order.discount_amount,
-        updated_at: new Date().toISOString(),
-      }).eq('id', order.id);
-      await logActivity(order.id, `Added item: ${newItem.product_name} x${newItem.quantity}`, userId);
-      setNewItem({ sku: '', product_name: '', quantity: 1, unit_price: 0 });
-      setAddingItem(false);
-      onUpdated();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleRemoveItem = async (itemId: string, itemName: string) => {
-    try {
-      await supabase.from('order_items').delete().eq('id', itemId);
-      const newSubtotal = items.filter(i => i.id !== itemId).reduce((s, i) => s + i.line_total, 0);
-      await supabase.from('orders').update({
-        subtotal: newSubtotal,
-        total_amount: newSubtotal + order.shipping_fee - order.discount_amount,
-        updated_at: new Date().toISOString(),
-      }).eq('id', order.id);
-      await logActivity(order.id, `Removed item: ${itemName}`, userId);
-      onUpdated();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleResync = async () => {
-    setResyncing(true);
-    setResyncError(null);
+  const syncToWooCommerce = async (
+    addedItems: EditableItem[],
+    deletedItems: EditableItem[],
+    fees: FeeRow[]
+  ) => {
     try {
       const { data: wooConfig } = await supabase
-        .from('woo_config')
+        .from('woocommerce_config')
         .select('store_url, consumer_key, consumer_secret')
         .maybeSingle();
 
       if (!wooConfig?.store_url || !wooConfig?.consumer_key || !wooConfig?.consumer_secret) {
-        setResyncError('WooCommerce is not configured. Check Settings > WooCommerce.');
+        setSyncStatus('error');
+        setSyncMessage('WooCommerce is not configured — items saved locally but not synced.');
+        await logActivity(order.id, 'WooCommerce sync skipped: not configured', userId);
+        onUpdated();
         return;
       }
+
+      if (!order.woo_order_id) {
+        setSyncStatus('error');
+        setSyncMessage('Order has no WooCommerce ID — items saved locally but not synced.');
+        await logActivity(order.id, 'WooCommerce sync skipped: no woo_order_id', userId);
+        onUpdated();
+        return;
+      }
+
+      const lineItemsToAdd = [
+        ...addedItems.map(i => ({
+          sku: i.sku,
+          name: i.product_name,
+          quantity: i.quantity,
+          price: String(i.unit_price),
+          product_id: (i as any).woo_product_id ?? undefined,
+          variation_id: (i as any).woo_variation_id ?? undefined,
+        })),
+        ...fees.map(f => ({
+          sku: 'FEE',
+          name: f.name,
+          quantity: 1,
+          price: String(f.amount),
+        })),
+      ];
+
+      const removedWooIds = deletedItems
+        .map(i => (i as any).woo_item_id)
+        .filter((id): id is number => typeof id === 'number');
 
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -136,89 +197,112 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
           'Authorization': `Bearer ${supabaseAnonKey}`,
         },
         body: JSON.stringify({
-          action: 'resync-order',
+          action: 'sync-order-items',
           store_url: wooConfig.store_url,
           consumer_key: wooConfig.consumer_key,
           consumer_secret: wooConfig.consumer_secret,
           internal_order_id: order.id,
+          line_items: lineItemsToAdd.length > 0 ? lineItemsToAdd : undefined,
+          removed_item_ids: removedWooIds.length > 0 ? removedWooIds : undefined,
         }),
       });
 
       const result = await res.json();
+
       if (!res.ok || result.error) {
-        setResyncError(result.error || 'Re-sync failed');
+        const errMsg = result.error || 'WooCommerce sync failed';
+        setSyncStatus('error');
+        setSyncMessage(errMsg);
+        await logActivity(order.id, `WooCommerce sync failed: ${errMsg}`, userId);
+        onUpdated();
         return;
       }
 
+      setSyncStatus('success');
+      setSyncMessage('Changes saved and synced to WooCommerce.');
       onUpdated();
+      setTimeout(() => {
+        setEditing(false);
+        setFeeRows([]);
+        setSyncStatus('idle');
+        setSyncMessage(null);
+      }, 2000);
     } catch (err: any) {
-      setResyncError(err?.message || 'Re-sync failed');
-    } finally {
-      setResyncing(false);
+      const errMsg = err?.message || 'WooCommerce sync failed';
+      setSyncStatus('error');
+      setSyncMessage(errMsg);
+      await logActivity(order.id, `WooCommerce sync failed: ${errMsg}`, userId);
+      onUpdated();
     }
   };
 
-  const displayItems = editing ? editItems : items;
-  const subtotal = displayItems.reduce((s, i) => {
-    if (editing) return s + i.quantity * i.unit_price;
-    return s + i.line_total;
-  }, 0);
+  const handleRemoveEditItem = (itemId: string) => {
+    setEditItems(prev => prev.map(i => i.id === itemId ? { ...i, _deleted: true } : i));
+  };
+
+  const handleAddProductRows = (rows: { product: any; quantity: number }[]) => {
+    const newItems: EditableItem[] = rows.map(row => ({
+      id: crypto.randomUUID(),
+      product_id: row.product.id,
+      sku: row.product.sku,
+      product_name: row.product.name,
+      quantity: row.quantity,
+      unit_price: row.product.selling_price ?? 0,
+      line_total: row.quantity * (row.product.selling_price ?? 0),
+      discount_amount: 0,
+      pick_location: null,
+      meta_data: null,
+      woo_product_id: row.product.woo_product_id ?? undefined,
+      woo_variation_id: row.product.woo_variation_id ?? undefined,
+    } as any));
+    setEditItems(prev => [...prev, ...newItems]);
+    setShowAddProducts(false);
+  };
+
+  const handleAddFeeRow = () => {
+    setFeeRows(prev => [...prev, { _type: 'fee', _tempId: crypto.randomUUID(), name: '', amount: 0 }]);
+    setAddingFee(false);
+  };
+
+  const displayItems = editing
+    ? editItems.filter(i => !i._deleted)
+    : items;
+
+  const subtotal = editing
+    ? editItems.filter(i => !i._deleted).reduce((s, i) => s + i.quantity * i.unit_price, 0)
+      + feeRows.reduce((s, f) => s + f.amount, 0)
+    : items.reduce((s, i) => s + i.line_total, 0);
 
   const couponLines = order.coupon_lines ?? [];
   const hasCoupons = couponLines.length > 0;
   const feeLines = order.fee_lines ?? [];
   const hasFees = feeLines.length > 0;
 
-  const inputCls = "px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full";
+  const inputCls = 'px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full';
+  const isSavingOrSyncing = saving || syncStatus === 'syncing';
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-900">Order Items</h3>
         <div className="flex items-center gap-2">
-          {!editing && order.woo_order_id && (
-            <button
-              onClick={handleResync}
-              disabled={resyncing}
-              className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-              title="Re-sync pricing and coupon data from WooCommerce"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${resyncing ? 'animate-spin' : ''}`} />
-              {resyncing ? 'Syncing...' : 'Sync from WooCommerce'}
-            </button>
-          )}
           {!editing && (
-            <button onClick={() => setAddingItem(!addingItem)} className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2.5 py-1.5 rounded-lg transition-colors">
-              <Plus className="w-3.5 h-3.5" />
-              Add Item
-            </button>
-          )}
-          {!editing ? (
             <button onClick={startEdit} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 border border-blue-200 px-2.5 py-1.5 rounded-lg transition-colors">
               <Edit2 className="w-3.5 h-3.5" />
               Edit Items
             </button>
-          ) : (
-            <div className="flex gap-2">
-              <button onClick={() => setEditing(false)} className="p-1.5 hover:bg-gray-100 rounded transition-colors">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors"
-              >
-                <Save className="w-3.5 h-3.5" />
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
           )}
         </div>
       </div>
 
-      {resyncError && (
+      {syncStatus === 'success' && (
+        <div className="mb-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+          {syncMessage}
+        </div>
+      )}
+      {syncStatus === 'error' && (
         <div className="mb-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-          {resyncError}
+          {syncMessage}
         </div>
       )}
 
@@ -235,8 +319,9 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
         </thead>
         <tbody>
           {displayItems.map((item, idx) => {
-            const rowTotal = editing ? editItems[idx].quantity * editItems[idx].unit_price : item.line_total;
-            const rowDiscount = editing ? (editItems[idx].discount_amount ?? 0) : (item.discount_amount ?? 0);
+            const activeIdx = editItems.filter(i => !i._deleted).indexOf(item as EditableItem);
+            const rowTotal = editing ? item.quantity * item.unit_price : item.line_total;
+            const rowDiscount = item.discount_amount ?? 0;
             const rowAmount = rowTotal - rowDiscount;
             return (
               <tr key={item.id} className="border-b border-gray-50">
@@ -265,12 +350,7 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                             <div key={mi} className="flex gap-2 text-xs">
                               <span className="text-gray-500 font-medium shrink-0">{m.key}:</span>
                               {isLikelyUrl(String(m.value)) ? (
-                                <a
-                                  href={String(m.value)}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-blue-600 hover:underline flex items-center gap-1"
-                                >
+                                <a href={String(m.value)} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline flex items-center gap-1">
                                   View file <ExternalLink className="w-3 h-3" />
                                 </a>
                               ) : (
@@ -288,8 +368,8 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                     <input
                       type="number"
                       min={1}
-                      value={editItems[idx]?.quantity}
-                      onChange={e => setEditItems(prev => prev.map((it, i) => i === idx ? { ...it, quantity: parseInt(e.target.value) || 1 } : it))}
+                      value={item.quantity}
+                      onChange={e => setEditItems(prev => prev.map(it => it.id === item.id ? { ...it, quantity: parseInt(e.target.value) || 1 } : it))}
                       className={`${inputCls} text-center w-16`}
                     />
                   ) : (
@@ -300,8 +380,8 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                   {editing ? (
                     <input
                       type="number"
-                      value={editItems[idx]?.unit_price}
-                      onChange={e => setEditItems(prev => prev.map((it, i) => i === idx ? { ...it, unit_price: parseFloat(e.target.value) || 0 } : it))}
+                      value={item.unit_price}
+                      onChange={e => setEditItems(prev => prev.map(it => it.id === item.id ? { ...it, unit_price: parseFloat(e.target.value) || 0 } : it))}
                       className={`${inputCls} text-right`}
                     />
                   ) : (
@@ -312,8 +392,8 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                   {editing ? (
                     <input
                       type="number"
-                      value={editItems[idx]?.discount_amount}
-                      onChange={e => setEditItems(prev => prev.map((it, i) => i === idx ? { ...it, discount_amount: parseFloat(e.target.value) || 0 } : it))}
+                      value={item.discount_amount ?? 0}
+                      onChange={e => setEditItems(prev => prev.map(it => it.id === item.id ? { ...it, discount_amount: parseFloat(e.target.value) || 0 } : it))}
                       className={`${inputCls} text-right`}
                     />
                   ) : (
@@ -324,12 +404,12 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                 </td>
                 <td className="py-3 text-right">
                   <span className="text-sm font-medium text-gray-900">
-                    {fmt(editing ? editItems[idx].quantity * editItems[idx].unit_price - (editItems[idx].discount_amount ?? 0) : rowAmount)}
+                    {fmt(rowAmount)}
                   </span>
                 </td>
                 {editing && (
                   <td className="py-3 pl-2">
-                    <button onClick={() => handleRemoveItem(item.id, item.product_name)} className="p-1 text-red-500 hover:bg-red-50 rounded transition-colors">
+                    <button onClick={() => handleRemoveEditItem(item.id)} className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </td>
@@ -337,24 +417,44 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
               </tr>
             );
           })}
+
+          {editing && feeRows.map((fee, idx) => (
+            <tr key={fee._tempId} className="border-b border-gray-50 bg-orange-50/40">
+              <td className="py-3">
+                <input
+                  type="text"
+                  value={fee.name}
+                  onChange={e => setFeeRows(prev => prev.map((f, i) => i === idx ? { ...f, name: e.target.value } : f))}
+                  placeholder="Fee name"
+                  className={inputCls}
+                />
+              </td>
+              <td className="py-3 text-center">
+                <span className="text-sm text-gray-400">—</span>
+              </td>
+              <td className="py-3 text-right">
+                <input
+                  type="number"
+                  value={fee.amount}
+                  onChange={e => setFeeRows(prev => prev.map((f, i) => i === idx ? { ...f, amount: parseFloat(e.target.value) || 0 } : f))}
+                  className={`${inputCls} text-right`}
+                />
+              </td>
+              <td className="py-3 text-right">
+                <span className="text-sm text-gray-400">—</span>
+              </td>
+              <td className="py-3 text-right">
+                <span className="text-sm font-medium text-gray-900">{fmt(fee.amount)}</span>
+              </td>
+              <td className="py-3 pl-2">
+                <button onClick={() => setFeeRows(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
-
-      {addingItem && !editing && (
-        <div className="border border-dashed border-gray-300 rounded-lg p-4 mb-4 space-y-3">
-          <div className="text-sm font-medium text-gray-700">Add New Item</div>
-          <div className="grid grid-cols-2 gap-3">
-            <input value={newItem.sku} onChange={e => setNewItem(p => ({ ...p, sku: e.target.value }))} className={inputCls} placeholder="SKU" />
-            <input value={newItem.product_name} onChange={e => setNewItem(p => ({ ...p, product_name: e.target.value }))} className={inputCls} placeholder="Product Name" />
-            <input type="number" min={1} value={newItem.quantity} onChange={e => setNewItem(p => ({ ...p, quantity: parseInt(e.target.value) || 1 }))} className={inputCls} placeholder="Qty" />
-            <input type="number" value={newItem.unit_price} onChange={e => setNewItem(p => ({ ...p, unit_price: parseFloat(e.target.value) || 0 }))} className={inputCls} placeholder="Unit Price" />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setAddingItem(false)} className="px-3 py-1.5 border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-            <button onClick={handleAddItem} disabled={saving} className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition-colors">Add</button>
-          </div>
-        </div>
-      )}
 
       <div className="space-y-2 border-t border-gray-100 pt-3">
         <div className="flex justify-between text-sm">
@@ -419,6 +519,47 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
           <span>{fmt(order.total_amount)}</span>
         </div>
       </div>
+
+      {editing && (
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-4 mt-4">
+          <button
+            onClick={() => setShowAddProducts(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add product(s)
+          </button>
+          <button
+            onClick={handleAddFeeRow}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add fee
+          </button>
+          <button
+            onClick={cancelEdit}
+            disabled={isSavingOrSyncing}
+            className="px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isSavingOrSyncing}
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'Saving...' : syncStatus === 'syncing' ? 'Syncing to WooCommerce...' : 'Save'}
+          </button>
+        </div>
+      )}
+
+      {showAddProducts && (
+        <AddProductsModal
+          onClose={() => setShowAddProducts(false)}
+          onAdd={handleAddProductRows}
+        />
+      )}
     </div>
   );
 }

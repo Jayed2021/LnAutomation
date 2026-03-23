@@ -16,6 +16,7 @@ export async function fetchOrderDetail(id: string): Promise<OrderDetail | null> 
       confirmation_type, courier_entry_method,
       late_delivery_reason, expected_delivery_date,
       exchange_return_id, cancellation_reason, partial_delivery_notes, notes,
+      coupon_lines,
       customer:customers(id, full_name, phone_primary, email, address_line1, city, district),
       assigned_user:users!orders_assigned_to_fkey(id, full_name),
       confirmed_user:users!orders_confirmed_by_fkey(id, full_name)

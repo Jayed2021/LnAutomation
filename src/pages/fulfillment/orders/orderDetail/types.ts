@@ -1,3 +1,9 @@
+export interface CouponLine {
+  code: string;
+  discount: string;
+  discount_tax: string;
+}
+
 export interface OrderDetail {
   id: string;
   order_number: string;
@@ -25,6 +31,7 @@ export interface OrderDetail {
   cancellation_reason: string | null;
   partial_delivery_notes: string | null;
   notes: string | null;
+  coupon_lines: CouponLine[] | null;
   customer: {
     id: string;
     full_name: string;

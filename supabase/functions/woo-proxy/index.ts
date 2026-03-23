@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 interface WooRequestBody {
-  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status";
+  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status" | "resync-order";
   store_url: string;
   consumer_key: string;
   consumer_secret: string;
@@ -20,6 +20,7 @@ interface WooRequestBody {
   order?: any;
   status?: string;
   note?: string;
+  internal_order_id?: string;
 }
 
 function buildAuthHeader(consumerKey: string, consumerSecret: string): string {
@@ -202,6 +203,15 @@ function generateOrderNumber(): string {
   return `ORD-${year}-${rand}`;
 }
 
+function extractCouponLines(payload: any): Array<{ code: string; discount: string; discount_tax: string }> {
+  const lines = payload.coupon_lines || [];
+  return lines.map((c: any) => ({
+    code: c.code || "",
+    discount: c.discount || "0",
+    discount_tax: c.discount_tax || "0",
+  }));
+}
+
 async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id: string; order_number: string; skipped: boolean }> {
   const wooOrderId = payload?.id;
   if (!wooOrderId) throw new Error("Invalid order payload: missing id");
@@ -261,6 +271,7 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
   const discountAmount = parseFloat(payload.discount_total || "0");
   const totalAmount = parseFloat(payload.total || "0");
   const paymentMethod = payload.payment_method_title || payload.payment_method || "COD";
+  const couponLines = extractCouponLines(payload);
 
   let orderNumber = generateOrderNumber();
   let attempts = 0;
@@ -292,6 +303,7 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
       discount_amount: discountAmount,
       total_amount: totalAmount,
       order_source: "website",
+      coupon_lines: couponLines.length > 0 ? couponLines : null,
     })
     .select("id")
     .single();
@@ -314,6 +326,8 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
       if (filteredMeta.some((m) => isPrescriptionMeta(m.key))) {
         hasPrescription = true;
       }
+      const itemSubtotal = parseFloat(item.subtotal || "0");
+      const itemTotal = parseFloat(item.total || "0");
       return {
         order_id: orderId,
         product_id: skuMap[item.sku] || null,
@@ -321,7 +335,8 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
         product_name: item.name || "Unknown Product",
         quantity: item.quantity || 1,
         unit_price: parseFloat(item.price || "0"),
-        line_total: parseFloat(item.subtotal || "0"),
+        line_total: itemSubtotal,
+        discount_amount: itemSubtotal - itemTotal,
         woo_item_id: item.id || null,
         meta_data: filteredMeta.length > 0 ? filteredMeta : null,
       };
@@ -340,6 +355,65 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
   });
 
   return { order_id: orderId, order_number: orderNumber, skipped: false };
+}
+
+async function resyncOrderFromWoo(
+  supabase: any,
+  storeUrl: string,
+  consumerKey: string,
+  consumerSecret: string,
+  internalOrderId: string
+): Promise<{ success: boolean; message: string }> {
+  const { data: order, error: orderFetchErr } = await supabase
+    .from("orders")
+    .select("id, woo_order_id, order_number")
+    .eq("id", internalOrderId)
+    .maybeSingle();
+
+  if (orderFetchErr) throw orderFetchErr;
+  if (!order) throw new Error("Order not found");
+  if (!order.woo_order_id) throw new Error("Order has no WooCommerce ID — cannot re-sync");
+
+  const res = await wooFetch(storeUrl, consumerKey, consumerSecret, `orders/${order.woo_order_id}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`WooCommerce API error (${res.status}): ${errText}`);
+  }
+
+  const wooOrder = await res.json();
+  const couponLines = extractCouponLines(wooOrder);
+
+  await supabase
+    .from("orders")
+    .update({
+      coupon_lines: couponLines.length > 0 ? couponLines : null,
+      woo_order_status: wooOrder.status,
+    })
+    .eq("id", internalOrderId);
+
+  const lineItems = wooOrder.line_items || [];
+  for (const item of lineItems) {
+    if (!item.id) continue;
+    const itemSubtotal = parseFloat(item.subtotal || "0");
+    const itemTotal = parseFloat(item.total || "0");
+    await supabase
+      .from("order_items")
+      .update({
+        line_total: itemSubtotal,
+        discount_amount: itemSubtotal - itemTotal,
+        unit_price: parseFloat(item.price || "0"),
+      })
+      .eq("order_id", internalOrderId)
+      .eq("woo_item_id", item.id);
+  }
+
+  await supabase.from("order_activity_log").insert({
+    order_id: internalOrderId,
+    action: "Order data re-synced from WooCommerce",
+    performed_by: null,
+  });
+
+  return { success: true, message: `Order ${order.order_number} re-synced successfully` };
 }
 
 Deno.serve(async (req: Request) => {
@@ -470,6 +544,24 @@ Deno.serve(async (req: Request) => {
       const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
       const supabase = createClient(supabaseUrl, serviceRoleKey);
       const result = await importOrderToDb(supabase, order);
+      return new Response(
+        JSON.stringify(result),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "resync-order") {
+      const { internal_order_id } = body;
+      if (!internal_order_id) {
+        return new Response(
+          JSON.stringify({ error: "internal_order_id is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, serviceRoleKey);
+      const result = await resyncOrderFromWoo(supabase, store_url, consumer_key, consumer_secret, internal_order_id);
       return new Response(
         JSON.stringify(result),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

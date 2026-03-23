@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CreditCard as Edit2, Plus, Trash2, Save, X } from 'lucide-react';
+import { CreditCard as Edit2, Plus, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderItem, OrderDetail } from './types';
 import { logActivity } from './service';
@@ -11,12 +11,17 @@ interface Props {
   onUpdated: () => void;
 }
 
+function isLikelyUrl(value: string): boolean {
+  return value.startsWith('http://') || value.startsWith('https://');
+}
+
 export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [editItems, setEditItems] = useState<OrderItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [newItem, setNewItem] = useState({ sku: '', product_name: '', quantity: 1, unit_price: 0 });
   const [addingItem, setAddingItem] = useState(false);
+  const [expandedMeta, setExpandedMeta] = useState<Set<string>>(new Set());
 
   const startEdit = () => {
     setEditItems(items.map(i => ({ ...i })));
@@ -158,7 +163,43 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
                 <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
                 <div className="text-xs text-blue-600">{item.sku}</div>
                 {item.pick_location && (
-                  <div className="text-xs text-teal-600 mt-0.5">📍 {item.pick_location}</div>
+                  <div className="text-xs text-teal-600 mt-0.5">Loc: {item.pick_location}</div>
+                )}
+                {item.meta_data && item.meta_data.length > 0 && (
+                  <div className="mt-1.5">
+                    <button
+                      onClick={() => setExpandedMeta(prev => {
+                        const next = new Set(prev);
+                        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+                        return next;
+                      })}
+                      className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full hover:bg-amber-100 transition-colors"
+                    >
+                      Rx / Lens Options
+                      {expandedMeta.has(item.id) ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                    {expandedMeta.has(item.id) && (
+                      <div className="mt-2 space-y-1 bg-amber-50/60 border border-amber-100 rounded-lg p-2.5">
+                        {item.meta_data.map((m, mi) => (
+                          <div key={mi} className="flex gap-2 text-xs">
+                            <span className="text-gray-500 font-medium shrink-0">{m.key}:</span>
+                            {isLikelyUrl(String(m.value)) ? (
+                              <a
+                                href={String(m.value)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-600 hover:underline flex items-center gap-1"
+                              >
+                                View file <ExternalLink className="w-3 h-3" />
+                              </a>
+                            ) : (
+                              <span className="text-gray-700">{String(m.value)}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </td>
               <td className="py-3 text-center">

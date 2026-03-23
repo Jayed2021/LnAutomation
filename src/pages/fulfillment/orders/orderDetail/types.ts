@@ -38,6 +38,11 @@ export interface OrderDetail {
   confirmed_user: { id: string; full_name: string } | null;
 }
 
+export interface WooMetaEntry {
+  key: string;
+  value: string;
+}
+
 export interface OrderItem {
   id: string;
   product_id: string | null;
@@ -48,6 +53,7 @@ export interface OrderItem {
   line_total: number;
   discount_amount: number;
   pick_location: string | null;
+  meta_data: WooMetaEntry[] | null;
 }
 
 export interface OrderCourierInfo {

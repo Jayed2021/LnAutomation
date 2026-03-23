@@ -25,6 +25,7 @@ export interface OrderListItem {
   cs_status: CsStatus;
   total_amount: number;
   expected_delivery_date: string | null;
+  has_prescription: boolean;
   customer: {
     full_name: string;
     phone_primary: string;

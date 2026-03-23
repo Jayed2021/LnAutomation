@@ -2,11 +2,11 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, Calendar, Eye, Users, TrendingUp, Package, Truck, Download,
-  ChevronDown, X
+  ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
-import { OrderListItem, STATUS_CONFIG } from './types';
+import { OrderListItem, STATUS_CONFIG, CsStatus } from './types';
 import { StatusBadge } from './StatusBadge';
 import { PullOrderModal } from './PullOrderModal';
 
@@ -104,19 +104,96 @@ const TAB_STATUSES: Record<Tab, string[]> = {
   cancelled: ['cancelled', 'refund'],
 };
 
+const BULK_STATUSES: CsStatus[] = [
+  'new_not_called', 'new_called', 'confirmed', 'awaiting_payment',
+  'late_delivery', 'send_to_lab', 'in_lab', 'not_printed', 'printed',
+  'packed', 'shipped', 'delivered', 'cancelled',
+];
+
 function getInitials(name: string): string {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-green-500', 'bg-amber-500', 'bg-rose-500',
-  'bg-teal-500', 'bg-violet-500', 'bg-orange-500', 'bg-cyan-500',
+  'bg-teal-500', 'bg-orange-500', 'bg-cyan-500',
 ];
 
 function avatarColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+async function deleteOrder(id: string) {
+  await supabase.from('order_activity_log').delete().eq('order_id', id);
+  await supabase.from('order_call_log').delete().eq('order_id', id);
+  await supabase.from('order_notes').delete().eq('order_id', id);
+  await supabase.from('order_prescriptions').delete().eq('order_id', id);
+  await supabase.from('order_packaging_items').delete().eq('order_id', id);
+  await supabase.from('order_courier_info').delete().eq('order_id', id);
+  await supabase.from('order_items').delete().eq('order_id', id);
+  const { error } = await supabase.from('orders').delete().eq('id', id);
+  if (error) throw error;
+}
+
+interface DeleteConfirmModalProps {
+  count: number;
+  orderNumbers: string[];
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}
+
+function DeleteConfirmModal({ count, orderNumbers, onConfirm, onCancel, loading }: DeleteConfirmModalProps) {
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">
+              Delete {count === 1 ? 'Order' : `${count} Orders`}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              This action cannot be undone. All associated data (items, notes, activity logs) will be permanently removed.
+            </p>
+          </div>
+        </div>
+        {count <= 5 && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-5">
+            {orderNumbers.map(n => (
+              <div key={n} className="text-sm text-gray-700 font-medium">{n}</div>
+            ))}
+          </div>
+        )}
+        {count > 5 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-5 text-sm text-red-700 font-medium">
+            {count} orders selected for deletion
+          </div>
+        )}
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors flex items-center gap-2"
+          >
+            <Trash2 className="w-4 h-4" />
+            {loading ? 'Deleting...' : `Delete ${count === 1 ? 'Order' : `${count} Orders`}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function Orders() {
@@ -134,6 +211,12 @@ export default function Orders() {
   const [showPullModal, setShowPullModal] = useState(false);
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
 
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<{ ids: string[]; numbers: string[] } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [showBulkStatusDropdown, setShowBulkStatusDropdown] = useState(false);
+  const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
+
   const { startIso, endIso } = useMemo(() => getStableDateStrings(dateRange), [dateRange]);
   const { start, end } = useMemo(() => getDateRange(dateRange), [dateRange]);
 
@@ -145,6 +228,7 @@ export default function Orders() {
         .select(`
           id, order_number, woo_order_id, woo_order_number,
           order_date, cs_status, total_amount, expected_delivery_date,
+          has_prescription,
           customer:customers(full_name, phone_primary),
           assigned_user:users!orders_assigned_to_fkey(id, full_name),
           confirmed_user:users!orders_confirmed_by_fkey(id, full_name)
@@ -171,6 +255,10 @@ export default function Orders() {
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [activeTab, dateRange, searchQuery, statusFilter]);
 
   const handleOrderImported = useCallback((orderId?: string) => {
     setDateRange('all_time');
@@ -216,9 +304,79 @@ export default function Orders() {
     return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
   };
 
+  const allFilteredSelected = filtered.length > 0 && filtered.every(o => selectedIds.has(o.id));
+  const someSelected = selectedIds.size > 0;
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map(o => o.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const openDeleteSingle = (e: React.MouseEvent, order: OrderListItem) => {
+    e.stopPropagation();
+    setDeleteTarget({
+      ids: [order.id],
+      numbers: [`#${order.woo_order_id ?? order.order_number} (${order.order_number})`],
+    });
+  };
+
+  const openDeleteBulk = () => {
+    const targets = filtered.filter(o => selectedIds.has(o.id));
+    setDeleteTarget({
+      ids: targets.map(o => o.id),
+      numbers: targets.map(o => `#${o.woo_order_id ?? o.order_number}`),
+    });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      for (const id of deleteTarget.ids) {
+        await deleteOrder(id);
+      }
+      setSelectedIds(new Set());
+      setDeleteTarget(null);
+      fetchOrders();
+    } catch (err) {
+      console.error('Delete failed:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleBulkStatusChange = async (newStatus: CsStatus) => {
+    if (selectedIds.size === 0) return;
+    setBulkStatusChanging(true);
+    setShowBulkStatusDropdown(false);
+    try {
+      const ids = Array.from(selectedIds);
+      await supabase
+        .from('orders')
+        .update({ cs_status: newStatus, updated_at: new Date().toISOString() })
+        .in('id', ids);
+      setSelectedIds(new Set());
+      fetchOrders();
+    } catch (err) {
+      console.error('Bulk status change failed:', err);
+    } finally {
+      setBulkStatusChanging(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
         <p className="text-sm text-gray-500 mt-0.5">Manage customer orders from confirmation to shipment</p>
@@ -272,8 +430,9 @@ export default function Orders() {
         ))}
       </div>
 
-      {/* Tabs */}
+      {/* Main Table Card */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        {/* Tabs */}
         <div className="border-b border-gray-200">
           <div className="flex overflow-x-auto">
             {TABS.map(tab => (
@@ -365,26 +524,87 @@ export default function Orders() {
           </button>
         </div>
 
+        {/* Bulk Action Bar */}
+        {someSelected && (
+          <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
+              <CheckSquare className="w-4 h-4" />
+              {selectedIds.size} order{selectedIds.size > 1 ? 's' : ''} selected
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              {/* Bulk Status Change */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowBulkStatusDropdown(!showBulkStatusDropdown)}
+                  disabled={bulkStatusChanging}
+                  className="flex items-center gap-2 px-3 py-2 border border-blue-200 rounded-lg text-sm text-blue-700 bg-white hover:bg-blue-50 transition-colors"
+                >
+                  Change Status
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+                {showBulkStatusDropdown && (
+                  <div className="absolute top-full right-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1 max-h-64 overflow-y-auto">
+                    {BULK_STATUSES.map(s => (
+                      <button
+                        key={s}
+                        onClick={() => handleBulkStatusChange(s)}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 text-gray-700"
+                      >
+                        {STATUS_CONFIG[s]?.label ?? s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Bulk Delete */}
+              <button
+                onClick={openDeleteBulk}
+                className="flex items-center gap-2 px-3 py-2 border border-red-200 rounded-lg text-sm text-red-700 bg-white hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Selected
+              </button>
+
+              {/* Clear Selection */}
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Table */}
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/50">
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Order Date</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Order ID</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Customer</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Total</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Status</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Assigned Person</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Actions</th>
+                <th className="px-4 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer"
+                  />
+                </th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Order Date</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Order ID</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Customer</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Total</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Status</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Assigned Person</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-b border-gray-100">
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <td key={j} className="px-5 py-4">
+                    {Array.from({ length: 8 }).map((_, j) => (
+                      <td key={j} className="px-4 py-4">
                         <div className="h-4 bg-gray-100 rounded animate-pulse" />
                       </td>
                     ))}
@@ -392,7 +612,7 @@ export default function Orders() {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-16 text-center text-gray-500">
+                  <td colSpan={8} className="px-5 py-16 text-center text-gray-500">
                     <Package className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                     <p className="font-medium text-gray-400">No orders found</p>
                     <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or date range</p>
@@ -404,28 +624,51 @@ export default function Orders() {
                     key={order.id}
                     onClick={() => { setHighlightedOrderId(null); navigate(`/fulfillment/orders/${order.id}`); }}
                     className={`border-b border-gray-100 cursor-pointer transition-colors ${
-                      highlightedOrderId === order.id
+                      selectedIds.has(order.id)
+                        ? 'bg-blue-50/60'
+                        : highlightedOrderId === order.id
                         ? 'bg-green-50 hover:bg-green-50/80'
                         : 'hover:bg-blue-50/30'
                     }`}
                   >
-                    <td className="px-5 py-4 text-sm text-gray-600">
+                    <td className="px-4 py-4" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(order.id)}
+                        onChange={() => toggleSelect(order.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer"
+                      />
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-600">
                       {formatDate(order.order_date)}
                     </td>
-                    <td className="px-5 py-4">
-                      <div className="text-sm font-semibold text-gray-900">
-                        #{order.woo_order_id ?? order.order_number}
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <div className="text-sm font-semibold text-gray-900">
+                            #{order.woo_order_id ?? order.order_number}
+                          </div>
+                          <div className="text-xs text-gray-400">{order.order_number}</div>
+                        </div>
+                        {order.has_prescription && (
+                          <div
+                            title="This order has prescription / lens options attached"
+                            className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 border border-amber-300 rounded-full text-amber-700 shrink-0"
+                          >
+                            <FlaskConical className="w-3 h-3" />
+                            <span className="text-xs font-semibold">Rx</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="text-xs text-gray-400">{order.order_number}</div>
                     </td>
-                    <td className="px-5 py-4">
+                    <td className="px-4 py-4">
                       <div className="text-sm font-medium text-gray-900">{order.customer?.full_name ?? '—'}</div>
                       <div className="text-xs text-gray-500">{order.customer?.phone_primary ?? '—'}</div>
                     </td>
-                    <td className="px-5 py-4 text-sm font-medium text-gray-900">
+                    <td className="px-4 py-4 text-sm font-medium text-gray-900">
                       ৳{(order.total_amount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
                     </td>
-                    <td className="px-5 py-4">
+                    <td className="px-4 py-4">
                       <StatusBadge status={order.cs_status} />
                       {order.cs_status === 'late_delivery' && order.expected_delivery_date && (
                         <div className="text-xs text-amber-600 mt-1">
@@ -433,7 +676,7 @@ export default function Orders() {
                         </div>
                       )}
                     </td>
-                    <td className="px-5 py-4">
+                    <td className="px-4 py-4">
                       {order.assigned_user ? (
                         <div className="flex items-center gap-2">
                           <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${avatarColor(order.assigned_user.full_name)}`}>
@@ -450,14 +693,23 @@ export default function Orders() {
                         <span className="text-sm text-gray-400">Unassigned</span>
                       )}
                     </td>
-                    <td className="px-5 py-4">
-                      <button
-                        onClick={e => { e.stopPropagation(); navigate(`/fulfillment/orders/${order.id}`); }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        View
-                      </button>
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={e => { e.stopPropagation(); navigate(`/fulfillment/orders/${order.id}`); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          View
+                        </button>
+                        <button
+                          onClick={e => openDeleteSingle(e, order)}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 border border-red-200 rounded-lg text-sm text-red-500 hover:bg-red-50 transition-colors"
+                          title="Delete order"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -471,6 +723,16 @@ export default function Orders() {
         <PullOrderModal
           onClose={() => setShowPullModal(false)}
           onImported={handleOrderImported}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteConfirmModal
+          count={deleteTarget.ids.length}
+          orderNumbers={deleteTarget.numbers}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeleteTarget(null)}
+          loading={deleting}
         />
       )}
     </div>

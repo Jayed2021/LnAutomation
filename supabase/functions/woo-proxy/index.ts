@@ -182,6 +182,20 @@ function mapWooStatus(wooStatus: string): string {
   }
 }
 
+function isPrescriptionMeta(key: string): boolean {
+  const lower = key.toLowerCase();
+  return (
+    lower.includes("prescription") ||
+    lower.includes("upload") ||
+    lower.includes("rx") ||
+    lower.includes("pewc_group") ||
+    lower.includes("power lens") ||
+    lower.includes("lens brand") ||
+    lower.includes("lens option") ||
+    lower.includes("extra lens")
+  );
+}
+
 function generateOrderNumber(): string {
   const year = new Date().getFullYear();
   const rand = Math.floor(Math.random() * 900000) + 100000;
@@ -286,23 +300,37 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
   const orderId = newOrder.id;
 
   const lineItems = payload.line_items || [];
+  let hasPrescription = false;
+
   if (lineItems.length > 0) {
     const { data: products } = await supabase.from("products").select("id, sku");
     const skuMap: Record<string, string> = {};
     for (const p of products || []) {
       skuMap[p.sku] = p.id;
     }
-    const itemsToInsert = lineItems.map((item: any) => ({
-      order_id: orderId,
-      product_id: skuMap[item.sku] || null,
-      sku: item.sku || item.name?.toLowerCase().replace(/\s+/g, "-") || "unknown",
-      product_name: item.name || "Unknown Product",
-      quantity: item.quantity || 1,
-      unit_price: parseFloat(item.price || "0"),
-      line_total: parseFloat(item.subtotal || "0"),
-      woo_item_id: item.id || null,
-    }));
+    const itemsToInsert = lineItems.map((item: any) => {
+      const rawMeta: Array<{ key: string; value: string }> = item.meta_data || [];
+      const filteredMeta = rawMeta.filter((m) => !m.key.startsWith("_"));
+      if (filteredMeta.some((m) => isPrescriptionMeta(m.key))) {
+        hasPrescription = true;
+      }
+      return {
+        order_id: orderId,
+        product_id: skuMap[item.sku] || null,
+        sku: item.sku || item.name?.toLowerCase().replace(/\s+/g, "-") || "unknown",
+        product_name: item.name || "Unknown Product",
+        quantity: item.quantity || 1,
+        unit_price: parseFloat(item.price || "0"),
+        line_total: parseFloat(item.subtotal || "0"),
+        woo_item_id: item.id || null,
+        meta_data: filteredMeta.length > 0 ? filteredMeta : null,
+      };
+    });
     await supabase.from("order_items").insert(itemsToInsert);
+  }
+
+  if (hasPrescription) {
+    await supabase.from("orders").update({ has_prescription: true }).eq("id", orderId);
   }
 
   await supabase.from("order_activity_log").insert({

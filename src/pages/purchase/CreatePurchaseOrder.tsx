@@ -159,7 +159,8 @@ export default function CreatePurchaseOrder() {
       .select(`
         id, po_number, supplier_id, shipment_name, currency,
         usd_to_cny_rate, cny_to_bdt_rate, usd_to_bdt_rate,
-        expected_delivery_date, is_payment_complete, status
+        expected_delivery_date, is_payment_complete, status,
+        suppliers!inner(supplier_type)
       `)
       .eq('id', poId)
       .maybeSingle();
@@ -171,11 +172,14 @@ export default function CreatePurchaseOrder() {
       return;
     }
 
+    const draftSupplierIsLocal = (po as any).suppliers?.supplier_type === 'local';
+    const effectiveCurrency = draftSupplierIsLocal ? 'BDT' : (po.currency || 'USD');
+
     setDraftId(poId);
     setSelectedSupplierId(po.supplier_id);
     setShipmentName(po.shipment_name || '');
     setEstimatedArrival(po.expected_delivery_date ? po.expected_delivery_date.split('T')[0] : '');
-    setCurrency(po.currency || 'USD');
+    setCurrency(effectiveCurrency);
     setUsdToCny(String(po.usd_to_cny_rate || 7.25));
     setCnyToBdt(String(po.cny_to_bdt_rate || 15.17));
     setUsdToBdt(String(po.usd_to_bdt_rate || 110));
@@ -228,7 +232,7 @@ export default function CreatePurchaseOrder() {
         low_stock_threshold: threshold,
         order_qty: 0,
         unit_cost: row.unit_price || 0,
-        currency: row.currency || 'USD',
+        currency: draftSupplierIsLocal ? 'BDT' : (row.currency || 'USD'),
         original_unit_cost: row.unit_price || 0,
         supplier_sku: row.supplier_sku || null,
         original_supplier_sku: row.supplier_sku || null,
@@ -253,7 +257,7 @@ export default function CreatePurchaseOrder() {
         low_stock_threshold: base?.low_stock_threshold || 0,
         order_qty: item.ordered_quantity,
         unit_cost: item.unit_price,
-        currency: base?.currency || po.currency || 'USD',
+        currency: draftSupplierIsLocal ? 'BDT' : (base?.currency || effectiveCurrency),
         original_unit_cost: base?.original_unit_cost || item.unit_price,
         supplier_sku: base?.supplier_sku || null,
         original_supplier_sku: base?.original_supplier_sku || null,
@@ -331,6 +335,12 @@ export default function CreatePurchaseOrder() {
       return;
     }
 
+    const supplier = suppliers.find((s) => s.id === supplierId);
+    const supplierIsLocal = supplier?.supplier_type === 'local';
+    if (supplierIsLocal) {
+      setCurrency('BDT');
+    }
+
     const { data, error } = await supabase
       .from('product_suppliers')
       .select(`
@@ -378,7 +388,7 @@ export default function CreatePurchaseOrder() {
         low_stock_threshold: threshold,
         order_qty: 0,
         unit_cost: row.unit_price || 0,
-        currency: row.currency || 'USD',
+        currency: supplierIsLocal ? 'BDT' : (row.currency || 'USD'),
         original_unit_cost: row.unit_price || 0,
         supplier_sku: row.supplier_sku || null,
         original_supplier_sku: row.supplier_sku || null,
@@ -654,6 +664,7 @@ export default function CreatePurchaseOrder() {
     setSaving(true);
 
     const supplier = suppliers.find((s) => s.id === selectedSupplierId);
+    const effectiveSaveCurrency = supplier?.supplier_type === 'local' ? 'BDT' : currency;
     const poNumber = `PO-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
 
     const poData = {
@@ -661,11 +672,11 @@ export default function CreatePurchaseOrder() {
       supplier_id: selectedSupplierId,
       shipment_name: shipmentName || null,
       status: 'draft',
-      currency,
+      currency: effectiveSaveCurrency,
       usd_to_cny_rate: parseFloat(usdToCny) || 7.25,
       cny_to_bdt_rate: parseFloat(cnyToBdt) || 15.17,
       usd_to_bdt_rate: parseFloat(usdToBdt) || 110,
-      exchange_rate_to_bdt: getExchangeRate(),
+      exchange_rate_to_bdt: effectiveSaveCurrency === 'BDT' ? 1 : getExchangeRate(),
       expected_delivery_date: estimatedArrival || null,
       is_payment_complete: isPaymentComplete,
     };
@@ -704,7 +715,7 @@ export default function CreatePurchaseOrder() {
           received_quantity: 0,
           shipping_cost_per_unit: 0,
           import_duty_per_unit: 0,
-          landed_cost_per_unit: item.unit_cost * getExchangeRate(),
+          landed_cost_per_unit: item.unit_cost * (effectiveSaveCurrency === 'BDT' ? 1 : getExchangeRate()),
         }));
 
       if (itemsToInsert.length > 0) {

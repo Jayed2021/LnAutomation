@@ -42,9 +42,10 @@ export default function Settings() {
     },
     {
       title: 'Barcode Settings',
-      description: 'Configure barcode scanning and generation',
+      description: 'Configure label size and barcode format for printing',
       icon: Barcode,
-      color: 'blue'
+      color: 'blue',
+      route: '/settings/barcode'
     },
     {
       title: 'WooCommerce Integration',

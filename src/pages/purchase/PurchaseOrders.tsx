@@ -23,14 +23,18 @@ interface PurchaseOrder {
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
   ordered: 'Ordered',
+  confirmed: 'Confirmed',
   partially_received: 'Partial',
+  received_complete: 'Fully Received',
   closed: 'Closed',
 };
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'gray',
   ordered: 'blue',
+  confirmed: 'blue',
   partially_received: 'amber',
+  received_complete: 'green',
   closed: 'emerald',
 };
 
@@ -118,6 +122,7 @@ export default function PurchaseOrders() {
     { key: 'draft', label: 'Draft' },
     { key: 'ordered', label: 'Ordered' },
     { key: 'partially_received', label: 'Partially Received' },
+    { key: 'received_complete', label: 'Fully Received' },
     { key: 'closed', label: 'Closed' },
   ];
 

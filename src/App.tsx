@@ -28,6 +28,7 @@ import Expenses from './pages/finance/Expenses';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import WooCommerceSettings from './pages/settings/WooCommerceSettings';
+import BarcodeSettings from './pages/settings/BarcodeSettings';
 import ComingSoon from './pages/ComingSoon';
 
 function App() {
@@ -80,6 +81,7 @@ function App() {
             <Route path="reports" element={<Reports />} />
             <Route path="settings" element={<Settings />} />
             <Route path="settings/woocommerce" element={<WooCommerceSettings />} />
+            <Route path="settings/barcode" element={<BarcodeSettings />} />
           </Route>
         </Routes>
         </RefreshProvider>

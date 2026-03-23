@@ -3,6 +3,7 @@ export type ReceivingStep = 'qty_check' | 'qty_checked' | 'qc_in_progress' | 'co
 export interface POForReceiving {
   id: string;
   po_number: string;
+  po_shipment_name: string | null;
   supplier_name: string;
   expected_delivery_date: string | null;
   notes: string | null;

@@ -5,7 +5,7 @@ export async function loadPOsForReceiving(): Promise<{ pos: POForReceiving[]; lo
   const [posRes, locsRes, sessionsRes] = await Promise.all([
     supabase
       .from('purchase_orders')
-      .select(`id, po_number, expected_delivery_date, notes, created_at, suppliers(name), purchase_order_items(id, sku, product_name, product_image_url, ordered_quantity, received_quantity, landed_cost_per_unit)`)
+      .select(`id, po_number, shipment_name, expected_delivery_date, notes, created_at, suppliers(name), purchase_order_items(id, sku, product_name, product_image_url, ordered_quantity, received_quantity, landed_cost_per_unit)`)
       .in('status', ['ordered', 'confirmed', 'partially_received'])
       .order('expected_delivery_date'),
     supabase
@@ -29,6 +29,7 @@ export async function loadPOsForReceiving(): Promise<{ pos: POForReceiving[]; lo
   const pos: POForReceiving[] = (posRes.data || []).map((po: any) => ({
     id: po.id,
     po_number: po.po_number,
+    po_shipment_name: po.shipment_name || null,
     supplier_name: po.suppliers?.name || 'Unknown',
     expected_delivery_date: po.expected_delivery_date,
     created_at: po.created_at,
@@ -132,9 +133,7 @@ export async function upsertSession(session: ReceiptSession, userId: string): Pr
   }
 
   if (session.lines.length > 0) {
-    if (session.id) {
-      await supabase.from('goods_receipt_lines').delete().eq('session_id', sessionId);
-    }
+    await supabase.from('goods_receipt_lines').delete().eq('session_id', sessionId);
     await supabase.from('goods_receipt_lines').insert(
       session.lines.map(l => ({
         session_id: sessionId,
@@ -175,12 +174,6 @@ export async function finalizeQtyCheck(
     })
     .select()
     .single();
-
-  const { data: damagedLoc } = await supabase
-    .from('warehouse_locations')
-    .select('id')
-    .eq('location_type', 'damaged')
-    .maybeSingle();
 
   const updatedLines: ReceiptLine[] = [];
 
@@ -375,8 +368,11 @@ async function updatePOStatus(poId: string) {
     .eq('po_id', poId);
   const totalOrdered = (updatedItems || []).reduce((s, i) => s + (i.ordered_quantity ?? 0), 0);
   const totalReceived = (updatedItems || []).reduce((s, i) => s + (i.received_quantity ?? 0), 0);
-  const newStatus = totalReceived >= totalOrdered ? 'closed' : 'partially_received';
-  await supabase.from('purchase_orders').update({ status: newStatus }).eq('id', poId);
+  if (totalReceived >= totalOrdered) {
+    await supabase.from('purchase_orders').update({ status: 'received_complete' }).eq('id', poId);
+  } else {
+    await supabase.from('purchase_orders').update({ status: 'partially_received' }).eq('id', poId);
+  }
 }
 
 export async function uploadReceiptPhoto(

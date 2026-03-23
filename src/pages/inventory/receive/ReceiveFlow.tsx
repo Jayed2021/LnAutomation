@@ -43,10 +43,8 @@ async function resolveProductIds(lines: ReceiptLine[]): Promise<ReceiptLine[]> {
 
 function buildShipmentName(po: POForReceiving): string {
   const existing = po.activeSessions.length;
-  if (po.po_number) {
-    return existing > 0 ? `${po.po_number}-S${existing + 1}` : po.po_number;
-  }
-  return `SHP-${po.po_number}`;
+  const baseName = po.po_shipment_name || po.po_number;
+  return existing > 0 ? `${baseName}-S${existing + 1}` : baseName;
 }
 
 export default function ReceiveFlow({ po, locations, resumeSessionId, onBack, onComplete }: Props) {

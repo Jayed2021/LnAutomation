@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Save, X, FileSpreadsheet, Truck, Package, Check, Clock, CreditCard } from 'lucide-react';
+import { ArrowLeft, Pencil, Save, X, FileSpreadsheet, Truck, Package, Check, Clock, CreditCard, AlertTriangle, Download, Lock } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Badge } from '../../components/ui/Badge';
 import ExcelJS from 'exceljs';
@@ -44,14 +44,18 @@ interface POItem {
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
   ordered: 'Ordered',
+  confirmed: 'Confirmed',
   partially_received: 'Partially Received',
+  received_complete: 'Fully Received',
   closed: 'Closed',
 };
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'gray',
   ordered: 'blue',
+  confirmed: 'blue',
   partially_received: 'amber',
+  received_complete: 'green',
   closed: 'emerald',
 };
 
@@ -66,6 +70,28 @@ interface POPayment {
   payment_date: string;
 }
 
+interface ReceivingSession {
+  id: string;
+  shipment_name: string;
+  step: string;
+  qty_check_date: string | null;
+  qc_date: string | null;
+  qty_check_notes: string;
+  qc_notes: string;
+  lines: ReceivingLine[];
+}
+
+interface ReceivingLine {
+  sku: string;
+  product_name: string;
+  product_image_url: string | null;
+  ordered_qty: number;
+  qty_checked: number;
+  qty_good: number;
+  qty_damaged: number;
+  landed_cost_per_unit: number;
+}
+
 export default function PurchaseOrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -73,7 +99,10 @@ export default function PurchaseOrderDetail() {
   const [po, setPo] = useState<PODetail | null>(null);
   const [items, setItems] = useState<POItem[]>([]);
   const [payments, setPayments] = useState<POPayment[]>([]);
+  const [completedSessions, setCompletedSessions] = useState<ReceivingSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [closingPO, setClosingPO] = useState(false);
+  const [reportGenerated, setReportGenerated] = useState(false);
 
   const [editingShipping, setEditingShipping] = useState(false);
   const [shippingWeight, setShippingWeight] = useState('');
@@ -154,6 +183,36 @@ export default function PurchaseOrderDetail() {
       .order('payment_date');
 
     setPayments(paymentsData || []);
+
+    const { data: sessionsData } = await supabase
+      .from('goods_receipt_sessions')
+      .select('id, shipment_name, step, qty_check_date, qc_date, qty_check_notes, qc_notes')
+      .eq('po_id', id)
+      .eq('step', 'complete')
+      .order('created_at');
+
+    if (sessionsData && sessionsData.length > 0) {
+      const sessionsWithLines: ReceivingSession[] = [];
+      for (const s of sessionsData) {
+        const { data: linesData } = await supabase
+          .from('goods_receipt_lines')
+          .select('sku, product_name, product_image_url, ordered_qty, qty_checked, qty_good, qty_damaged, landed_cost_per_unit')
+          .eq('session_id', s.id)
+          .order('created_at');
+        sessionsWithLines.push({
+          id: s.id,
+          shipment_name: s.shipment_name,
+          step: s.step,
+          qty_check_date: s.qty_check_date,
+          qc_date: s.qc_date,
+          qty_check_notes: s.qty_check_notes || '',
+          qc_notes: s.qc_notes || '',
+          lines: linesData || []
+        });
+      }
+      setCompletedSessions(sessionsWithLines);
+    }
+
     setLoading(false);
   };
 
@@ -224,6 +283,82 @@ export default function PurchaseOrderDetail() {
       .eq('id', po.id);
     setPo((prev) => prev ? { ...prev, status: 'ordered' } : prev);
     setMarkingOrdered(false);
+  };
+
+  const generateReceivingReport = () => {
+    if (!po || completedSessions.length === 0) return;
+
+    const allLines = completedSessions.flatMap(s => s.lines);
+    const headers = ['Shipment', 'SKU', 'Product Name', 'Ordered', 'Received', 'QC Passed', 'Damaged', 'Short/Over', 'Landed Cost', 'Total Value'];
+
+    const rows = completedSessions.flatMap(session =>
+      session.lines.map(l => {
+        const diff = l.qty_checked - l.ordered_qty;
+        return [
+          session.shipment_name,
+          l.sku,
+          l.product_name,
+          l.ordered_qty,
+          l.qty_checked,
+          l.qty_good,
+          l.qty_damaged,
+          diff === 0 ? 'Match' : diff > 0 ? `+${diff} Over` : `${Math.abs(diff)} Short`,
+          l.landed_cost_per_unit,
+          (l.qty_good * l.landed_cost_per_unit).toFixed(2)
+        ];
+      })
+    );
+
+    const totalOrdered = allLines.reduce((s, l) => s + l.ordered_qty, 0);
+    const totalChecked = allLines.reduce((s, l) => s + l.qty_checked, 0);
+    const totalGood = allLines.reduce((s, l) => s + l.qty_good, 0);
+    const totalDamaged = allLines.reduce((s, l) => s + l.qty_damaged, 0);
+    const totalValue = allLines.reduce((s, l) => s + l.qty_good * l.landed_cost_per_unit, 0);
+    const totalDiff = totalChecked - totalOrdered;
+
+    const summaryRow = [
+      'TOTAL', '', '', totalOrdered, totalChecked, totalGood, totalDamaged,
+      totalDiff === 0 ? 'Match' : totalDiff > 0 ? `+${totalDiff} Over` : `${Math.abs(totalDiff)} Short`,
+      '', totalValue.toFixed(2)
+    ];
+
+    const metaRows = [
+      ['PO Number', po.po_number],
+      ['Supplier', po.supplier.name],
+      ['Shipments', completedSessions.map(s => s.shipment_name).join(', ')],
+      ['Report Date', new Date().toLocaleDateString()],
+    ];
+
+    const csvContent = [
+      `# RECEIVING REPORT — ${po.po_number}`,
+      '',
+      headers.join(','),
+      ...rows.map(r => r.map(v => `"${v}"`).join(',')),
+      summaryRow.map(v => `"${v}"`).join(','),
+      '',
+      '# METADATA',
+      ...metaRows.map(r => r.map(v => `"${v}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `receiving-report-${po.po_number}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setReportGenerated(true);
+  };
+
+  const closePO = async () => {
+    if (!po || !reportGenerated) return;
+    setClosingPO(true);
+    await supabase
+      .from('purchase_orders')
+      .update({ status: 'closed', updated_at: new Date().toISOString() })
+      .eq('id', po.id);
+    setPo(prev => prev ? { ...prev, status: 'closed' } : prev);
+    setClosingPO(false);
   };
 
   const exportPackingList = async () => {
@@ -404,8 +539,49 @@ export default function PurchaseOrderDetail() {
               Mark as Ordered
             </button>
           )}
+          {po.status === 'received_complete' && (
+            <>
+              <button
+                onClick={generateReceivingReport}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Generate Report
+              </button>
+              <button
+                onClick={closePO}
+                disabled={!reportGenerated || closingPO}
+                title={!reportGenerated ? 'Generate the receiving report first' : ''}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {closingPO ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Lock className="w-4 h-4" />
+                )}
+                Close PO
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {po.status === 'received_complete' && (
+        <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+          <AlertTriangle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-emerald-800">All items received — ready to close</p>
+            <p className="text-sm text-emerald-700 mt-0.5">
+              Generate the receiving report first, then click "Close PO" to finalize this purchase order.
+            </p>
+          </div>
+          {reportGenerated && (
+            <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full shrink-0">
+              Report downloaded
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-5">

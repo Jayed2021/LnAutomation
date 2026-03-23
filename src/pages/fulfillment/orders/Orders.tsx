@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, Calendar, Eye, Users, TrendingUp, Package, Truck, Download,
@@ -10,7 +10,7 @@ import { OrderListItem, STATUS_CONFIG } from './types';
 import { StatusBadge } from './StatusBadge';
 import { PullOrderModal } from './PullOrderModal';
 
-type DateRange = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'last_month' | 'this_quarter';
+type DateRange = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'last_month' | 'this_quarter' | 'all_time';
 
 const DATE_RANGE_LABELS: Record<DateRange, string> = {
   today: 'Today',
@@ -19,9 +19,12 @@ const DATE_RANGE_LABELS: Record<DateRange, string> = {
   this_month: 'This Month',
   last_month: 'Last Month',
   this_quarter: 'This Quarter',
+  all_time: 'All Time',
 };
 
-function getDateRange(range: DateRange): { start: Date; end: Date } {
+function getDateRange(range: DateRange): { start: Date | null; end: Date | null } {
+  if (range === 'all_time') return { start: null, end: null };
+
   const now = new Date();
   const start = new Date(now);
   const end = new Date(now);
@@ -66,7 +69,16 @@ function getDateRange(range: DateRange): { start: Date; end: Date } {
   return { start, end };
 }
 
-function formatDateLabel(start: Date, end: Date): string {
+function getStableDateStrings(range: DateRange): { startIso: string | null; endIso: string | null } {
+  const { start, end } = getDateRange(range);
+  return {
+    startIso: start ? start.toISOString() : null,
+    endIso: end ? end.toISOString() : null,
+  };
+}
+
+function formatDateLabel(start: Date | null, end: Date | null): string {
+  if (!start || !end) return 'All Time';
   const fmt = (d: Date) =>
     `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
   return `${fmt(start)} - ${fmt(end)}`;
@@ -120,8 +132,10 @@ export default function Orders() {
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [assignedToMe, setAssignedToMe] = useState(false);
   const [showPullModal, setShowPullModal] = useState(false);
+  const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
 
-  const { start, end } = getDateRange(dateRange);
+  const { startIso, endIso } = useMemo(() => getStableDateStrings(dateRange), [dateRange]);
+  const { start, end } = useMemo(() => getDateRange(dateRange), [dateRange]);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -135,9 +149,10 @@ export default function Orders() {
           assigned_user:users!orders_assigned_to_fkey(id, full_name),
           confirmed_user:users!orders_confirmed_by_fkey(id, full_name)
         `)
-        .gte('order_date', start.toISOString())
-        .lte('order_date', end.toISOString())
         .order('order_date', { ascending: false });
+
+      if (startIso) query = query.gte('order_date', startIso);
+      if (endIso) query = query.lte('order_date', endIso);
 
       if (assignedToMe && user) {
         query = query.eq('assigned_to', user.id);
@@ -151,9 +166,15 @@ export default function Orders() {
     } finally {
       setLoading(false);
     }
-  }, [start.toISOString(), end.toISOString(), assignedToMe, user?.id]);
+  }, [startIso, endIso, assignedToMe, user?.id]);
 
   useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
+
+  const handleOrderImported = useCallback((orderId?: string) => {
+    setDateRange('all_time');
+    if (orderId) setHighlightedOrderId(orderId);
     fetchOrders();
   }, [fetchOrders]);
 
@@ -229,7 +250,7 @@ export default function Orders() {
             </div>
           )}
         </div>
-        <span className="text-sm text-gray-500">{formatDateLabel(start, end)}</span>
+        <span className="text-sm text-gray-500">{start && end ? formatDateLabel(start, end) : 'Showing all orders'}</span>
       </div>
 
       {/* Metric Cards */}
@@ -381,8 +402,12 @@ export default function Orders() {
                 filtered.map(order => (
                   <tr
                     key={order.id}
-                    onClick={() => navigate(`/fulfillment/orders/${order.id}`)}
-                    className="border-b border-gray-100 hover:bg-blue-50/30 cursor-pointer transition-colors"
+                    onClick={() => { setHighlightedOrderId(null); navigate(`/fulfillment/orders/${order.id}`); }}
+                    className={`border-b border-gray-100 cursor-pointer transition-colors ${
+                      highlightedOrderId === order.id
+                        ? 'bg-green-50 hover:bg-green-50/80'
+                        : 'hover:bg-blue-50/30'
+                    }`}
                   >
                     <td className="px-5 py-4 text-sm text-gray-600">
                       {formatDate(order.order_date)}
@@ -445,7 +470,7 @@ export default function Orders() {
       {showPullModal && (
         <PullOrderModal
           onClose={() => setShowPullModal(false)}
-          onImported={fetchOrders}
+          onImported={handleOrderImported}
         />
       )}
     </div>

@@ -59,7 +59,8 @@ export default function WooCommerceSettings() {
   const [syncing, setSyncing] = useState<'products' | 'orders' | null>(null);
 
   const [showOrderFilter, setShowOrderFilter] = useState(false);
-  const [orderFilter, setOrderFilter] = useState({ type: 'date' as 'date' | 'id', from_date: '', min_order_id: '' });
+  const [orderFilter, setOrderFilter] = useState({ type: 'id' as 'date' | 'id', from_date: '', min_order_id: '' });
+  const [orderSyncProgress, setOrderSyncProgress] = useState<{ imported: number; skipped: number; total: number } | null>(null);
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -327,6 +328,7 @@ export default function WooCommerceSettings() {
     setSyncing('orders');
     setSyncNotice(null);
     setShowOrderFilter(false);
+    setOrderSyncProgress(null);
 
     const { data: logRow } = await supabase
       .from('woo_sync_log')
@@ -353,10 +355,41 @@ export default function WooCommerceSettings() {
       const data = await callProxy(body);
       if (data.error) throw new Error(data.error);
 
+      const orders: any[] = data.orders || [];
+      const total = orders.length;
+      let imported = 0;
+      let skipped = 0;
+
+      setOrderSyncProgress({ imported: 0, skipped: 0, total });
+
+      const webhookUrl = `${supabaseUrl}/functions/v1/woo-webhook`;
+
+      for (const order of orders) {
+        try {
+          const res = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${supabaseAnonKey}`,
+            },
+            body: JSON.stringify(order),
+          });
+          const result = await res.json();
+          if (result.message?.includes('already exists')) {
+            skipped++;
+          } else {
+            imported++;
+          }
+        } catch {
+          skipped++;
+        }
+        setOrderSyncProgress({ imported, skipped, total });
+      }
+
       if (logRow?.id) {
         await supabase.from('woo_sync_log').update({
           completed_at: new Date().toISOString(),
-          records_synced: data.orders?.length || 0,
+          records_synced: imported,
           status: 'success',
         }).eq('id', logRow.id);
       }
@@ -367,7 +400,7 @@ export default function WooCommerceSettings() {
           .eq('id', config.id);
       }
 
-      setSyncNotice({ ok: true, message: `Order sync complete: ${data.orders?.length || 0} orders fetched` });
+      setSyncNotice({ ok: true, message: `Order sync complete: ${imported} imported, ${skipped} already existed (${total} total fetched)` });
       loadConfig();
     } catch (err: any) {
       if (logRow?.id) {
@@ -381,7 +414,7 @@ export default function WooCommerceSettings() {
       await refreshLogs();
     } finally {
       setSyncing(null);
-      setOrderFilter({ type: 'date', from_date: '', min_order_id: '' });
+      setOrderFilter({ type: 'id', from_date: '', min_order_id: '' });
       await refreshLogs();
     }
   };
@@ -755,20 +788,41 @@ export default function WooCommerceSettings() {
                 </div>
               )}
 
+              {syncing === 'orders' && orderSyncProgress && (
+                <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    <span className="text-sm font-medium text-gray-700">
+                      Importing orders... {orderSyncProgress.imported + orderSyncProgress.skipped} of {orderSyncProgress.total}
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-1.5">
+                    <div
+                      className="bg-gray-800 h-1.5 rounded-full transition-all duration-300"
+                      style={{ width: `${orderSyncProgress.total > 0 ? Math.round(((orderSyncProgress.imported + orderSyncProgress.skipped) / orderSyncProgress.total) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <div className="flex gap-3 text-xs text-gray-500">
+                    <span className="text-emerald-600 font-medium">{orderSyncProgress.imported} imported</span>
+                    <span>{orderSyncProgress.skipped} already existed</span>
+                  </div>
+                </div>
+              )}
+
               {showOrderFilter && (
                 <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 text-blue-600" />
-                    <p className="text-sm font-medium text-blue-800">Set a filter before syncing orders</p>
+                    <p className="text-sm font-medium text-blue-800">Set a starting point for order sync</p>
                   </div>
                   <div className="flex gap-4">
                     <label className="flex items-center gap-2 text-sm">
-                      <input type="radio" checked={orderFilter.type === 'date'} onChange={() => setOrderFilter(f => ({ ...f, type: 'date' }))} />
-                      From Date
-                    </label>
-                    <label className="flex items-center gap-2 text-sm">
                       <input type="radio" checked={orderFilter.type === 'id'} onChange={() => setOrderFilter(f => ({ ...f, type: 'id' }))} />
                       From Order ID
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="radio" checked={orderFilter.type === 'date'} onChange={() => setOrderFilter(f => ({ ...f, type: 'date' }))} />
+                      From Date
                     </label>
                   </div>
                   {orderFilter.type === 'date' ? (

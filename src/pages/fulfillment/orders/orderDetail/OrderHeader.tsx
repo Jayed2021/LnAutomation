@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, FileText, Package, Phone } from 'lucide-react';
+import { ArrowLeft, FileText, Package, Phone, Trash2 } from 'lucide-react';
 import { OrderDetail, OrderItem } from './types';
 import { StatusBadge } from '../StatusBadge';
 
@@ -13,9 +13,10 @@ interface Props {
   items: OrderItem[];
   onPrintInvoice: () => void;
   onPrintPackingSlip: () => void;
+  onDeleteOrder: () => void;
 }
 
-export function OrderHeader({ order, items, onPrintInvoice, onPrintPackingSlip }: Props) {
+export function OrderHeader({ order, items, onPrintInvoice, onPrintPackingSlip, onDeleteOrder }: Props) {
   const navigate = useNavigate();
 
   const itemsSummary = items.length > 0
@@ -90,6 +91,13 @@ export function OrderHeader({ order, items, onPrintInvoice, onPrintPackingSlip }
               Call Customer
             </a>
           )}
+          <button
+            onClick={onDeleteOrder}
+            className="flex items-center gap-2 px-3.5 py-2 border border-red-200 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete
+          </button>
         </div>
       </div>
     </div>

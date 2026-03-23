@@ -4,7 +4,7 @@ import { supabase } from '../../../lib/supabase';
 
 interface Props {
   onClose: () => void;
-  onImported: () => void;
+  onImported: (orderId?: string) => void;
 }
 
 export function PullOrderModal({ onClose, onImported }: Props) {
@@ -89,7 +89,7 @@ export function PullOrderModal({ onClose, onImported }: Props) {
 
       setSuccess(`Order imported successfully as ${webhookResult.order_number}.`);
       setTimeout(() => {
-        onImported();
+        onImported(webhookResult.order_id);
         onClose();
       }, 1500);
     } catch (err: any) {

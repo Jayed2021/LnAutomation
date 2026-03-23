@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Trash2, AlertTriangle, X } from 'lucide-react';
 import ReactDOM from 'react-dom/client';
 import { supabase } from '../../../../lib/supabase';
 import { useAuth } from '../../../../contexts/AuthContext';
@@ -40,6 +41,9 @@ export default function OrderDetail() {
   const [packagingItems, setPackagingItems] = useState<PackagingItem[]>([]);
   const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -109,6 +113,27 @@ export default function OrderDetail() {
     printContent(<PackingSlipTemplate order={order} items={items} />);
   };
 
+  const handleDeleteOrder = async () => {
+    if (!id) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await supabase.from('order_activity_log').delete().eq('order_id', id);
+      await supabase.from('order_call_log').delete().eq('order_id', id);
+      await supabase.from('order_notes').delete().eq('order_id', id);
+      await supabase.from('order_prescriptions').delete().eq('order_id', id);
+      await supabase.from('order_packaging_items').delete().eq('order_id', id);
+      await supabase.from('order_courier_info').delete().eq('order_id', id);
+      await supabase.from('order_items').delete().eq('order_id', id);
+      const { error } = await supabase.from('orders').delete().eq('id', id);
+      if (error) throw error;
+      navigate('/fulfillment/orders');
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete order.');
+      setDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-4 animate-pulse">
@@ -129,6 +154,7 @@ export default function OrderDetail() {
         items={items}
         onPrintInvoice={handlePrintInvoice}
         onPrintPackingSlip={handlePrintPackingSlip}
+        onDeleteOrder={() => setShowDeleteConfirm(true)}
       />
 
       {/* Three-column top section */}
@@ -167,6 +193,59 @@ export default function OrderDetail() {
 
       {/* Activity Log */}
       <ActivityLogCard logs={activityLog} />
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">Delete Order</h2>
+                  <p className="text-sm text-gray-500">This action cannot be undone</p>
+                </div>
+              </div>
+              <button onClick={() => { setShowDeleteConfirm(false); setDeleteError(''); }} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-sm text-gray-700">
+                You are about to permanently delete order <span className="font-semibold">#{order.woo_order_id ?? order.order_number}</span> and all its associated data including:
+              </p>
+              <ul className="text-sm text-gray-500 list-disc list-inside space-y-0.5 ml-1">
+                <li>Order items</li>
+                <li>Courier & payment info</li>
+                <li>Notes, call logs & activity history</li>
+                <li>Prescription & packaging details</li>
+              </ul>
+              {deleteError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {deleteError}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 p-5 border-t">
+              <button
+                onClick={() => { setShowDeleteConfirm(false); setDeleteError(''); }}
+                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteOrder}
+                disabled={deleting}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                {deleting ? 'Deleting...' : 'Delete Order'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

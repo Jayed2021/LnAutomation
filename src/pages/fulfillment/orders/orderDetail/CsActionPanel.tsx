@@ -22,10 +22,10 @@ interface CancellationReason {
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
 
 const BASE_ACTIONS: Record<string, string[]> = {
-  new_not_called:    ['awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  new_called:        ['awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  awaiting_payment:  ['cancel_before_dispatch', 'refund'],
-  late_delivery:     ['cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
+  new_not_called:    ['awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund', 'exchange'],
+  new_called:        ['awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund', 'exchange'],
+  awaiting_payment:  ['cancel_before_dispatch', 'refund', 'exchange'],
+  late_delivery:     ['cancel_before_dispatch', 'cancel_after_dispatch', 'refund', 'exchange'],
   send_to_lab:       ['mark_processing', 'cancel_before_dispatch', 'refund'],
   in_lab:            ['mark_processing', 'cancel_before_dispatch', 'refund'],
   not_printed:       ['mark_processing'],
@@ -254,9 +254,14 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           return;
         }
         const returnOrderNumber = form.exchange_return_id.trim();
-        const { data: retOrder } = await supabase.from('orders').select('id, customer_id').eq('order_number', returnOrderNumber).maybeSingle();
+        const { data: retOrder } = await supabase.from('orders').select('id, customer_id, cs_status').eq('order_number', returnOrderNumber).maybeSingle();
         if (!retOrder) {
           alert('Order not found. Please check the order number.');
+          setSaving(false);
+          return;
+        }
+        if (retOrder.cs_status !== 'delivered' && retOrder.cs_status !== 'partial_delivery') {
+          alert('This order cannot be exchanged. Only orders that have been Delivered or Partially Delivered to the customer can be exchanged.');
           setSaving(false);
           return;
         }
@@ -578,7 +583,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
               <div>
                 <div className="text-xs font-medium text-blue-800 mb-1">Return Order ID *</div>
                 <input value={form.exchange_return_id} onChange={e => setForm(p => ({ ...p, exchange_return_id: e.target.value }))} className={inputCls} placeholder="e.g. ORD-2026-123456" />
-                <p className="text-xs text-blue-600 mt-1">That order's status will be changed to Exchange Returnable (EXR) and listed in Returns.</p>
+                <p className="text-xs text-blue-600 mt-1">The linked order must be in Delivered or Partial Delivery status. Its status will be changed to Exchange Returnable (EXR) and listed in Returns.</p>
               </div>
             </div>
           )}

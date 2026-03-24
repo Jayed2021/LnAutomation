@@ -34,6 +34,7 @@ interface GroupedPackagingItem {
 export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState<PackagingProduct | null>(null);
 
@@ -43,8 +44,6 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const totalCost = items.reduce((s, i) => s + i.line_total, 0);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -90,14 +89,16 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
     setSelectedProduct(null);
     setSearchQuery('');
     setQuantity(1);
+    setSaveError(null);
   };
 
   const handleAdd = async () => {
     if (!selectedProduct) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const lineTotal = quantity * selectedProduct.selling_price;
-      await supabase.from('order_packaging_items').insert({
+      const { error } = await supabase.from('order_packaging_items').insert({
         order_id: orderId,
         product_id: selectedProduct.id,
         sku: selectedProduct.sku,
@@ -106,11 +107,12 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
         unit_cost: selectedProduct.selling_price,
         line_total: lineTotal,
       });
+      if (error) throw error;
       await logActivity(orderId, `Added packaging: ${selectedProduct.name} x${quantity}`, userId);
       resetForm();
       onUpdated();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setSaveError(err?.message ?? 'Failed to add packaging material. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -209,9 +211,6 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
                 className={`${inputCls} w-16 text-center`}
               />
             </div>
-            <span className="text-sm text-gray-700 w-20 text-right shrink-0">
-              ৳{group.totalLineTotal.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
-            </span>
             <button onClick={() => handleRemove(group)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors shrink-0">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -277,6 +276,9 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
               {selectedProduct.selling_price > 0 && <span>· ৳{selectedProduct.selling_price} / unit</span>}
             </div>
           )}
+          {saveError && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{saveError}</div>
+          )}
           <div className="flex gap-2">
             <button onClick={resetForm} className="px-3 py-1.5 border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
             <button
@@ -287,12 +289,6 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
               {saving ? 'Adding...' : 'Add'}
             </button>
           </div>
-        </div>
-      )}
-
-      {items.length > 0 && (
-        <div className="mt-3 text-right text-sm font-semibold text-orange-600">
-          Total Packaging Cost: ৳{totalCost.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
         </div>
       )}
     </div>

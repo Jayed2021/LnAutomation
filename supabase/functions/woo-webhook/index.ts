@@ -237,11 +237,13 @@ Deno.serve(async (req: Request) => {
     if (lineItems.length > 0) {
       const { data: products } = await supabase
         .from("products")
-        .select("id, sku");
+        .select("id, sku, selling_price");
 
       const skuMap: Record<string, string> = {};
+      const sellingPriceMap: Record<string, number> = {};
       for (const p of products || []) {
         skuMap[p.sku] = p.id;
+        sellingPriceMap[p.sku] = p.selling_price ?? 0;
       }
 
       const itemsToInsert = lineItems.map((item: any) => {
@@ -273,9 +275,9 @@ Deno.serve(async (req: Request) => {
       const { data: insertedItems } = await supabase
         .from("order_items")
         .insert(itemsToInsert)
-        .select("id, unit_price");
+        .select("id, sku, unit_price");
 
-      const insertedOrderItems: Array<{ id: string; unit_price: number }> = insertedItems ?? [];
+      const insertedOrderItems: Array<{ id: string; sku: string; unit_price: number }> = insertedItems ?? [];
 
       const { data: pkgSetting } = await supabase
         .from("app_settings")
@@ -289,7 +291,8 @@ Deno.serve(async (req: Request) => {
           if (defaults.length > 0) {
             const pkgRows: any[] = [];
             for (const orderItem of insertedOrderItems) {
-              const unitPrice = orderItem.unit_price ?? 0;
+              const systemPrice = sellingPriceMap[orderItem.sku];
+              const unitPrice = (systemPrice != null && systemPrice > 0) ? systemPrice : (orderItem.unit_price ?? 0);
               for (const d of defaults) {
                 const minPrice = d.min_price != null ? Number(d.min_price) : null;
                 const maxPrice = d.max_price != null ? Number(d.max_price) : null;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { X, Check, Printer, ScanLine } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/Dialog';
@@ -22,36 +22,9 @@ interface ReturnReceiveModalProps {
 
 export function ReturnReceiveModal({ returnData, onClose }: ReturnReceiveModalProps) {
   const [scannedItems, setScannedItems] = useState<Set<string>>(new Set());
-  const [scannedInput, setScannedInput] = useState('');
-  const [lastKeyTime, setLastKeyTime] = useState(0);
+  const [scanInput, setScanInput] = useState('');
   const [processing, setProcessing] = useState(false);
-
-  useState(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      const currentTime = Date.now();
-      const timeDiff = currentTime - lastKeyTime;
-
-      if (timeDiff < 100) {
-        setScannedInput(prev => prev + e.key);
-      } else {
-        setScannedInput(e.key);
-      }
-
-      setLastKeyTime(currentTime);
-
-      if (e.key === 'Enter' && scannedInput) {
-        handleBarcodeScanned(scannedInput);
-        setScannedInput('');
-      }
-    };
-
-    window.addEventListener('keypress', handleKeyPress);
-    return () => window.removeEventListener('keypress', handleKeyPress);
-  });
+  const scanInputRef = useRef<HTMLInputElement>(null);
 
   const handleBarcodeScanned = (barcode: string) => {
     const item = returnData.items.find(i =>
@@ -61,6 +34,13 @@ export function ReturnReceiveModal({ returnData, onClose }: ReturnReceiveModalPr
 
     if (item && !scannedItems.has(item.id)) {
       setScannedItems(prev => new Set(prev).add(item.id));
+    }
+    setScanInput('');
+  };
+
+  const handleScanKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && scanInput.trim()) {
+      handleBarcodeScanned(scanInput.trim());
     }
   };
 
@@ -122,9 +102,18 @@ export function ReturnReceiveModal({ returnData, onClose }: ReturnReceiveModalPr
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-            <ScanLine className="h-4 w-4" />
-            <span>Scan items with barcode scanner or check manually</span>
+          <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+            <ScanLine className="h-4 w-4 text-blue-600 shrink-0" />
+            <input
+              ref={scanInputRef}
+              type="text"
+              value={scanInput}
+              onChange={e => setScanInput(e.target.value)}
+              onKeyDown={handleScanKeyDown}
+              placeholder="Scan barcode here..."
+              autoFocus
+              className="flex-1 bg-transparent text-sm text-blue-700 placeholder-blue-400 outline-none"
+            />
           </div>
 
           <div className="space-y-3">

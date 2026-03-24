@@ -145,16 +145,26 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
     return data;
   };
 
-  const callWooProxy = async (action: string, extra: Record<string, unknown> = {}) => {
+  const callWooProxy = async (action: string, extra: Record<string, unknown> = {}): Promise<{ ok: boolean; skipped?: boolean; error?: string }> => {
     const config = await getWooConfig();
-    if (!config || !order.woo_order_id) return;
+    if (!config) return { ok: false, error: 'No active WooCommerce configuration found.' };
+    if (!order.woo_order_id) return { ok: false, skipped: true, error: 'Order has no WooCommerce order ID linked.' };
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
     const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    await fetch(`${supabaseUrl}/functions/v1/woo-proxy`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${supabaseKey}` },
-      body: JSON.stringify({ action, store_url: config.store_url, consumer_key: config.consumer_key, consumer_secret: config.consumer_secret, order_id: order.woo_order_id, ...extra }),
-    });
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/woo-proxy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${supabaseKey}` },
+        body: JSON.stringify({ action, store_url: config.store_url, consumer_key: config.consumer_key, consumer_secret: config.consumer_secret, order_id: order.woo_order_id, ...extra }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => `HTTP ${res.status}`);
+        return { ok: false, error: `WooCommerce API error: ${text}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Network error reaching WooCommerce.' };
+    }
   };
 
   const saveCourierFields = async () => {
@@ -174,6 +184,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
   const handleApply = async () => {
     if (!selectedAction) return;
     setSaving(true);
+    let wooSyncWarning: string | null = null;
     try {
       const newStatus = STATUS_MAP[selectedAction] ?? selectedAction;
       const updates: Record<string, unknown> = {
@@ -254,7 +265,12 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
         const reason = cancellationReasons.find(r => r.id === form.cancellation_reason_id);
         updates.cancellation_reason = reason?.reason_text ?? '';
         updates.cancellation_reason_id = form.cancellation_reason_id;
-        await callWooProxy('cancel-order');
+        const wooResult = await callWooProxy('cancel-order');
+        if (!wooResult.ok) {
+          wooSyncWarning = wooResult.skipped
+            ? `Order cancelled in ERP. WooCommerce sync skipped — no WooCommerce order ID is linked to this order.`
+            : `Order cancelled in ERP, but WooCommerce sync failed: ${wooResult.error}. Please update the status on WooCommerce manually.`;
+        }
       }
 
       if (selectedAction === 'cancel_after_dispatch') {
@@ -344,6 +360,10 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
       await supabase.from('orders').update(updates).eq('id', order.id);
       await logActivity(order.id, `Status changed to: ${STATUS_CONFIG[newStatus]?.label ?? newStatus} (action: ${ACTION_LABELS[selectedAction]})`, userId);
 
+      if (wooSyncWarning) {
+        await logActivity(order.id, `WooCommerce sync warning: ${wooSyncWarning}`, userId);
+      }
+
       setSelectedAction('');
       setForm({
         cancellation_reason_id: '', cancellation_reason_text: '',
@@ -352,8 +372,13 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
         collected_amount: '', delivery_charge: '', refund_amount: '',
       });
       onUpdated();
+
+      if (wooSyncWarning) {
+        alert(wooSyncWarning);
+      }
     } catch (err) {
       console.error(err);
+      alert('An unexpected error occurred. Please try again.');
     } finally {
       setSaving(false);
     }

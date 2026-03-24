@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Printer, Package, Send, Truck, Search, Camera, ScanLine,
   FileText, CheckCheck, Download, FlaskConical,
@@ -109,8 +109,8 @@ export default function Operations() {
   const [showScanner, setShowScanner] = useState(false);
   const [showLabInvoice, setShowLabInvoice] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [scannedInput, setScannedInput] = useState('');
-  const [lastKeyTime, setLastKeyTime] = useState(0);
+  const scannedInputRef = useRef('');
+  const lastKeyTimeRef = useRef(0);
   const [shippedRange, setShippedRange] = useState('today');
 
   const statusCounts = {
@@ -233,24 +233,6 @@ export default function Operations() {
     return () => { subscription.unsubscribe(); };
   }, [fetchOrders, fetchShippedOrders, shippedRange]);
 
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const now = Date.now();
-      if (now - lastKeyTime < 100) {
-        setScannedInput(prev => prev + e.key);
-      } else {
-        setScannedInput(e.key);
-      }
-      setLastKeyTime(now);
-      if (e.key === 'Enter' && scannedInput) {
-        handleBarcodeScanned(scannedInput);
-        setScannedInput('');
-      }
-    };
-    window.addEventListener('keypress', handleKeyPress);
-    return () => window.removeEventListener('keypress', handleKeyPress);
-  }, [lastKeyTime, scannedInput]);
 
   const handleBarcodeScanned = (barcode: string) => {
     const order = orders.find(o =>
@@ -263,6 +245,36 @@ export default function Operations() {
       setShowPickModal(true);
     }
   };
+
+  const handleBarcodeScannedRef = useRef(handleBarcodeScanned);
+  useEffect(() => {
+    handleBarcodeScannedRef.current = handleBarcodeScanned;
+  });
+
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement ||
+        (active && (active.closest('[role="dialog"]') || active.closest('[data-modal]')))
+      ) return;
+      const now = Date.now();
+      if (now - lastKeyTimeRef.current < 100) {
+        scannedInputRef.current += e.key;
+      } else {
+        scannedInputRef.current = e.key;
+      }
+      lastKeyTimeRef.current = now;
+      if (e.key === 'Enter' && scannedInputRef.current) {
+        handleBarcodeScannedRef.current(scannedInputRef.current);
+        scannedInputRef.current = '';
+      }
+    };
+    window.addEventListener('keypress', handleKeyPress);
+    return () => window.removeEventListener('keypress', handleKeyPress);
+  }, []);
 
   const handlePrintInvoice = (order: Order) => {
     const displayId = order.woo_order_number ? `#${order.woo_order_number}` : order.order_number;

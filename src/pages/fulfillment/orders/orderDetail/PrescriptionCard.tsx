@@ -325,6 +325,8 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
                   {(['sph', 'cyl', 'axis', 'pd'] as const).map(field => (
                     <td key={field} className="py-2 px-1">
                       <input
+                        type="text"
+                        inputMode="decimal"
                         value={fields[`${prefix}_${field}` as keyof RxFields] as string}
                         onChange={e => onChange({ ...fields, [`${prefix}_${field}`]: e.target.value })}
                         className={rxInput}

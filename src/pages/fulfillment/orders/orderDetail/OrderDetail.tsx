@@ -168,6 +168,7 @@ export default function OrderDetail() {
             items={items}
             userId={user?.id ?? null}
             userRole={user?.role ?? null}
+            hasPrescription={prescriptions.length > 0}
             onUpdated={load}
           />
         </div>

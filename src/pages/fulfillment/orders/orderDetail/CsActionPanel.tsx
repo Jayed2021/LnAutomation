@@ -10,6 +10,7 @@ interface Props {
   items: OrderItem[];
   userId: string | null;
   userRole: string | null;
+  hasPrescription: boolean;
   onUpdated: () => void;
 }
 
@@ -20,16 +21,16 @@ interface CancellationReason {
 
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
 
-const AVAILABLE_ACTIONS: Record<string, string[]> = {
-  new_not_called:    ['new_called', 'not_printed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  new_called:        ['not_printed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  awaiting_payment:  ['not_printed', 'cancel_before_dispatch', 'refund'],
-  late_delivery:     ['not_printed', 'cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
+const BASE_ACTIONS: Record<string, string[]> = {
+  new_not_called:    ['awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  new_called:        ['awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  awaiting_payment:  ['cancel_before_dispatch', 'refund'],
+  late_delivery:     ['cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
   send_to_lab:       ['cancel_before_dispatch', 'refund'],
-  in_lab:            ['not_printed', 'cancel_before_dispatch', 'refund'],
-  not_printed:       ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
-  printed:           ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
-  packed:            ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
+  in_lab:            ['cancel_before_dispatch', 'refund'],
+  not_printed:       ['mark_processing'],
+  printed:           ['mark_processing'],
+  packed:            ['mark_processing'],
   shipped:           ['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   delivered:         ['exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   cancelled:         ['mark_processing', 'refund'],
@@ -81,7 +82,7 @@ const STATUS_MAP: Record<string, string> = {
 
 const FINAL_STATUS_ACTIONS = new Set(['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery']);
 
-export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Props) {
+export function CsActionPanel({ order, items, userId, userRole, hasPrescription, onUpdated }: Props) {
   const [selectedAction, setSelectedAction] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -131,10 +132,16 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
     }));
   }, [selectedAction]);
 
-  const availableActions = AVAILABLE_ACTIONS[order.cs_status] ?? [];
   const isWarehouseRole = WAREHOUSE_ROLES.includes(userRole ?? '');
-  const showsCourierFields = FINAL_STATUS_ACTIONS.has(selectedAction);
   const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
+
+  const CS_STATUSES_WITH_LAB = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery', 'in_lab'];
+  const baseActions = BASE_ACTIONS[order.cs_status] ?? [];
+  const availableActions = CS_STATUSES_WITH_LAB.includes(order.cs_status) && hasPrescription
+    ? [...baseActions, 'send_to_lab']
+    : baseActions;
+
+  const showsCourierFields = FINAL_STATUS_ACTIONS.has(selectedAction);
 
   const getWooConfig = async () => {
     const { data } = await supabase.from('woocommerce_config').select('store_url, consumer_key, consumer_secret').eq('is_connected', true).maybeSingle();
@@ -435,7 +442,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
           <div>
             <div className="text-xs font-semibold text-slate-700 mb-0.5">Order in Warehouse Operations</div>
             <p className="text-xs text-slate-600">
-              This order is currently being processed by the warehouse team. To send it to lab or make CS changes, ask the warehouse to use <strong>Mark as Processing</strong> first.
+              This order is being processed by the warehouse team.{isWarehouseRole ? ' Use Mark as Processing to return it to the CS queue.' : ' Ask the warehouse to use Mark as Processing to make CS changes.'}
             </p>
           </div>
         </div>

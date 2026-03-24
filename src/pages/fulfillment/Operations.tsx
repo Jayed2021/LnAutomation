@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Printer, Package, Send, Truck, Search, Camera, ScanLine,
   FileText, CheckCheck, Download, FlaskConical,
-  Clock, TrendingUp, Hash,
+  Clock, TrendingUp, Hash, RotateCcw,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
@@ -97,8 +98,12 @@ const DATE_RANGES = [
   { value: '30days', label: 'Last 30 Days' },
 ];
 
+const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
+
 export default function Operations() {
   const { lastRefreshed } = useRefresh();
+  const { user } = useAuth();
+  const isWarehouseRole = WAREHOUSE_ROLES.includes(user?.role ?? '');
   const [activeTab, setActiveTab] = useState<TabKey>('not_printed');
   const [orders, setOrders] = useState<Order[]>([]);
   const [shippedOrders, setShippedOrders] = useState<Order[]>([]);
@@ -287,6 +292,24 @@ export default function Operations() {
   const handleMarkAsPrinted = async (orderId: string) => {
     await supabase.from('orders').update({ fulfillment_status: 'printed' }).eq('id', orderId);
     await supabase.from('order_activity_log').insert({ order_id: orderId, action: 'Marked as printed' });
+    fetchOrders();
+  };
+
+  const handleMarkProcessing = async (orderId: string) => {
+    const { count } = await supabase
+      .from('order_call_log')
+      .select('id', { count: 'exact', head: true })
+      .eq('order_id', orderId);
+    const newStatus = (count ?? 0) > 0 ? 'new_called' : 'new_not_called';
+    await supabase.from('orders').update({
+      cs_status: newStatus,
+      fulfillment_status: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', orderId);
+    await supabase.from('order_activity_log').insert({
+      order_id: orderId,
+      action: `Returned to CS queue as ${newStatus === 'new_called' ? 'New & Called' : 'New Not Called'} (Mark as Processing)`,
+    });
     fetchOrders();
   };
 
@@ -503,6 +526,8 @@ export default function Operations() {
                 getAddress={getAddress}
                 onPrintInvoice={handlePrintInvoice}
                 onMarkPrinted={handleMarkAsPrinted}
+                onMarkProcessing={handleMarkProcessing}
+                isWarehouseRole={isWarehouseRole}
               />
             )}
             {activeTab === 'printed' && (
@@ -522,6 +547,8 @@ export default function Operations() {
                   });
                   fetchOrders();
                 }}
+                onMarkProcessing={handleMarkProcessing}
+                isWarehouseRole={isWarehouseRole}
               />
             )}
             {activeTab === 'packed' && (
@@ -529,6 +556,8 @@ export default function Operations() {
                 orders={tabOrders}
                 displayId={displayId}
                 onMarkShipped={handleMarkAsShipped}
+                onMarkProcessing={handleMarkProcessing}
+                isWarehouseRole={isWarehouseRole}
               />
             )}
             {activeTab === 'send_to_lab' && (
@@ -598,12 +627,16 @@ function NotPrintedTable({
   getAddress,
   onPrintInvoice,
   onMarkPrinted,
+  onMarkProcessing,
+  isWarehouseRole,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
   getAddress: (o: Order) => string;
   onPrintInvoice: (o: Order) => void;
   onMarkPrinted: (id: string) => void;
+  onMarkProcessing: (id: string) => void;
+  isWarehouseRole: boolean;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -655,6 +688,15 @@ function NotPrintedTable({
                   >
                     <Printer className="h-4 w-4" />
                   </button>
+                  {isWarehouseRole && (
+                    <button
+                      onClick={() => onMarkProcessing(order.id)}
+                      title="Mark as Processing (return to CS queue)"
+                      className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </button>
+                  )}
                   <Button
                     size="sm"
                     className="bg-green-600 hover:bg-green-700 text-white border-0 px-2 sm:px-3"
@@ -679,12 +721,16 @@ function PrintedTable({
   isPartiallyPicked,
   onStartPick,
   onForcePack,
+  onMarkProcessing,
+  isWarehouseRole,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
   isPartiallyPicked: (o: Order) => boolean;
   onStartPick: (o: Order) => void;
   onForcePack: (o: Order) => void;
+  onMarkProcessing: (id: string) => void;
+  isWarehouseRole: boolean;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -733,6 +779,15 @@ function PrintedTable({
                 </td>
                 <td className="px-3 sm:px-5 py-3">
                   <div className="flex items-center justify-end gap-2">
+                    {isWarehouseRole && (
+                      <button
+                        onClick={() => onMarkProcessing(order.id)}
+                        title="Mark as Processing (return to CS queue)"
+                        className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    )}
                     {partial ? (
                       <>
                         <Button
@@ -778,10 +833,14 @@ function PackedTable({
   orders,
   displayId,
   onMarkShipped,
+  onMarkProcessing,
+  isWarehouseRole,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
   onMarkShipped: (id: string) => void;
+  onMarkProcessing: (id: string) => void;
+  isWarehouseRole: boolean;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -828,7 +887,16 @@ function PackedTable({
                   : '—'}
               </td>
               <td className="px-3 sm:px-5 py-3">
-                <div className="flex justify-end">
+                <div className="flex items-center justify-end gap-2">
+                  {isWarehouseRole && (
+                    <button
+                      onClick={() => onMarkProcessing(order.id)}
+                      title="Mark as Processing (return to CS queue)"
+                      className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </button>
+                  )}
                   <Button
                     size="sm"
                     className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-2 sm:px-3 min-h-[44px] sm:min-h-0"

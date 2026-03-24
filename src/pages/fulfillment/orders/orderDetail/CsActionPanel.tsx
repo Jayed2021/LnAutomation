@@ -141,7 +141,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
   const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
 
   const getWooConfig = async () => {
-    const { data } = await supabase.from('woocommerce_config').select('store_url, consumer_key, consumer_secret').eq('is_active', true).maybeSingle();
+    const { data } = await supabase.from('woocommerce_config').select('store_url, consumer_key, consumer_secret').eq('is_connected', true).maybeSingle();
     return data;
   };
 

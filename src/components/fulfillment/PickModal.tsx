@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Package, MapPin, CheckCircle2, ScanLine, Camera, AlertTriangle } from 'lucide-react';
+import { X, Package, MapPin, CheckCircle2, ScanLine, Camera, AlertTriangle, FlaskConical } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Dialog, DialogContent } from '../ui/Dialog';
 import { Button } from '../ui/Button';
@@ -22,6 +22,7 @@ interface PickModalProps {
     customer: { full_name: string };
     items: OrderItem[];
   };
+  isLabPick?: boolean;
   onClose: () => void;
 }
 
@@ -47,7 +48,7 @@ interface ItemPickState {
   done: boolean;
 }
 
-export function PickModal({ order, onClose }: PickModalProps) {
+export function PickModal({ order, isLabPick = false, onClose }: PickModalProps) {
   const [loading, setLoading] = useState(true);
   const [itemStates, setItemStates] = useState<ItemPickState[]>([]);
   const [currentItemIndex, setCurrentItemIndex] = useState(0);
@@ -278,17 +279,33 @@ export function PickModal({ order, onClose }: PickModalProps) {
         }
       }
 
-      const newStatus = isPartial ? 'printed' : 'packed';
-      const updateData: Record<string, string | null> = { fulfillment_status: newStatus };
-      if (!isPartial) {
-        updateData.packed_at = new Date().toISOString();
+      let newStatus: string;
+      const updateData: Record<string, string | null> = {};
+
+      if (isLabPick) {
+        newStatus = isPartial ? 'send_to_lab' : 'in_lab';
+        updateData.fulfillment_status = newStatus;
+        if (!isPartial) {
+          await supabase.from('order_prescriptions').update({
+            lab_status: 'in_lab',
+            lab_sent_date: new Date().toISOString(),
+          }).eq('order_id', order.id);
+        }
+      } else {
+        newStatus = isPartial ? 'printed' : 'packed';
+        updateData.fulfillment_status = newStatus;
+        if (!isPartial) {
+          updateData.packed_at = new Date().toISOString();
+        }
       }
 
       await supabase.from('orders').update(updateData).eq('id', order.id);
 
       await supabase.from('order_activity_log').insert({
         order_id: order.id,
-        action: isPartial ? 'Partially picked' : 'Fully picked and packed',
+        action: isLabPick
+          ? (isPartial ? 'Lab pick partially completed' : 'Lab pick completed — sent to lab')
+          : (isPartial ? 'Partially picked' : 'Fully picked and packed'),
       });
 
       onClose();
@@ -305,22 +322,25 @@ export function PickModal({ order, onClose }: PickModalProps) {
 
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto mx-2 sm:mx-auto">
         <div className="flex items-start justify-between mb-1">
           <div className="flex items-center gap-2">
-            <Package className="h-5 w-5 text-blue-600" />
+            {isLabPick
+              ? <FlaskConical className="h-5 w-5 text-teal-600" />
+              : <Package className="h-5 w-5 text-blue-600" />
+            }
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                Pick Items for Order {displayOrderId}
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900">
+                {isLabPick ? 'Lab Pick' : 'Pick Items'} — Order {displayOrderId}
               </h2>
-              <p className="text-sm text-gray-500 mt-0.5">
-                Scan each item's barcode to confirm picking. Follow FIFO (First In, First Out) order.
+              <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+                Scan each item's barcode to confirm picking. Follow FIFO order.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors ml-2 mt-0.5"
+            className="text-gray-400 hover:text-gray-600 transition-colors ml-2 mt-0.5 p-1"
           >
             <X className="h-5 w-5" />
           </button>
@@ -471,33 +491,28 @@ export function PickModal({ order, onClose }: PickModalProps) {
                           handleScan(barcodeInput);
                         }
                       }}
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-3 sm:py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono min-h-[48px] sm:min-h-0"
                     />
-                    <Button
-                      size="sm"
-                      variant="outline"
+                    <button
                       onClick={() => handleScan(barcodeInput)}
                       disabled={!barcodeInput.trim()}
+                      className="px-4 py-3 sm:py-2 bg-gray-700 hover:bg-gray-800 text-white rounded-lg text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors min-h-[48px] sm:min-h-0"
                     >
                       Scan
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
+                    </button>
+                    <button
                       onClick={() => setShowCamera(true)}
+                      className="px-3 py-3 sm:py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors min-h-[48px] sm:min-h-0"
                     >
-                      <Camera className="h-4 w-4" />
-                    </Button>
+                      <Camera className="h-5 w-5 text-gray-600" />
+                    </button>
                   </div>
                   {scanError && (
                     <p className="text-red-600 text-xs mt-1">{scanError}</p>
                   )}
-                  <button
-                    onClick={handleManualConfirm}
-                    className="text-xs text-blue-600 hover:underline mt-1.5 block"
-                  >
-                    Click the camera button to use your phone's camera for scanning
-                  </button>
+                  <p className="text-xs text-gray-400 mt-1.5">
+                    Tap the camera icon to use your phone's camera for scanning
+                  </p>
                 </div>
               </div>
             ) : null}

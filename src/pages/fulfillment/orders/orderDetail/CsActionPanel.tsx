@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, AlertTriangle, Lock } from 'lucide-react';
+import { ChevronDown, AlertTriangle, Lock, Package } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail, OrderItem } from './types';
 import { logActivity } from './service';
@@ -21,16 +21,16 @@ interface CancellationReason {
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
 
 const AVAILABLE_ACTIONS: Record<string, string[]> = {
-  new_not_called:    ['new_called', 'send_to_lab', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  new_called:        ['send_to_lab', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  confirmed:         ['send_to_lab', 'not_printed', 'awaiting_payment', 'late_delivery', 'exchange', 'cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
-  awaiting_payment:  ['cancel_before_dispatch', 'refund'],
-  late_delivery:     ['cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
-  send_to_lab:       ['in_lab', 'cancel_before_dispatch', 'refund'],
-  in_lab:            ['packed', 'cancel_before_dispatch', 'refund'],
-  not_printed:       ['printed', 'exchange', 'cancel_before_dispatch', 'cancel_after_dispatch', 'mark_processing', 'refund'],
-  printed:           ['packed', 'exchange', 'cancel_before_dispatch', 'cancel_after_dispatch', 'mark_processing', 'refund'],
-  packed:            ['shipped', 'exchange', 'cancel_before_dispatch', 'cancel_after_dispatch', 'mark_processing', 'refund'],
+  new_not_called:    ['new_called', 'confirmed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  new_called:        ['confirmed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  confirmed:         ['send_to_lab', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  awaiting_payment:  ['confirmed', 'cancel_before_dispatch', 'refund'],
+  late_delivery:     ['confirmed', 'cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
+  send_to_lab:       ['cancel_before_dispatch', 'refund'],
+  in_lab:            ['confirmed', 'cancel_before_dispatch', 'refund'],
+  not_printed:       ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
+  printed:           ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
+  packed:            ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
   shipped:           ['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   delivered:         ['exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   cancelled:         ['refund'],
@@ -138,6 +138,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
   const availableActions = AVAILABLE_ACTIONS[order.cs_status] ?? [];
   const isWarehouseRole = WAREHOUSE_ROLES.includes(userRole ?? '');
   const showsCourierFields = FINAL_STATUS_ACTIONS.has(selectedAction);
+  const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
 
   const getWooConfig = async () => {
     const { data } = await supabase.from('woocommerce_config').select('store_url, consumer_key, consumer_secret').eq('is_active', true).maybeSingle();
@@ -180,25 +181,14 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
         updated_at: new Date().toISOString(),
       };
 
+      if (selectedAction === 'confirmed') {
+        updates.fulfillment_status = 'not_printed';
+        await callWooProxy('update-order-status', { status: 'processing' });
+      }
+
       if (selectedAction === 'send_to_lab') {
         updates.fulfillment_status = 'send_to_lab';
         await supabase.from('order_prescriptions').update({ lab_status: 'in_lab', lab_sent_date: new Date().toISOString() }).eq('order_id', order.id);
-      }
-
-      if (selectedAction === 'in_lab') {
-        updates.fulfillment_status = 'in_lab';
-      }
-
-      if (selectedAction === 'packed') {
-        updates.fulfillment_status = 'packed';
-      }
-
-      if (selectedAction === 'printed') {
-        updates.fulfillment_status = 'printed';
-      }
-
-      if (selectedAction === 'not_printed') {
-        updates.fulfillment_status = 'not_printed';
       }
 
       if (selectedAction === 'shipped') {
@@ -207,6 +197,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
       }
 
       if (selectedAction === 'mark_processing') {
+        updates.cs_status = 'confirmed';
         updates.fulfillment_status = 'not_printed';
         await callWooProxy('update-order-status', { status: 'processing' });
       }
@@ -411,6 +402,18 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
           {STATUS_CONFIG[order.cs_status]?.label ?? order.cs_status}
         </div>
       </div>
+
+      {isInWarehouseOps && (
+        <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-start gap-2.5">
+          <Package className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+          <div>
+            <div className="text-xs font-semibold text-slate-700 mb-0.5">Order in Warehouse Operations</div>
+            <p className="text-xs text-slate-600">
+              This order is currently being processed by the warehouse team. To send it to lab or make CS changes, ask the warehouse to use <strong>Mark as Processing</strong> first.
+            </p>
+          </div>
+        </div>
+      )}
 
       {availableActions.length === 0 ? (
         <p className="text-sm text-gray-400">No actions available for this status.</p>

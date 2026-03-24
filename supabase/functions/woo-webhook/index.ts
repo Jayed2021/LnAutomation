@@ -31,6 +31,32 @@ function generateOrderNumber(): string {
   return `ORD-${year}-${rand}`;
 }
 
+async function verifyHmacSignature(
+  body: string,
+  signatureHeader: string | null,
+  secret: string
+): Promise<boolean> {
+  if (!signatureHeader) return false;
+
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const messageData = encoder.encode(body);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    keyData,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const signatureBuffer = await crypto.subtle.sign("HMAC", cryptoKey, messageData);
+  const signatureBytes = new Uint8Array(signatureBuffer);
+  const computedSignature = btoa(String.fromCharCode(...signatureBytes));
+
+  return computedSignature === signatureHeader;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -41,7 +67,40 @@ Deno.serve(async (req: Request) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    const payload = await req.json();
+    const rawBody = await req.text();
+
+    const { data: wooConfig } = await supabase
+      .from("woocommerce_config")
+      .select("id, webhook_secret")
+      .maybeSingle();
+
+    if (wooConfig?.webhook_secret) {
+      const signature = req.headers.get("X-WC-Webhook-Signature");
+      const isValid = await verifyHmacSignature(rawBody, signature, wooConfig.webhook_secret);
+      if (!isValid) {
+        return new Response(
+          JSON.stringify({ error: "Invalid webhook signature" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    if (wooConfig?.id) {
+      await supabase
+        .from("woocommerce_config")
+        .update({ last_webhook_received_at: new Date().toISOString() })
+        .eq("id", wooConfig.id);
+    }
+
+    let payload: any;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON payload" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const wooOrderId = payload?.id;
     if (!wooOrderId) {
@@ -115,6 +174,20 @@ Deno.serve(async (req: Request) => {
     const totalAmount = parseFloat(payload.total || "0");
     const paymentMethod = payload.payment_method_title || payload.payment_method || "COD";
 
+    const couponLines = (payload.coupon_lines || []).map((c: any) => ({
+      code: c.code || "",
+      discount: c.discount || "0",
+      discount_tax: c.discount_tax || "0",
+    }));
+
+    const feeLines = (payload.fee_lines || []).map((f: any) => ({
+      name: f.name || "",
+      amount: f.amount || f.total || "0",
+      total: f.total || "0",
+    }));
+
+    const customerNote = (payload.customer_note || "").trim() || null;
+
     let orderNumber = generateOrderNumber();
     let attempts = 0;
     while (attempts < 5) {
@@ -145,6 +218,9 @@ Deno.serve(async (req: Request) => {
         discount_amount: discountAmount,
         total_amount: totalAmount,
         order_source: "website",
+        coupon_lines: couponLines.length > 0 ? couponLines : null,
+        fee_lines: feeLines.length > 0 ? feeLines : null,
+        customer_note: customerNote,
       })
       .select("id")
       .single();
@@ -153,6 +229,11 @@ Deno.serve(async (req: Request) => {
     const orderId = newOrder.id;
 
     const lineItems = payload.line_items || [];
+    let hasPrescription = feeLines.some((f: any) => {
+      const lower = (f.name || "").toLowerCase();
+      return ["lens", "power", "anti-blue", "antiblue", "anti blue", "coating", "prescription", "rx"].some(kw => lower.includes(kw));
+    });
+
     if (lineItems.length > 0) {
       const { data: products } = await supabase
         .from("products")
@@ -163,18 +244,81 @@ Deno.serve(async (req: Request) => {
         skuMap[p.sku] = p.id;
       }
 
-      const itemsToInsert = lineItems.map((item: any) => ({
-        order_id: orderId,
-        product_id: skuMap[item.sku] || null,
-        sku: item.sku || item.name?.toLowerCase().replace(/\s+/g, "-") || "unknown",
-        product_name: item.name || "Unknown Product",
-        quantity: item.quantity || 1,
-        unit_price: parseFloat(item.price || "0"),
-        line_total: parseFloat(item.subtotal || "0"),
-        woo_item_id: item.id || null,
-      }));
+      const itemsToInsert = lineItems.map((item: any) => {
+        const rawMeta: Array<{ key: any; value: any }> = item.meta_data || [];
+        const filteredMeta = rawMeta.filter((m) => typeof m.key === "string" && !m.key.startsWith("_"));
+        if (filteredMeta.some((m: any) => {
+          const k = (m.key || "").toLowerCase();
+          const v = typeof m.value === "string" ? m.value.toLowerCase() : "";
+          return k.includes("prescription") || k.includes("upload") || k.includes("rx") || v.includes("prescription");
+        })) {
+          hasPrescription = true;
+        }
+        const itemSubtotal = parseFloat(item.subtotal || "0");
+        const itemTotal = parseFloat(item.total || "0");
+        return {
+          order_id: orderId,
+          product_id: skuMap[item.sku] || null,
+          sku: item.sku || item.name?.toLowerCase().replace(/\s+/g, "-") || "unknown",
+          product_name: item.name || "Unknown Product",
+          quantity: item.quantity || 1,
+          unit_price: parseFloat(item.price || "0"),
+          line_total: itemSubtotal,
+          discount_amount: itemSubtotal - itemTotal,
+          woo_item_id: item.id || null,
+          meta_data: filteredMeta.length > 0 ? filteredMeta : null,
+        };
+      });
 
-      await supabase.from("order_items").insert(itemsToInsert);
+      const { data: insertedItems } = await supabase
+        .from("order_items")
+        .insert(itemsToInsert)
+        .select("id, unit_price");
+
+      const insertedOrderItems: Array<{ id: string; unit_price: number }> = insertedItems ?? [];
+
+      const { data: pkgSetting } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", "default_packaging_materials")
+        .maybeSingle();
+
+      if (pkgSetting?.value && insertedOrderItems.length > 0) {
+        try {
+          const defaults = Array.isArray(pkgSetting.value) ? pkgSetting.value : JSON.parse(pkgSetting.value);
+          if (defaults.length > 0) {
+            const pkgRows: any[] = [];
+            for (const orderItem of insertedOrderItems) {
+              const unitPrice = orderItem.unit_price ?? 0;
+              for (const d of defaults) {
+                const minPrice = d.min_price != null ? Number(d.min_price) : null;
+                const maxPrice = d.max_price != null ? Number(d.max_price) : null;
+                const meetsMin = minPrice === null || unitPrice >= minPrice;
+                const meetsMax = maxPrice === null || unitPrice <= maxPrice;
+                if (meetsMin && meetsMax) {
+                  pkgRows.push({
+                    order_id: orderId,
+                    product_id: d.product_id || null,
+                    sku: d.sku || "",
+                    product_name: d.product_name || "",
+                    quantity: d.quantity || 1,
+                    unit_cost: d.unit_cost || 0,
+                    line_total: (d.quantity || 1) * (d.unit_cost || 0),
+                    source_order_item_id: orderItem.id,
+                  });
+                }
+              }
+            }
+            if (pkgRows.length > 0) {
+              await supabase.from("order_packaging_items").insert(pkgRows);
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (hasPrescription) {
+      await supabase.from("orders").update({ has_prescription: true }).eq("id", orderId);
     }
 
     await supabase.from("order_activity_log").insert({

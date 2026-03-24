@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 interface WooRequestBody {
-  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status" | "resync-order" | "sync-order-items";
+  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status" | "resync-order" | "sync-order-items" | "register-webhook" | "check-webhook" | "reactivate-webhook" | "delete-webhook";
   store_url: string;
   consumer_key: string;
   consumer_secret: string;
@@ -23,6 +23,8 @@ interface WooRequestBody {
   internal_order_id?: string;
   line_items?: Array<{ product_id?: number; variation_id?: number; sku: string; name: string; quantity: number; price: string }>;
   removed_item_ids?: number[];
+  webhook_url?: string;
+  webhook_id?: number;
 }
 
 function buildAuthHeader(consumerKey: string, consumerSecret: string): string {
@@ -778,6 +780,178 @@ Deno.serve(async (req: Request) => {
 
       return new Response(
         JSON.stringify({ success: true, message: `Order ${order.order_number} items synced to WooCommerce` }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "register-webhook") {
+      const { webhook_url } = body;
+      if (!webhook_url) {
+        return new Response(
+          JSON.stringify({ error: "webhook_url is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+      const topics = ["order.created", "order.updated"];
+      const registeredWebhooks: any[] = [];
+
+      for (const topic of topics) {
+        const res = await fetch(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/webhooks`, {
+          method: "POST",
+          headers: {
+            Authorization: buildAuthHeader(consumer_key, consumer_secret),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: `ERP - ${topic}`,
+            topic,
+            delivery_url: webhook_url,
+            secret,
+            status: "active",
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          return new Response(
+            JSON.stringify({ error: `Failed to register webhook for ${topic}: ${errText}` }),
+            { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const webhook = await res.json();
+        registeredWebhooks.push(webhook);
+      }
+
+      const primaryWebhook = registeredWebhooks[0];
+      await supabase
+        .from("woocommerce_config")
+        .update({
+          webhook_id: primaryWebhook.id,
+          webhook_status: "active",
+          webhook_secret: secret,
+        })
+        .eq("store_url", store_url);
+
+      return new Response(
+        JSON.stringify({ success: true, webhooks: registeredWebhooks, secret }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "check-webhook") {
+      const { webhook_id } = body;
+      if (!webhook_id) {
+        return new Response(
+          JSON.stringify({ error: "webhook_id is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const res = await wooFetch(store_url, consumer_key, consumer_secret, `webhooks/${webhook_id}`);
+      if (!res.ok) {
+        const errText = await res.text();
+        return new Response(
+          JSON.stringify({ error: `HTTP ${res.status}: ${errText}` }),
+          { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const webhook = await res.json();
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, serviceRoleKey);
+      await supabase
+        .from("woocommerce_config")
+        .update({ webhook_status: webhook.status })
+        .eq("store_url", store_url);
+
+      return new Response(
+        JSON.stringify({ webhook }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "reactivate-webhook") {
+      const { webhook_id } = body;
+      if (!webhook_id) {
+        return new Response(
+          JSON.stringify({ error: "webhook_id is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const url = new URL(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/webhooks/${webhook_id}`);
+      const res = await fetch(url.toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: buildAuthHeader(consumer_key, consumer_secret),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: "active" }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        return new Response(
+          JSON.stringify({ error: `HTTP ${res.status}: ${errText}` }),
+          { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const webhook = await res.json();
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, serviceRoleKey);
+      await supabase
+        .from("woocommerce_config")
+        .update({ webhook_status: "active" })
+        .eq("store_url", store_url);
+
+      return new Response(
+        JSON.stringify({ webhook }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "delete-webhook") {
+      const { webhook_id } = body;
+      if (!webhook_id) {
+        return new Response(
+          JSON.stringify({ error: "webhook_id is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const url = new URL(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/webhooks/${webhook_id}`);
+      url.searchParams.set("force", "true");
+      const res = await fetch(url.toString(), {
+        method: "DELETE",
+        headers: { Authorization: buildAuthHeader(consumer_key, consumer_secret) },
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        return new Response(
+          JSON.stringify({ error: `HTTP ${res.status}: ${errText}` }),
+          { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, serviceRoleKey);
+      await supabase
+        .from("woocommerce_config")
+        .update({ webhook_id: null, webhook_status: null, webhook_secret: null })
+        .eq("store_url", store_url);
+
+      return new Response(
+        JSON.stringify({ success: true }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

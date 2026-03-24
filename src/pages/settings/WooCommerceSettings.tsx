@@ -8,7 +8,7 @@ import {
   ArrowLeft, ShoppingCart, Eye, EyeOff, CheckCircle2,
   XCircle, RefreshCw, Clock, ToggleLeft, ToggleRight,
   AlertCircle, Info, Plus, Pencil, ChevronDown, ChevronUp,
-  PlayCircle, Image, CheckCheck
+  PlayCircle, Image, CheckCheck, Webhook, Zap, Trash2, RotateCcw
 } from 'lucide-react';
 
 interface WooConfig {
@@ -22,6 +22,10 @@ interface WooConfig {
   auto_sync_enabled: boolean;
   sync_interval_minutes: number;
   updated_at: string;
+  webhook_id: number | null;
+  webhook_status: string | null;
+  webhook_secret: string | null;
+  last_webhook_received_at: string | null;
 }
 
 interface SyncLog {
@@ -70,6 +74,10 @@ export default function WooCommerceSettings() {
   const [syncProgress, setSyncProgress] = useState<{ page: number; totalPages: number; processed: number } | null>(null);
   const [showLiveLog, setShowLiveLog] = useState(true);
   const liveLogRef = useRef<HTMLDivElement>(null);
+
+  const [webhookWorking, setWebhookWorking] = useState(false);
+  const [webhookNotice, setWebhookNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [checkingWebhook, setCheckingWebhook] = useState(false);
 
   const [imageMigrating, setImageMigrating] = useState(false);
   const [imageMigrationDone, setImageMigrationDone] = useState(false);
@@ -414,6 +422,96 @@ export default function WooCommerceSettings() {
       setSyncing(null);
       setOrderFilter({ type: 'id', from_date: '', min_order_id: '' });
       await refreshLogs();
+    }
+  };
+
+  const webhookUrl = `${supabaseUrl}/functions/v1/woo-webhook`;
+
+  const registerWebhook = async () => {
+    setWebhookWorking(true);
+    setWebhookNotice(null);
+    try {
+      const data = await callProxy({
+        action: 'register-webhook',
+        store_url: form.store_url,
+        consumer_key: form.consumer_key,
+        consumer_secret: form.consumer_secret,
+        webhook_url: webhookUrl,
+      });
+      if (data.error) throw new Error(data.error);
+      setWebhookNotice({ ok: true, message: `Webhook registered — ${data.webhooks?.length ?? 1} topic(s) active` });
+      loadConfig();
+    } catch (err: any) {
+      setWebhookNotice({ ok: false, message: err?.message || 'Failed to register webhook' });
+    } finally {
+      setWebhookWorking(false);
+    }
+  };
+
+  const checkWebhookStatus = async () => {
+    if (!config?.webhook_id) return;
+    setCheckingWebhook(true);
+    setWebhookNotice(null);
+    try {
+      const data = await callProxy({
+        action: 'check-webhook',
+        store_url: form.store_url,
+        consumer_key: form.consumer_key,
+        consumer_secret: form.consumer_secret,
+        webhook_id: config.webhook_id,
+      });
+      if (data.error) throw new Error(data.error);
+      const status = data.webhook?.status ?? 'unknown';
+      setWebhookNotice({ ok: status === 'active', message: `Webhook status on WooCommerce: ${status}` });
+      loadConfig();
+    } catch (err: any) {
+      setWebhookNotice({ ok: false, message: err?.message || 'Failed to check webhook' });
+    } finally {
+      setCheckingWebhook(false);
+    }
+  };
+
+  const reactivateWebhook = async () => {
+    if (!config?.webhook_id) return;
+    setWebhookWorking(true);
+    setWebhookNotice(null);
+    try {
+      const data = await callProxy({
+        action: 'reactivate-webhook',
+        store_url: form.store_url,
+        consumer_key: form.consumer_key,
+        consumer_secret: form.consumer_secret,
+        webhook_id: config.webhook_id,
+      });
+      if (data.error) throw new Error(data.error);
+      setWebhookNotice({ ok: true, message: 'Webhook reactivated successfully' });
+      loadConfig();
+    } catch (err: any) {
+      setWebhookNotice({ ok: false, message: err?.message || 'Failed to reactivate webhook' });
+    } finally {
+      setWebhookWorking(false);
+    }
+  };
+
+  const deleteWebhook = async () => {
+    if (!config?.webhook_id) return;
+    setWebhookWorking(true);
+    setWebhookNotice(null);
+    try {
+      const data = await callProxy({
+        action: 'delete-webhook',
+        store_url: form.store_url,
+        consumer_key: form.consumer_key,
+        consumer_secret: form.consumer_secret,
+        webhook_id: config.webhook_id,
+      });
+      if (data.error) throw new Error(data.error);
+      setWebhookNotice({ ok: true, message: 'Webhook removed' });
+      loadConfig();
+    } catch (err: any) {
+      setWebhookNotice({ ok: false, message: err?.message || 'Failed to delete webhook' });
+    } finally {
+      setWebhookWorking(false);
     }
   };
 
@@ -850,6 +948,152 @@ export default function WooCommerceSettings() {
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => setShowOrderFilter(false)}>Cancel</Button>
                   </div>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="p-5 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Webhook className="w-4 h-4 text-gray-500" />
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Real-time Webhook</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Push new orders instantly into the system as they are placed</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-5 space-y-4">
+              {!config?.webhook_id ? (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
+                    <Zap className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                    <div className="text-xs text-blue-700 space-y-1">
+                      <p className="font-medium">No webhook registered yet</p>
+                      <p>Click below to automatically register <strong>order.created</strong> and <strong>order.updated</strong> webhooks on your WooCommerce store. New orders will appear in this system instantly.</p>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-600 mb-1.5">Webhook endpoint</p>
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                      <span className="text-xs font-mono text-gray-500 truncate flex-1">{webhookUrl}</span>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={registerWebhook}
+                    disabled={webhookWorking || !hasCredentials || !config?.id}
+                    className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-700"
+                  >
+                    {webhookWorking
+                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> Registering...</>
+                      : <><Zap className="w-4 h-4" /> Register Webhook</>}
+                  </Button>
+                  {!config?.id && (
+                    <p className="text-xs text-amber-600 flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      Save your settings first before registering a webhook.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 rounded-lg border border-gray-100 bg-gray-50">
+                      <p className="text-xs text-gray-500 mb-1">Status</p>
+                      <div className="flex items-center gap-1.5">
+                        {config.webhook_status === 'active' ? (
+                          <>
+                            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span className="text-sm font-medium text-emerald-700">Active</span>
+                          </>
+                        ) : config.webhook_status === 'paused' ? (
+                          <>
+                            <div className="w-2 h-2 rounded-full bg-amber-400" />
+                            <span className="text-sm font-medium text-amber-700">Paused</span>
+                          </>
+                        ) : config.webhook_status === 'disabled' ? (
+                          <>
+                            <div className="w-2 h-2 rounded-full bg-red-500" />
+                            <span className="text-sm font-medium text-red-700">Disabled</span>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-2 h-2 rounded-full bg-gray-400" />
+                            <span className="text-sm font-medium text-gray-600 capitalize">{config.webhook_status ?? 'Unknown'}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-lg border border-gray-100 bg-gray-50">
+                      <p className="text-xs text-gray-500 mb-1">Last delivery</p>
+                      <p className="text-sm font-medium text-gray-800">
+                        {config.last_webhook_received_at ? formatTs(config.last_webhook_received_at) : 'Never'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-medium text-gray-600 mb-1.5">Webhook ID</p>
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                      <span className="text-xs font-mono text-gray-500">#{config.webhook_id}</span>
+                      <span className="text-gray-300 mx-1">·</span>
+                      <span className="text-xs font-mono text-gray-400 truncate flex-1">{webhookUrl}</span>
+                    </div>
+                  </div>
+
+                  {config.webhook_status === 'disabled' && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-100 text-xs text-red-700">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-medium">Webhook disabled by WooCommerce</p>
+                        <p className="mt-0.5">This happens after 5 consecutive delivery failures. Use "Re-enable" to restore it.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={checkWebhookStatus}
+                      disabled={checkingWebhook || !hasCredentials}
+                      className="flex items-center gap-1.5"
+                    >
+                      {checkingWebhook
+                        ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Checking...</>
+                        : <><RefreshCw className="w-3.5 h-3.5" /> Check Status</>}
+                    </Button>
+                    {config.webhook_status !== 'active' && (
+                      <Button
+                        size="sm"
+                        onClick={reactivateWebhook}
+                        disabled={webhookWorking || !hasCredentials}
+                        className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
+                        {webhookWorking
+                          ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Working...</>
+                          : <><RotateCcw className="w-3.5 h-3.5" /> Re-enable</>}
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={deleteWebhook}
+                      disabled={webhookWorking || !hasCredentials}
+                      className="flex items-center gap-1.5 border-red-200 text-red-600 hover:bg-red-50 ml-auto"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Remove
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {webhookNotice && (
+                <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${webhookNotice.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                  {webhookNotice.ok
+                    ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    : <XCircle className="w-4 h-4 flex-shrink-0" />}
+                  {webhookNotice.message}
                 </div>
               )}
             </div>

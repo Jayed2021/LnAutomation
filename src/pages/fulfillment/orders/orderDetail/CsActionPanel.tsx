@@ -33,7 +33,7 @@ const AVAILABLE_ACTIONS: Record<string, string[]> = {
   packed:            ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
   shipped:           ['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   delivered:         ['exchange', 'partial_delivery', 'reverse_pick', 'refund'],
-  cancelled:         ['refund'],
+  cancelled:         ['mark_processing', 'refund'],
   refund:            [],
   exchange:          ['refund'],
   partial_delivery:  ['refund'],

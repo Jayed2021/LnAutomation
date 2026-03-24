@@ -233,9 +233,33 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           return;
         }
         const returnOrderNumber = form.exchange_return_id.trim();
-        const { data: retOrder } = await supabase.from('orders').select('id, customer_id, cs_status').eq('order_number', returnOrderNumber).maybeSingle();
+        const isNumeric = /^\d+$/.test(returnOrderNumber);
+        let retOrder: { id: string; customer_id: string; cs_status: string } | null = null;
+        if (isNumeric) {
+          const { data: byWooId } = await supabase
+            .from('orders')
+            .select('id, customer_id, cs_status')
+            .eq('woo_order_id', parseInt(returnOrderNumber, 10))
+            .maybeSingle();
+          retOrder = byWooId;
+          if (!retOrder) {
+            const { data: byWooNumber } = await supabase
+              .from('orders')
+              .select('id, customer_id, cs_status')
+              .eq('woo_order_number', returnOrderNumber)
+              .maybeSingle();
+            retOrder = byWooNumber;
+          }
+        } else {
+          const { data: byOrderNumber } = await supabase
+            .from('orders')
+            .select('id, customer_id, cs_status')
+            .eq('order_number', returnOrderNumber)
+            .maybeSingle();
+          retOrder = byOrderNumber;
+        }
         if (!retOrder) {
-          alert('Order not found. Please check the order number.');
+          alert('No order found with that order number or WooCommerce ID. Please double-check the value and try again.');
           setSaving(false);
           return;
         }
@@ -525,9 +549,9 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           {selectedAction === 'exchange' && (
             <div className="space-y-3 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div>
-                <div className="text-xs font-medium text-blue-800 mb-1">Return Order ID *</div>
-                <input value={form.exchange_return_id} onChange={e => setForm(p => ({ ...p, exchange_return_id: e.target.value }))} className={inputCls} placeholder="e.g. ORD-2026-123456" />
-                <p className="text-xs text-blue-600 mt-1">The linked order must be in Delivered or Partial Delivery status. Its status will be changed to Exchange Returnable (EXR) and listed in Returns.</p>
+                <div className="text-xs font-medium text-blue-800 mb-1">Returnable Order Number *</div>
+                <input value={form.exchange_return_id} onChange={e => setForm(p => ({ ...p, exchange_return_id: e.target.value }))} className={inputCls} placeholder="e.g. ORD-2026-123456 or 1966207" />
+                <p className="text-xs text-blue-500 mt-1">Enter the ERP order number or WooCommerce order ID. The linked order must be in Delivered or Partial Delivery status — it will be changed to Exchange Returnable (EXR).</p>
               </div>
             </div>
           )}

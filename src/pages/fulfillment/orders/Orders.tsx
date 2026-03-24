@@ -99,13 +99,13 @@ const TAB_STATUSES: Record<Tab, string[]> = {
   all: [],
   needs_action: ['new_not_called', 'new_called', 'awaiting_payment'],
   scheduled: ['late_delivery'],
-  in_progress: ['confirmed', 'exchange', 'send_to_lab', 'in_lab', 'not_printed', 'printed', 'packed'],
+  in_progress: ['exchange', 'send_to_lab', 'in_lab', 'not_printed', 'printed', 'packed'],
   shipped: ['shipped'],
   cancelled: ['cancelled', 'refund'],
 };
 
 const BULK_STATUSES: CsStatus[] = [
-  'new_not_called', 'new_called', 'confirmed', 'awaiting_payment',
+  'new_not_called', 'new_called', 'awaiting_payment',
   'late_delivery', 'send_to_lab', 'in_lab', 'not_printed', 'printed',
   'packed', 'shipped', 'delivered', 'cancelled',
 ];

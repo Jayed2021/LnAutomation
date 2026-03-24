@@ -107,7 +107,6 @@ export const CS_STATUS_COLORS: Record<string, string> = {
   shipped: '#3b82f6',
   delivered: '#10b981',
   refund: '#f43f5e',
-  processing: '#64748b',
 };
 
 export const CS_STATUS_LABELS: Record<string, string> = {
@@ -124,7 +123,6 @@ export const CS_STATUS_LABELS: Record<string, string> = {
   shipped: 'Shipped',
   delivered: 'Delivered',
   refund: 'Refund',
-  processing: 'Processing',
 };
 
 // Generate unique IDs

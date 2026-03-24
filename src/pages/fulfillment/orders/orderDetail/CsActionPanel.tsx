@@ -21,13 +21,12 @@ interface CancellationReason {
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
 
 const AVAILABLE_ACTIONS: Record<string, string[]> = {
-  new_not_called:    ['new_called', 'confirmed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  new_called:        ['confirmed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  confirmed:         ['send_to_lab', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
-  awaiting_payment:  ['confirmed', 'cancel_before_dispatch', 'refund'],
-  late_delivery:     ['confirmed', 'cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
+  new_not_called:    ['new_called', 'not_printed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  new_called:        ['not_printed', 'awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund'],
+  awaiting_payment:  ['not_printed', 'cancel_before_dispatch', 'refund'],
+  late_delivery:     ['not_printed', 'cancel_before_dispatch', 'cancel_after_dispatch', 'refund'],
   send_to_lab:       ['cancel_before_dispatch', 'refund'],
-  in_lab:            ['confirmed', 'cancel_before_dispatch', 'refund'],
+  in_lab:            ['not_printed', 'cancel_before_dispatch', 'refund'],
   not_printed:       ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
   printed:           ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
   packed:            ['send_to_lab', 'mark_processing', 'cancel_before_dispatch', 'cancel_after_dispatch', 'exchange', 'refund'],
@@ -43,10 +42,9 @@ const AVAILABLE_ACTIONS: Record<string, string[]> = {
 
 const ACTION_LABELS: Record<string, string> = {
   new_called:             'Mark as New & Called',
-  confirmed:              'Confirm Order',
   send_to_lab:            'Send to Lab',
   in_lab:                 'Mark as In Lab',
-  not_printed:            'Mark as Not Printed',
+  not_printed:            'Confirm Order',
   packed:                 'Mark as Packed',
   printed:                'Mark as Printed',
   shipped:                'Mark as Shipped',
@@ -64,7 +62,6 @@ const ACTION_LABELS: Record<string, string> = {
 
 const STATUS_MAP: Record<string, string> = {
   new_called:             'new_called',
-  confirmed:              'confirmed',
   send_to_lab:            'send_to_lab',
   in_lab:                 'in_lab',
   not_printed:            'not_printed',
@@ -78,7 +75,6 @@ const STATUS_MAP: Record<string, string> = {
   cancel_before_dispatch: 'cancelled',
   cancel_after_dispatch:  'cancelled',
   partial_delivery:       'partial_delivery',
-  mark_processing:        'not_printed',
   reverse_pick:           'reverse_pick',
   refund:                 'refund',
 };
@@ -192,7 +188,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
         updated_at: new Date().toISOString(),
       };
 
-      if (selectedAction === 'confirmed') {
+      if (selectedAction === 'not_printed') {
         updates.fulfillment_status = 'not_printed';
         await callWooProxy('update-order-status', { status: 'processing' });
       }
@@ -208,8 +204,12 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
       }
 
       if (selectedAction === 'mark_processing') {
-        updates.cs_status = 'confirmed';
-        updates.fulfillment_status = 'not_printed';
+        const { count } = await supabase
+          .from('order_call_log')
+          .select('id', { count: 'exact', head: true })
+          .eq('order_id', order.id);
+        updates.cs_status = (count ?? 0) > 0 ? 'new_called' : 'new_not_called';
+        updates.fulfillment_status = null;
         await callWooProxy('update-order-status', { status: 'processing' });
       }
 
@@ -358,7 +358,8 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
       }
 
       await supabase.from('orders').update(updates).eq('id', order.id);
-      await logActivity(order.id, `Status changed to: ${STATUS_CONFIG[newStatus]?.label ?? newStatus} (action: ${ACTION_LABELS[selectedAction]})`, userId);
+      const finalStatus = (updates.cs_status as string) ?? newStatus;
+      await logActivity(order.id, `Status changed to: ${STATUS_CONFIG[finalStatus]?.label ?? finalStatus} (action: ${ACTION_LABELS[selectedAction]})`, userId);
 
       if (wooSyncWarning) {
         await logActivity(order.id, `WooCommerce sync warning: ${wooSyncWarning}`, userId);
@@ -601,7 +602,7 @@ export function CsActionPanel({ order, items, userId, userRole, onUpdated }: Pro
           {selectedAction === 'mark_processing' && isWarehouseRole && (
             <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
               <p className="text-xs text-slate-700">
-                This will mark the order as processing on WooCommerce.
+                This will return the order to the CS queue (New & Called or New & Not Called based on call history) and sync status to WooCommerce as processing.
               </p>
             </div>
           )}

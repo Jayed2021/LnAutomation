@@ -79,7 +79,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     setConfirmingOrder(true);
     try {
       await supabase.from('orders').update({
-        cs_status: 'confirmed',
+        cs_status: 'not_printed',
         confirmation_type: confirmEdit.confirmation_type,
         courier_entry_method: 'manual',
         confirmed_by: userId,

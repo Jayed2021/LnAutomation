@@ -1,7 +1,6 @@
 export type CsStatus =
   | 'new_not_called'
   | 'new_called'
-  | 'confirmed'
   | 'awaiting_payment'
   | 'late_delivery'
   | 'send_to_lab'
@@ -52,7 +51,6 @@ export interface StatusConfig {
 export const STATUS_CONFIG: Record<string, StatusConfig> = {
   new_not_called: { label: 'New & Not Called', color: 'text-red-700', bg: 'bg-red-50', border: 'border-red-200' },
   new_called:     { label: 'New & Called',     color: 'text-orange-700', bg: 'bg-orange-50', border: 'border-orange-200' },
-  confirmed:      { label: 'Confirmed',         color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200' },
   awaiting_payment: { label: 'Awaiting Payment', color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' },
   late_delivery:  { label: 'Late Delivery',     color: 'text-amber-800', bg: 'bg-amber-100', border: 'border-amber-300' },
   send_to_lab:    { label: 'Send to Lab',       color: 'text-teal-700', bg: 'bg-teal-50', border: 'border-teal-200' },

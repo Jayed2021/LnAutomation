@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus } from 'lucide-react';
+import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderItem, OrderDetail } from './types';
 import { logActivity } from './service';
@@ -295,16 +295,25 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
   const inputCls = 'px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full';
   const isSavingOrSyncing = saving || syncStatus === 'syncing';
 
+  const EDITABLE_STATUSES = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery'];
+  const canEditItems = EDITABLE_STATUSES.includes(order.cs_status);
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-900">Order Items</h3>
         <div className="flex items-center gap-2">
-          {!editing && (
+          {!editing && canEditItems && (
             <button onClick={startEdit} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 border border-blue-200 px-2.5 py-1.5 rounded-lg transition-colors">
               <Edit2 className="w-3.5 h-3.5" />
               Edit Items
             </button>
+          )}
+          {!editing && !canEditItems && (
+            <span className="flex items-center gap-1.5 text-xs text-gray-400 border border-gray-200 px-2.5 py-1.5 rounded-lg cursor-not-allowed" title="Item editing is only available for orders in New, Awaiting Payment, or Late Delivery status">
+              <Lock className="w-3.5 h-3.5" />
+              Edit Items
+            </span>
           )}
         </div>
       </div>

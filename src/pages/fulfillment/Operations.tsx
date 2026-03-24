@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Printer, Package, Send, Truck, Search, Camera, ScanLine,
   FileText, CheckCheck, Download, FlaskConical,
-  Clock, TrendingUp, Hash, RotateCcw,
+  Clock, TrendingUp, Hash, RotateCcw, AlertTriangle, X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
@@ -116,6 +116,7 @@ export default function Operations() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [labPickOrder, setLabPickOrder] = useState<Order | null>(null);
   const [shippedRange, setShippedRange] = useState('today');
+  const [processingConfirmId, setProcessingConfirmId] = useState<string | null>(null);
 
   const statusCounts = {
     not_printed: orders.filter(o => o.fulfillment_status === 'not_printed').length,
@@ -373,6 +374,11 @@ export default function Operations() {
     return totalPicked > 0 && totalPicked < total;
   };
 
+  const isFullyPicked = (order: Order) => {
+    if (!order.items || order.items.length === 0) return false;
+    return order.items.every(i => i.picked_quantity >= i.quantity);
+  };
+
   const displayId = (order: Order) =>
     order.woo_order_number ? `#${order.woo_order_number}` : order.order_number;
 
@@ -472,9 +478,9 @@ export default function Operations() {
           </div>
           {activeTab === 'packed' && (
             <Button
-              variant="outline"
               size="sm"
               onClick={() => setShowExportModal(true)}
+              className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-gray-900"
             >
               <Download className="h-4 w-4 sm:mr-1.5" />
               <span className="hidden sm:inline">Export Packed</span>
@@ -526,7 +532,7 @@ export default function Operations() {
                 getAddress={getAddress}
                 onPrintInvoice={handlePrintInvoice}
                 onMarkPrinted={handleMarkAsPrinted}
-                onMarkProcessing={handleMarkProcessing}
+                onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
               />
             )}
@@ -535,6 +541,7 @@ export default function Operations() {
                 orders={tabOrders}
                 displayId={displayId}
                 isPartiallyPicked={isPartiallyPicked}
+                isFullyPicked={isFullyPicked}
                 onStartPick={(order) => { setSelectedOrder(order); setShowPickModal(true); }}
                 onForcePack={async (order) => {
                   await supabase.from('orders').update({
@@ -547,7 +554,7 @@ export default function Operations() {
                   });
                   fetchOrders();
                 }}
-                onMarkProcessing={handleMarkProcessing}
+                onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
               />
             )}
@@ -556,7 +563,7 @@ export default function Operations() {
                 orders={tabOrders}
                 displayId={displayId}
                 onMarkShipped={handleMarkAsShipped}
-                onMarkProcessing={handleMarkProcessing}
+                onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
               />
             )}
@@ -616,6 +623,51 @@ export default function Operations() {
           onScan={handleCameraScan}
           onClose={() => setShowScanner(false)}
         />
+      )}
+
+      {processingConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">Return to Processing?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  This will remove the order from the fulfillment queue and return it to the CS queue. This action cannot be undone.
+                </p>
+              </div>
+              <button
+                onClick={() => setProcessingConfirmId(null)}
+                className="ml-auto flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setProcessingConfirmId(null)}
+                className="border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="bg-amber-600 hover:bg-amber-700 text-white border-0"
+                onClick={() => {
+                  handleMarkProcessing(processingConfirmId);
+                  setProcessingConfirmId(null);
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                Confirm
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -719,6 +771,7 @@ function PrintedTable({
   orders,
   displayId,
   isPartiallyPicked,
+  isFullyPicked,
   onStartPick,
   onForcePack,
   onMarkProcessing,
@@ -727,6 +780,7 @@ function PrintedTable({
   orders: Order[];
   displayId: (o: Order) => string;
   isPartiallyPicked: (o: Order) => boolean;
+  isFullyPicked: (o: Order) => boolean;
   onStartPick: (o: Order) => void;
   onForcePack: (o: Order) => void;
   onMarkProcessing: (id: string) => void;
@@ -746,6 +800,7 @@ function PrintedTable({
         <tbody>
           {orders.map((order, idx) => {
             const partial = isPartiallyPicked(order);
+            const fullyPicked = isFullyPicked(order);
             return (
               <tr
                 key={order.id}
@@ -754,9 +809,14 @@ function PrintedTable({
                 <td className="px-3 sm:px-5 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-blue-600">{displayId(order)}</span>
-                    {partial && (
-                      <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">
-                        Partial
+                    {fullyPicked && (
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium border border-green-200">
+                        Picked
+                      </span>
+                    )}
+                    {partial && !fullyPicked && (
+                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium border border-amber-200">
+                        Partially Picked
                       </span>
                     )}
                   </div>
@@ -788,13 +848,21 @@ function PrintedTable({
                         <RotateCcw className="h-4 w-4" />
                       </button>
                     )}
-                    {partial ? (
+                    {fullyPicked ? (
+                      <Button
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700 text-white border-0 px-2 sm:px-3"
+                        onClick={() => onForcePack(order)}
+                      >
+                        <Package className="h-3.5 w-3.5 sm:mr-1" />
+                        <span className="hidden sm:inline">Pack</span>
+                      </Button>
+                    ) : partial ? (
                       <>
                         <Button
                           size="sm"
-                          variant="outline"
                           onClick={() => onStartPick(order)}
-                          className="px-2 sm:px-3"
+                          className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-2 sm:px-3"
                         >
                           <ScanLine className="h-3.5 w-3.5 sm:mr-1" />
                           <span className="hidden sm:inline">Continue Pick</span>

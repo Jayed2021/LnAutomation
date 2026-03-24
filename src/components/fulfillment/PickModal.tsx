@@ -292,11 +292,8 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
           }).eq('order_id', order.id);
         }
       } else {
-        newStatus = isPartial ? 'printed' : 'packed';
+        newStatus = 'printed';
         updateData.fulfillment_status = newStatus;
-        if (!isPartial) {
-          updateData.packed_at = new Date().toISOString();
-        }
       }
 
       await supabase.from('orders').update(updateData).eq('id', order.id);
@@ -305,7 +302,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
         order_id: order.id,
         action: isLabPick
           ? (isPartial ? 'Lab pick partially completed' : 'Lab pick completed — sent to lab')
-          : (isPartial ? 'Partially picked' : 'Fully picked and packed'),
+          : (isPartial ? 'Partially picked' : 'Fully picked — ready to pack'),
       });
 
       onClose();
@@ -405,14 +402,14 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
               <div className="border border-green-200 bg-green-50 rounded-lg p-5 text-center">
                 <CheckCircle2 className="h-10 w-10 text-green-600 mx-auto mb-2" />
                 <div className="text-green-700 font-semibold text-base">All Items Picked!</div>
-                <div className="text-green-600 text-sm">Order is ready for packing</div>
+                <div className="text-green-600 text-sm">Press "Complete Pick" — then use the Pack button to move to Packed</div>
                 <Button
                   variant="primary"
                   className="mt-4 w-full bg-gray-900 hover:bg-gray-800 text-white"
                   onClick={() => submitPicks(false)}
                   disabled={processing}
                 >
-                  {processing ? 'Processing...' : 'Complete Pick Operation'}
+                  {processing ? 'Processing...' : 'Complete Pick'}
                 </Button>
               </div>
             ) : currentItem ? (

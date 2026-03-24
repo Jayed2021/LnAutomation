@@ -18,6 +18,19 @@ interface PackagingProduct {
   selling_price: number;
 }
 
+interface GroupedPackagingItem {
+  groupKey: string;
+  product_id: string | null;
+  product_name: string;
+  sku: string;
+  unit_cost: number;
+  totalQuantity: number;
+  totalLineTotal: number;
+  sourceItemNames: string[];
+  rowIds: string[];
+  rows: PackagingItem[];
+}
+
 export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -103,18 +116,53 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
     }
   };
 
-  const handleUpdateQty = async (item: PackagingItem, qty: number) => {
+  const groupedItems: GroupedPackagingItem[] = React.useMemo(() => {
+    const map = new Map<string, GroupedPackagingItem>();
+    for (const item of items) {
+      const key = item.product_id ?? item.sku;
+      if (map.has(key)) {
+        const g = map.get(key)!;
+        g.totalQuantity += item.quantity;
+        g.totalLineTotal += item.line_total;
+        g.rowIds.push(item.id);
+        g.rows.push(item);
+        if (item.source_item_name && !g.sourceItemNames.includes(item.source_item_name)) {
+          g.sourceItemNames.push(item.source_item_name);
+        }
+      } else {
+        map.set(key, {
+          groupKey: key,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          sku: item.sku,
+          unit_cost: item.unit_cost,
+          totalQuantity: item.quantity,
+          totalLineTotal: item.line_total,
+          sourceItemNames: item.source_item_name ? [item.source_item_name] : [],
+          rowIds: [item.id],
+          rows: [item],
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [items]);
+
+  const handleUpdateQty = async (group: GroupedPackagingItem, qty: number) => {
     const newQty = Math.max(1, qty);
-    await supabase.from('order_packaging_items').update({
-      quantity: newQty,
-      line_total: newQty * item.unit_cost,
-    }).eq('id', item.id);
+    await Promise.all(
+      group.rows.map(row =>
+        supabase.from('order_packaging_items').update({
+          quantity: newQty,
+          line_total: newQty * row.unit_cost,
+        }).eq('id', row.id)
+      )
+    );
     onUpdated();
   };
 
-  const handleRemove = async (item: PackagingItem) => {
-    await supabase.from('order_packaging_items').delete().eq('id', item.id);
-    await logActivity(orderId, `Removed packaging: ${item.product_name}`, userId);
+  const handleRemove = async (group: GroupedPackagingItem) => {
+    await supabase.from('order_packaging_items').delete().in('id', group.rowIds);
+    await logActivity(orderId, `Removed packaging: ${group.product_name}`, userId);
     onUpdated();
   };
 
@@ -126,7 +174,7 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
         <div className="flex items-center gap-2">
           <Package className="w-4 h-4 text-gray-500" />
           <h3 className="font-semibold text-gray-900">Packaging Materials</h3>
-          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{items.length} items</span>
+          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{groupedItems.length} items</span>
         </div>
         <button
           onClick={() => { setAdding(!adding); if (adding) resetForm(); }}
@@ -138,15 +186,15 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
       </div>
 
       <div className="space-y-2">
-        {items.map(item => (
-          <div key={item.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-lg">
+        {groupedItems.map(group => (
+          <div key={group.groupKey} className="flex items-center gap-3 p-3 border border-gray-100 rounded-lg">
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
+              <div className="text-sm font-medium text-gray-900">{group.product_name}</div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-gray-400">{item.sku}</span>
-                {item.source_item_name && (
+                <span className="text-xs text-gray-400">{group.sku}</span>
+                {group.sourceItemNames.length > 0 && (
                   <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">
-                    For: {item.source_item_name}
+                    For: {group.sourceItemNames.join(', ')}
                   </span>
                 )}
               </div>
@@ -156,15 +204,15 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
               <input
                 type="number"
                 min={1}
-                value={item.quantity}
-                onChange={e => handleUpdateQty(item, parseInt(e.target.value) || 1)}
+                value={group.totalQuantity}
+                onChange={e => handleUpdateQty(group, parseInt(e.target.value) || 1)}
                 className={`${inputCls} w-16 text-center`}
               />
             </div>
             <span className="text-sm text-gray-700 w-20 text-right shrink-0">
-              ৳{item.line_total.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+              ৳{group.totalLineTotal.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
             </span>
-            <button onClick={() => handleRemove(item)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors shrink-0">
+            <button onClick={() => handleRemove(group)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors shrink-0">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>

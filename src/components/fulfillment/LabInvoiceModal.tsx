@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Printer, FlaskConical } from 'lucide-react';
+import { X, Printer, FlaskConical, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Dialog, DialogContent } from '../ui/Dialog';
 import { Button } from '../ui/Button';
@@ -15,12 +15,27 @@ interface LabInvoiceModalProps {
   onClose: () => void;
 }
 
+interface StoreProfile {
+  store_name: string;
+  logo_url: string;
+  address_line1: string;
+  address_line2: string;
+  city: string;
+  postal_code: string;
+  country: string;
+  phone_primary: string;
+  email: string;
+  website: string;
+  invoice_footer: string;
+}
+
 interface PrescriptionDetail {
   id: string;
   order_item_id: string | null;
   prescription_type: string | null;
   lens_type: string | null;
   custom_lens_type: string | null;
+  customer_price: number | null;
   od_sph: string | null;
   od_cyl: string | null;
   od_axis: string | null;
@@ -49,11 +64,21 @@ interface InvoiceItem {
 export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
   const [loading, setLoading] = useState(true);
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([]);
+  const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
   const [invoiceDate] = useState(new Date().toLocaleDateString('en-GB'));
 
   useEffect(() => {
-    fetchInvoiceData();
+    Promise.all([fetchInvoiceData(), fetchStoreProfile()]);
   }, []);
+
+  const fetchStoreProfile = async () => {
+    const { data } = await supabase
+      .from('store_profile')
+      .select('store_name, logo_url, address_line1, address_line2, city, postal_code, country, phone_primary, email, website, invoice_footer')
+      .limit(1)
+      .maybeSingle();
+    setStoreProfile(data ?? null);
+  };
 
   const fetchInvoiceData = async () => {
     try {
@@ -66,14 +91,17 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
           prescription_type,
           lens_type,
           custom_lens_type,
+          customer_price,
           od_sph, od_cyl, od_axis, od_pd,
-          os_sph, os_cyl, os_axis, os_pd
+          os_sph, os_cyl, os_axis, os_pd,
+          add_power
         `)
         .eq('order_id', order.id);
 
+      const physicalItems = order.items.filter(i => i.sku !== 'RX' && i.sku !== 'FEE');
       const items: InvoiceItem[] = [];
 
-      for (const item of order.items) {
+      for (const item of physicalItems) {
         const { data: product } = await supabase
           .from('products')
           .select('id')
@@ -103,9 +131,7 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
           }
         }
 
-        const rx = (prescriptions || []).find(
-          p => p.order_item_id === item.id
-        ) || (prescriptions && prescriptions[0]) || null;
+        const rx = (prescriptions || []).find(p => p.order_item_id === item.id) || null;
 
         items.push({
           product_name: item.product_name,
@@ -134,13 +160,18 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
 
   const formatRxVal = (val: string | null) => val || '—';
 
+  const hasAnyAdd = invoiceItems.some(i => i.prescription?.add_power);
+
+  const sp = storeProfile;
+  const addressParts = [sp?.address_line1, sp?.address_line2, sp?.city && sp?.postal_code ? `${sp.city} - ${sp.postal_code}` : (sp?.city || sp?.postal_code), sp?.country].filter(Boolean);
+
   return (
     <>
       <style>{`
         @media print {
           @page {
             size: A4 portrait;
-            margin: 15mm 15mm 15mm 15mm;
+            margin: 12mm 15mm 12mm 15mm;
           }
           body * {
             visibility: hidden;
@@ -171,7 +202,7 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
             <div className="flex items-center gap-2">
               <Button variant="primary" size="sm" onClick={handlePrint}>
                 <Printer className="h-4 w-4 mr-1.5" />
-                Print A4
+                Print / Save as PDF
               </Button>
               <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
                 <X className="h-5 w-5" />
@@ -182,36 +213,77 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
           {loading ? (
             <div className="py-10 text-center text-gray-500">Loading invoice data...</div>
           ) : (
-            <div id="lab-invoice-print-area" className="font-sans text-sm">
-              <div className="border-b-2 border-gray-800 pb-3 mb-4">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h1 className="text-xl font-bold text-gray-900">LAB INVOICE</h1>
-                    <p className="text-gray-600 text-sm mt-0.5">Prescription Lens Order</p>
+            <div id="lab-invoice-print-area" className="font-sans text-sm bg-white">
+
+              <div className="flex justify-between items-start pb-4 mb-4 border-b-2 border-gray-800">
+                <div className="flex-1">
+                  {sp?.logo_url ? (
+                    <img src={sp.logo_url} alt="Store Logo" className="h-14 max-w-[160px] object-contain" />
+                  ) : (
+                    <div className="inline-flex items-center gap-2">
+                      <div className="h-10 px-4 bg-gray-900 rounded-lg flex items-center">
+                        <span className="text-white text-sm font-bold tracking-wider uppercase">
+                          {sp?.store_name || 'LAB INVOICE'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-2">
+                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Lab Invoice</div>
+                    <div className="text-xs text-gray-500">Prescription Lens Order</div>
                   </div>
-                  <div className="text-right text-sm text-gray-600">
-                    <div className="font-semibold text-gray-900">Order {displayOrderId}</div>
-                    <div>Date: {invoiceDate}</div>
-                  </div>
+                </div>
+
+                <div className="text-right text-xs text-gray-600 space-y-0.5 max-w-[220px]">
+                  {sp?.store_name && <p className="font-semibold text-sm text-gray-900">{sp.store_name}</p>}
+                  {addressParts.map((line, i) => (
+                    <p key={i} className="flex items-center justify-end gap-1">
+                      {i === 0 && <MapPin className="w-3 h-3 text-gray-400 shrink-0" />}
+                      {line}
+                    </p>
+                  ))}
+                  {sp?.phone_primary && (
+                    <p className="flex items-center justify-end gap-1 mt-1">
+                      <Phone className="w-3 h-3 text-gray-400 shrink-0" />
+                      {sp.phone_primary}
+                    </p>
+                  )}
+                  {sp?.email && (
+                    <p className="flex items-center justify-end gap-1">
+                      <Mail className="w-3 h-3 text-gray-400 shrink-0" />
+                      {sp.email}
+                    </p>
+                  )}
+                  {sp?.website && (
+                    <p className="flex items-center justify-end gap-1">
+                      <Globe className="w-3 h-3 text-gray-400 shrink-0" />
+                      {sp.website}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 mb-5 bg-gray-50 rounded-lg p-3">
+              <div className="grid grid-cols-3 gap-4 mb-5 bg-gray-50 rounded-lg p-3 border border-gray-100">
                 <div>
-                  <div className="text-xs text-gray-500 font-semibold uppercase mb-0.5">Customer</div>
-                  <div className="font-semibold text-gray-900">{order.customer.full_name}</div>
-                  <div className="text-gray-600">{order.customer.phone_primary}</div>
+                  <div className="text-xs text-gray-400 font-semibold uppercase tracking-wide mb-0.5">Order</div>
+                  <div className="font-bold text-gray-900">{displayOrderId}</div>
+                  <div className="text-xs text-gray-500">Date: {invoiceDate}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500 font-semibold uppercase mb-0.5">Items</div>
-                  <div className="font-semibold text-gray-900">{invoiceItems.length} item(s)</div>
+                  <div className="text-xs text-gray-400 font-semibold uppercase tracking-wide mb-0.5">Customer</div>
+                  <div className="font-semibold text-gray-900">{order.customer.full_name}</div>
+                  <div className="text-xs text-gray-500">{order.customer.phone_primary}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400 font-semibold uppercase tracking-wide mb-0.5">Items</div>
+                  <div className="font-semibold text-gray-900">{invoiceItems.length} frame{invoiceItems.length !== 1 ? 's' : ''}</div>
                 </div>
               </div>
 
               <div className="space-y-5">
                 {invoiceItems.map((item, idx) => (
                   <div key={idx} className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="bg-gray-800 text-white px-4 py-2 flex items-center justify-between">
+                    <div className="bg-gray-800 text-white px-4 py-2.5 flex items-center justify-between">
                       <div>
                         <span className="font-semibold">{item.product_name}</span>
                         <span className="text-gray-300 text-xs ml-2">SKU: {item.sku}</span>
@@ -220,9 +292,9 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
                     </div>
 
                     {item.fifo_lot && (
-                      <div className="px-4 py-2 bg-blue-50 border-b border-gray-200 flex items-center gap-4 text-xs">
+                      <div className="px-4 py-2 bg-blue-50 border-b border-gray-100 flex items-center gap-6 text-xs">
                         <div>
-                          <span className="text-gray-500">Lot: </span>
+                          <span className="text-gray-500">Lot / Barcode: </span>
                           <span className="font-mono font-semibold text-blue-800">{item.fifo_lot.barcode}</span>
                         </div>
                         <div>
@@ -234,71 +306,84 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
 
                     {item.prescription ? (
                       <div className="p-4">
-                        <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Prescription Details</div>
-
-                        {(item.prescription.lens_type || item.prescription.custom_lens_type) && (
-                          <div className="mb-3 flex flex-wrap gap-3">
+                        <div className="flex flex-wrap gap-4 mb-3 text-xs">
+                          <div>
+                            <span className="text-gray-400 uppercase tracking-wide">Prescription Details</span>
+                          </div>
+                          {(item.prescription.lens_type || item.prescription.custom_lens_type) && (
                             <div>
-                              <span className="text-xs text-gray-500">Lens Type: </span>
+                              <span className="text-gray-500">Lens: </span>
                               <span className="font-semibold text-gray-800">
                                 {item.prescription.custom_lens_type || item.prescription.lens_type}
                               </span>
                             </div>
-                            {item.prescription.prescription_type && (
-                              <div>
-                                <span className="text-xs text-gray-500">Type: </span>
-                                <span className="font-semibold text-gray-800">{item.prescription.prescription_type}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
+                          )}
+                          {item.prescription.prescription_type && (
+                            <div>
+                              <span className="text-gray-500">Type: </span>
+                              <span className="font-semibold text-gray-800">{item.prescription.prescription_type}</span>
+                            </div>
+                          )}
+                          {(item.prescription.customer_price ?? 0) > 0 && (
+                            <div>
+                              <span className="text-gray-500">Lens Charge: </span>
+                              <span className="font-semibold text-gray-800">৳{item.prescription.customer_price}</span>
+                            </div>
+                          )}
+                        </div>
 
                         <table className="w-full border-collapse text-xs">
                           <thead>
                             <tr className="bg-gray-100">
-                              <th className="border border-gray-300 px-3 py-1.5 text-left font-semibold">Eye</th>
-                              <th className="border border-gray-300 px-3 py-1.5 text-center font-semibold">SPH</th>
-                              <th className="border border-gray-300 px-3 py-1.5 text-center font-semibold">CYL</th>
-                              <th className="border border-gray-300 px-3 py-1.5 text-center font-semibold">AXIS</th>
-                              <th className="border border-gray-300 px-3 py-1.5 text-center font-semibold">PD</th>
-                              {item.prescription.add_power && (
-                                <th className="border border-gray-300 px-3 py-1.5 text-center font-semibold">ADD</th>
+                              <th className="border border-gray-200 px-3 py-1.5 text-left font-semibold text-gray-700">Eye</th>
+                              <th className="border border-gray-200 px-3 py-1.5 text-center font-semibold text-gray-700">SPH</th>
+                              <th className="border border-gray-200 px-3 py-1.5 text-center font-semibold text-gray-700">CYL</th>
+                              <th className="border border-gray-200 px-3 py-1.5 text-center font-semibold text-gray-700">AXIS</th>
+                              <th className="border border-gray-200 px-3 py-1.5 text-center font-semibold text-gray-700">PD</th>
+                              {hasAnyAdd && (
+                                <th className="border border-gray-200 px-3 py-1.5 text-center font-semibold text-gray-700">ADD</th>
                               )}
                             </tr>
                           </thead>
                           <tbody>
                             <tr>
-                              <td className="border border-gray-300 px-3 py-1.5 font-semibold">OD (Right)</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_sph)}</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_cyl)}</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_axis)}</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_pd)}</td>
-                              {item.prescription.add_power && (
-                                <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.add_power)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 font-semibold text-gray-700">OD (Right)</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_sph)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_cyl)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_axis)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.od_pd)}</td>
+                              {hasAnyAdd && (
+                                <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.add_power)}</td>
                               )}
                             </tr>
                             <tr className="bg-gray-50">
-                              <td className="border border-gray-300 px-3 py-1.5 font-semibold">OS (Left)</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_sph)}</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_cyl)}</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_axis)}</td>
-                              <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_pd)}</td>
-                              {item.prescription.add_power && (
-                                <td className="border border-gray-300 px-3 py-1.5 text-center">{formatRxVal(item.prescription.add_power)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 font-semibold text-gray-700">OS (Left)</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_sph)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_cyl)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_axis)}</td>
+                              <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.os_pd)}</td>
+                              {hasAnyAdd && (
+                                <td className="border border-gray-200 px-3 py-1.5 text-center">{formatRxVal(item.prescription.add_power)}</td>
                               )}
                             </tr>
                           </tbody>
                         </table>
                       </div>
                     ) : (
-                      <div className="px-4 py-3 text-xs text-gray-400 italic">No prescription details recorded</div>
+                      <div className="px-4 py-3 text-xs text-gray-400 italic">No prescription details recorded for this frame</div>
                     )}
                   </div>
                 ))}
               </div>
 
-              <div className="mt-5 border-t border-gray-200 pt-4 text-xs text-gray-400 text-center print:hidden">
-                Lab costs and pricing are not shown on this invoice
+              {sp?.invoice_footer && (
+                <div className="mt-5 pt-3 border-t border-gray-200 text-xs text-gray-400 text-center italic">
+                  {sp.invoice_footer}
+                </div>
+              )}
+
+              <div className="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-300 text-center print:hidden">
+                Lab costs and internal pricing are not shown on this invoice
               </div>
             </div>
           )}

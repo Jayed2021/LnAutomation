@@ -135,11 +135,28 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const isWarehouseRole = WAREHOUSE_ROLES.includes(userRole ?? '');
   const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
 
-  const CS_STATUSES_WITH_LAB = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery', 'in_lab'];
+  const CS_STATUSES_WITH_LAB = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery'];
   const baseActions = BASE_ACTIONS[order.cs_status] ?? [];
-  const availableActions = CS_STATUSES_WITH_LAB.includes(order.cs_status) && hasPrescription
-    ? [...baseActions, 'send_to_lab']
-    : baseActions;
+
+  let availableActions = [...baseActions];
+
+  if (CS_STATUSES_WITH_LAB.includes(order.cs_status) && hasPrescription) {
+    availableActions = [...availableActions, 'send_to_lab'];
+  }
+
+  if (order.cs_status === 'in_lab') {
+    if (hasPrescription) {
+      availableActions = ['not_printed', 'cancel_before_dispatch', 'refund'];
+    } else {
+      availableActions = ['not_printed', 'cancel_before_dispatch', 'refund'];
+    }
+  }
+
+  if ((CS_STATUSES_WITH_LAB.includes(order.cs_status) || order.cs_status === 'send_to_lab') && hasPrescription) {
+    availableActions = availableActions.filter(a => a !== 'not_printed');
+  }
+
+  const showLabFlowNotice = hasPrescription && CS_STATUSES_WITH_LAB.includes(order.cs_status);
 
   const showsCourierFields = FINAL_STATUS_ACTIONS.has(selectedAction);
 
@@ -443,6 +460,18 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
             <div className="text-xs font-semibold text-slate-700 mb-0.5">Order in Warehouse Operations</div>
             <p className="text-xs text-slate-600">
               This order is being processed by the warehouse team.{isWarehouseRole ? ' Use Mark as Processing to return it to the CS queue.' : ' Ask the warehouse to use Mark as Processing to make CS changes.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {showLabFlowNotice && (
+        <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+          <div>
+            <div className="text-xs font-semibold text-teal-800 mb-0.5">Prescription Order — Lab Required</div>
+            <p className="text-xs text-teal-700">
+              This order has prescription lenses. Use <strong>Send to Lab</strong> first. The order can only be confirmed after it returns from the lab (<strong>In Lab</strong> status).
             </p>
           </div>
         </div>

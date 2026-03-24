@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Printer, Package, Send, Truck, Search, Camera, ScanLine,
   FileText, CheckCheck, Download, FlaskConical,
@@ -101,6 +102,7 @@ const DATE_RANGES = [
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
 
 export default function Operations() {
+  const navigate = useNavigate();
   const { lastRefreshed } = useRefresh();
   const { user } = useAuth();
   const isWarehouseRole = WAREHOUSE_ROLES.includes(user?.role ?? '');
@@ -534,6 +536,7 @@ export default function Operations() {
                 onMarkPrinted={handleMarkAsPrinted}
                 onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
+                onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
               />
             )}
             {activeTab === 'printed' && (
@@ -556,6 +559,7 @@ export default function Operations() {
                 }}
                 onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
+                onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
               />
             )}
             {activeTab === 'packed' && (
@@ -565,6 +569,7 @@ export default function Operations() {
                 onMarkShipped={handleMarkAsShipped}
                 onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
+                onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
               />
             )}
             {activeTab === 'send_to_lab' && (
@@ -573,10 +578,15 @@ export default function Operations() {
                 displayId={displayId}
                 onPrintLabInvoice={(order) => { setSelectedOrder(order); setShowLabInvoice(true); }}
                 onPickForLab={(order) => setLabPickOrder(order)}
+                onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
               />
             )}
             {activeTab === 'shipped' && (
-              <ShippedTable orders={tabOrders} displayId={displayId} />
+              <ShippedTable
+                orders={tabOrders}
+                displayId={displayId}
+                onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
+              />
             )}
           </>
         )}
@@ -681,6 +691,7 @@ function NotPrintedTable({
   onMarkPrinted,
   onMarkProcessing,
   isWarehouseRole,
+  onNavigate,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
@@ -689,6 +700,7 @@ function NotPrintedTable({
   onMarkPrinted: (id: string) => void;
   onMarkProcessing: (id: string) => void;
   isWarehouseRole: boolean;
+  onNavigate: (id: string) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -707,7 +719,8 @@ function NotPrintedTable({
           {orders.map((order, idx) => (
             <tr
               key={order.id}
-              className={`border-b border-gray-50 hover:bg-orange-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+              onClick={() => onNavigate(order.id)}
+              className={`border-b border-gray-50 hover:bg-orange-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
             >
               <td className="px-3 sm:px-5 py-3">
                 <span className="font-semibold text-blue-600">{displayId(order)}</span>
@@ -724,7 +737,7 @@ function NotPrintedTable({
               </td>
               <td className="px-3 sm:px-5 py-3 font-semibold text-gray-900 hidden md:table-cell">৳{order.total_amount}</td>
               <td className="px-3 sm:px-5 py-3 text-gray-500 text-xs max-w-40 hidden lg:table-cell">{getAddress(order)}</td>
-              <td className="px-3 sm:px-5 py-3">
+              <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-end gap-1.5 sm:gap-2">
                   <button
                     onClick={() => onPrintInvoice(order)}
@@ -776,6 +789,7 @@ function PrintedTable({
   onForcePack,
   onMarkProcessing,
   isWarehouseRole,
+  onNavigate,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
@@ -785,6 +799,7 @@ function PrintedTable({
   onForcePack: (o: Order) => void;
   onMarkProcessing: (id: string) => void;
   isWarehouseRole: boolean;
+  onNavigate: (id: string) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -804,7 +819,8 @@ function PrintedTable({
             return (
               <tr
                 key={order.id}
-                className={`border-b border-gray-50 hover:bg-blue-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+                onClick={() => onNavigate(order.id)}
+                className={`border-b border-gray-50 hover:bg-blue-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
               >
                 <td className="px-3 sm:px-5 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -837,7 +853,7 @@ function PrintedTable({
                     ))}
                   </div>
                 </td>
-                <td className="px-3 sm:px-5 py-3">
+                <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-2">
                     {isWarehouseRole && (
                       <button
@@ -903,12 +919,14 @@ function PackedTable({
   onMarkShipped,
   onMarkProcessing,
   isWarehouseRole,
+  onNavigate,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
   onMarkShipped: (id: string) => void;
   onMarkProcessing: (id: string) => void;
   isWarehouseRole: boolean;
+  onNavigate: (id: string) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -928,7 +946,8 @@ function PackedTable({
           {orders.map((order, idx) => (
             <tr
               key={order.id}
-              className={`border-b border-gray-50 hover:bg-green-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+              onClick={() => onNavigate(order.id)}
+              className={`border-b border-gray-50 hover:bg-green-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
             >
               <td className="px-3 sm:px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
               <td className="px-3 sm:px-5 py-3">
@@ -954,7 +973,7 @@ function PackedTable({
                   ? new Date(order.packed_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
                   : '—'}
               </td>
-              <td className="px-3 sm:px-5 py-3">
+              <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-end gap-2">
                   {isWarehouseRole && (
                     <button
@@ -988,11 +1007,13 @@ function SendToLabTable({
   displayId,
   onPrintLabInvoice,
   onPickForLab,
+  onNavigate,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
   onPrintLabInvoice: (o: Order) => void;
   onPickForLab: (o: Order) => void;
+  onNavigate: (id: string) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -1010,7 +1031,8 @@ function SendToLabTable({
           {orders.map((order, idx) => (
             <tr
               key={order.id}
-              className={`border-b border-gray-50 hover:bg-teal-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+              onClick={() => onNavigate(order.id)}
+              className={`border-b border-gray-50 hover:bg-teal-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
             >
               <td className="px-3 sm:px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
               <td className="px-3 sm:px-5 py-3">
@@ -1029,7 +1051,7 @@ function SendToLabTable({
                   {order.fulfillment_status === 'in_lab' ? 'In Lab' : 'Send to Lab'}
                 </span>
               </td>
-              <td className="px-3 sm:px-5 py-3">
+              <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-end gap-1.5 sm:gap-2">
                   <Button
                     size="sm"
@@ -1063,9 +1085,11 @@ function SendToLabTable({
 function ShippedTable({
   orders,
   displayId,
+  onNavigate,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
+  onNavigate: (id: string) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -1087,7 +1111,8 @@ function ShippedTable({
             return (
               <tr
                 key={order.id}
-                className={`border-b border-gray-50 hover:bg-slate-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+                onClick={() => onNavigate(order.id)}
+                className={`border-b border-gray-50 hover:bg-slate-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
               >
                 <td className="px-3 sm:px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
                 <td className="px-3 sm:px-5 py-3">

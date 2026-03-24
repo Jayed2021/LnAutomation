@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, Save, X, Trash2, Copy, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Plus, Save, X, Trash2, Copy, ChevronDown, ChevronUp, FlaskConical, Upload, Download, Paperclip } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderPrescription, OrderItem } from './types';
 import { logActivity } from './service';
@@ -66,8 +66,30 @@ interface FormState {
 export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpdated }: Props) {
   const [openForm, setOpenForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [duplicateTargetId, setDuplicateTargetId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleRxFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !openForm) return;
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const path = `orders/${orderId}/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('prescription-files').upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('prescription-files').getPublicUrl(path);
+      setOpenForm(prev => prev ? { ...prev, fields: { ...prev.fields, rx_file_url: publicUrl } } : null);
+    } catch (err) {
+      console.error('File upload failed:', err);
+      alert('Failed to upload prescription file. Please try again.');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const eligibleItems = items.filter(i => i.sku !== 'FEE' && i.sku !== 'RX');
 
@@ -206,6 +228,13 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
     await supabase.from('order_items').delete()
       .eq('order_id', orderId).eq('sku', 'RX').eq('product_name', rxName);
     await recalcOrderTotal();
+
+    const { count } = await supabase
+      .from('order_prescriptions')
+      .select('id', { count: 'exact', head: true })
+      .eq('order_id', orderId);
+    await supabase.from('orders').update({ has_prescription: (count ?? 0) > 0 }).eq('id', orderId);
+
     await logActivity(orderId, `Prescription removed for ${itemLabel}`, userId);
     onUpdated();
   };
@@ -263,7 +292,46 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
           </div>
           <div>
             <div className="text-xs font-medium text-gray-500 mb-1">Upload Prescription</div>
-            <input type="file" accept=".pdf,image/*" className="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border file:border-gray-200 file:text-xs file:bg-white w-full" />
+            <input ref={fileInputRef} type="file" accept=".pdf,image/*" className="hidden" onChange={handleRxFileUpload} />
+            {fields.rx_file_url ? (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <a
+                  href={fields.rx_file_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 px-2 py-1 rounded bg-blue-50"
+                >
+                  <Paperclip className="w-3 h-3" />
+                  View File
+                </a>
+                <a
+                  href={fields.rx_file_url}
+                  download
+                  className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded hover:bg-gray-50"
+                >
+                  <Download className="w-3 h-3" />
+                  Download
+                </a>
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...fields, rx_file_url: '' })}
+                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 border border-red-100 px-2 py-1 rounded hover:bg-red-50"
+                >
+                  <X className="w-3 h-3" />
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 w-full justify-center"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                {uploading ? 'Uploading...' : 'Choose File'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -440,9 +508,25 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
               </div>
             )}
             {p.rx_file_url && (
-              <a href={p.rx_file_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">
-                View prescription file
-              </a>
+              <div className="flex items-center gap-2">
+                <a
+                  href={p.rx_file_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 px-2 py-1 rounded bg-blue-50"
+                >
+                  <Paperclip className="w-3 h-3" />
+                  View File
+                </a>
+                <a
+                  href={p.rx_file_url}
+                  download
+                  className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded hover:bg-gray-50"
+                >
+                  <Download className="w-3 h-3" />
+                  Download
+                </a>
+              </div>
             )}
           </div>
         )}

@@ -32,6 +32,7 @@ import Settings from './pages/Settings';
 import WooCommerceSettings from './pages/settings/WooCommerceSettings';
 import BarcodeSettings from './pages/settings/BarcodeSettings';
 import PackagingSettings from './pages/settings/PackagingSettings';
+import StoreProfile from './pages/settings/StoreProfile';
 import ComingSoon from './pages/ComingSoon';
 import ProfitLoss from './pages/reports/ProfitLoss';
 
@@ -89,6 +90,7 @@ function App() {
             <Route path="settings/woocommerce" element={<WooCommerceSettings />} />
             <Route path="settings/barcode" element={<BarcodeSettings />} />
             <Route path="settings/packaging" element={<PackagingSettings />} />
+            <Route path="settings/store-profile" element={<StoreProfile />} />
           </Route>
         </Routes>
         </RefreshProvider>

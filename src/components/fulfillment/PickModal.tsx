@@ -74,6 +74,8 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       const states: ItemPickState[] = [];
 
       for (const item of order.items) {
+        if (item.sku === 'RX' || item.sku === 'FEE') continue;
+
         const remainingToPick = item.quantity - item.picked_quantity;
         if (remainingToPick <= 0) {
           states.push({

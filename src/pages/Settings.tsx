@@ -21,7 +21,8 @@ export default function Settings() {
       title: 'Store Profile',
       description: 'Manage store information and branding',
       icon: Building2,
-      color: 'blue'
+      color: 'blue',
+      route: '/settings/store-profile'
     },
     {
       title: 'User Management',

@@ -80,7 +80,6 @@ const STATUS_MAP: Record<string, string> = {
   refund:                 'refund',
 };
 
-const FINAL_STATUS_ACTIONS = new Set(['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery']);
 
 export function CsActionPanel({ order, items, userId, userRole, hasPrescription, onUpdated }: Props) {
   const [selectedAction, setSelectedAction] = useState('');
@@ -96,8 +95,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     expected_delivery_date: '',
     exchange_return_id: '',
     partial_items: [] as string[],
-    collected_amount: '',
-    delivery_charge: '',
     refund_amount: '',
   });
 
@@ -126,8 +123,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       expected_delivery_date: '',
       exchange_return_id: '',
       partial_items: [],
-      collected_amount: '',
-      delivery_charge: '',
       refund_amount: '',
     }));
   }, [selectedAction]);
@@ -158,8 +153,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
 
   const showLabFlowNotice = hasPrescription && CS_STATUSES_WITH_LAB.includes(order.cs_status);
 
-  const showsCourierFields = FINAL_STATUS_ACTIONS.has(selectedAction);
-
   const getWooConfig = async () => {
     const { data } = await supabase.from('woocommerce_config').select('store_url, consumer_key, consumer_secret').eq('is_connected', true).maybeSingle();
     return data;
@@ -184,20 +177,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'Network error reaching WooCommerce.' };
-    }
-  };
-
-  const saveCourierFields = async () => {
-    if (!form.collected_amount && !form.delivery_charge) return;
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (form.collected_amount !== '') updates.collected_amount = parseFloat(form.collected_amount) || 0;
-    if (form.delivery_charge !== '') updates.delivery_charge = parseFloat(form.delivery_charge) || 0;
-
-    const { data: existing } = await supabase.from('order_courier_info').select('id').eq('order_id', order.id).maybeSingle();
-    if (existing) {
-      await supabase.from('order_courier_info').update(updates).eq('order_id', order.id);
-    } else {
-      await supabase.from('order_courier_info').insert({ order_id: order.id, ...updates });
     }
   };
 
@@ -282,7 +261,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           updated_at: new Date().toISOString(),
         }).eq('id', retOrder.id);
         await logActivity(retOrder.id, `Status changed to Exchange Returnable (EXR) — linked to exchange on order ${order.order_number}`, userId);
-        await saveCourierFields();
       }
 
       if (selectedAction === 'cancel_before_dispatch') {
@@ -311,7 +289,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         const reason = cancellationReasons.find(r => r.id === form.cancellation_reason_id);
         updates.cancellation_reason = reason?.reason_text ?? '';
         updates.cancellation_reason_id = form.cancellation_reason_id;
-        await saveCourierFields();
       }
 
       if (selectedAction === 'partial_delivery') {
@@ -345,12 +322,10 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           }
         }
         updates.partial_delivery_notes = `Partial delivery: ${form.partial_items.length} item(s) returned.`;
-        await saveCourierFields();
       }
 
       if (selectedAction === 'delivered') {
         updates.fulfillment_status = 'shipped';
-        await saveCourierFields();
       }
 
       if (selectedAction === 'reverse_pick') {
@@ -399,7 +374,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         cancellation_reason_id: '', cancellation_reason_text: '',
         late_delivery_reason: '', expected_delivery_date: '',
         exchange_return_id: '', partial_items: [],
-        collected_amount: '', delivery_charge: '', refund_amount: '',
+        refund_amount: '',
       });
       onUpdated();
 
@@ -531,37 +506,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
               <p className="text-xs text-amber-600 mt-1">Only warehouse staff can mark orders as processing.</p>
             )}
           </div>
-
-          {/* Courier fields for final statuses */}
-          {showsCourierFields && (
-            <div className="space-y-3 mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-              <div className="text-xs font-semibold text-gray-600 mb-1">Settlement Amounts</div>
-              <div>
-                <div className="text-xs font-medium text-gray-500 mb-1">Collected Amount</div>
-                <input
-                  type="number"
-                  value={form.collected_amount}
-                  onChange={e => setForm(p => ({ ...p, collected_amount: e.target.value }))}
-                  className={inputCls}
-                  placeholder="0.00"
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-              <div>
-                <div className="text-xs font-medium text-gray-500 mb-1">Delivery Charge</div>
-                <input
-                  type="number"
-                  value={form.delivery_charge}
-                  onChange={e => setForm(p => ({ ...p, delivery_charge: e.target.value }))}
-                  className={inputCls}
-                  placeholder="0.00"
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-            </div>
-          )}
 
           {/* Late delivery form */}
           {selectedAction === 'late_delivery' && (

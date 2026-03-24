@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, X, CreditCard as Edit2, CheckCircle, AlertCircle, Zap, Pencil } from 'lucide-react';
+import { Save, X, CreditCard as Edit2, CheckCircle, AlertCircle, Zap, Pencil, DollarSign } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail, OrderCourierInfo } from './types';
 import { logActivity } from './service';
@@ -13,6 +13,14 @@ const CONFIRMATION_TYPES = [
   { value: 'assumption', label: 'Assumption' },
 ];
 
+const FINAL_STATUSES = new Set(['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery']);
+
+const SOURCE_LABELS: Record<string, string> = {
+  courier_api: 'Courier API',
+  invoice_upload: 'Invoice Upload',
+  manual: 'Manual',
+};
+
 interface Props {
   order: OrderDetail;
   courier: OrderCourierInfo | null;
@@ -24,15 +32,22 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmingOrder, setConfirmingOrder] = useState(false);
+  const [settlementEditing, setSettlementEditing] = useState(false);
+  const [settlementSaving, setSettlementSaving] = useState(false);
+
   const [edit, setEdit] = useState({
     courier_company: courier?.courier_company ?? '',
     tracking_number: courier?.tracking_number ?? '',
     courier_area: courier?.courier_area ?? '',
     total_receivable: courier?.total_receivable ?? order.total_amount,
-    collected_amount: courier?.collected_amount ?? 0,
-    delivery_charge: courier?.delivery_charge ?? 0,
     cod_charge: courier?.cod_charge ?? 0,
   });
+
+  const [settlementEdit, setSettlementEdit] = useState({
+    collected_amount: courier?.collected_amount ?? 0,
+    delivery_charge: courier?.delivery_charge ?? 0,
+  });
+
   const [confirmEdit, setConfirmEdit] = useState({
     confirmation_type: order.confirmation_type ?? '',
     courier_entry_method: order.courier_entry_method ?? 'manual',
@@ -49,15 +64,17 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
           tracking_number: edit.tracking_number,
           courier_area: edit.courier_area,
           total_receivable: edit.total_receivable,
-          collected_amount: edit.collected_amount,
-          delivery_charge: edit.delivery_charge,
           cod_charge: edit.cod_charge,
           updated_at: new Date().toISOString(),
         }).eq('id', courier.id);
       } else {
         await supabase.from('order_courier_info').insert({
           order_id: order.id,
-          ...edit,
+          courier_company: edit.courier_company,
+          tracking_number: edit.tracking_number,
+          courier_area: edit.courier_area,
+          total_receivable: edit.total_receivable,
+          cod_charge: edit.cod_charge,
         });
       }
       await logActivity(order.id, `Courier info updated`, userId);
@@ -67,6 +84,52 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
       console.error(err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveSettlement = async () => {
+    setSettlementSaving(true);
+    try {
+      const prevCollected = courier?.collected_amount ?? 0;
+      const prevDelivery = courier?.delivery_charge ?? 0;
+      const newCollected = settlementEdit.collected_amount;
+      const newDelivery = settlementEdit.delivery_charge;
+
+      const changes: string[] = [];
+      if (newCollected !== prevCollected) {
+        changes.push(`collected_amount changed from ${prevCollected} to ${newCollected}`);
+      }
+      if (newDelivery !== prevDelivery) {
+        changes.push(`delivery_charge changed from ${prevDelivery} to ${newDelivery}`);
+      }
+
+      if (courier) {
+        await supabase.from('order_courier_info').update({
+          collected_amount: newCollected,
+          delivery_charge: newDelivery,
+          settlement_source: 'manual',
+          updated_at: new Date().toISOString(),
+        }).eq('id', courier.id);
+      } else {
+        await supabase.from('order_courier_info').insert({
+          order_id: order.id,
+          collected_amount: newCollected,
+          delivery_charge: newDelivery,
+          settlement_source: 'manual',
+          total_receivable: order.total_amount,
+        });
+      }
+
+      if (changes.length > 0) {
+        await logActivity(order.id, `Settlement override (manual): ${changes.join(', ')}`, userId);
+      }
+
+      setSettlementEditing(false);
+      onUpdated();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSettlementSaving(false);
     }
   };
 
@@ -98,6 +161,9 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const CONFIRMABLE_STATUSES = ['new_not_called', 'new_called', 'in_lab', 'awaiting_payment', 'late_delivery', 'exchange'];
   const isConfirmable = CONFIRMABLE_STATUSES.includes(order.cs_status);
   const isConfirmed = !CONFIRMABLE_STATUSES.includes(order.cs_status) && !!order.confirmation_type;
+  const isFinalStatus = FINAL_STATUSES.has(order.cs_status);
+
+  const settlementSource = courier?.settlement_source ?? null;
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
@@ -167,18 +233,95 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
         </div>
 
         {editing && (
-          <>
-            <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">Delivery Charge</div>
-              <input type="number" value={edit.delivery_charge} onChange={e => setEdit(p => ({ ...p, delivery_charge: parseFloat(e.target.value) || 0 }))} className={inputCls} />
-            </div>
-            <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">COD Charge</div>
-              <input type="number" value={edit.cod_charge} onChange={e => setEdit(p => ({ ...p, cod_charge: parseFloat(e.target.value) || 0 }))} className={inputCls} />
-            </div>
-          </>
+          <div>
+            <div className="text-xs font-medium text-gray-500 mb-1">COD Charge</div>
+            <input type="number" value={edit.cod_charge} onChange={e => setEdit(p => ({ ...p, cod_charge: parseFloat(e.target.value) || 0 }))} className={inputCls} />
+          </div>
         )}
       </div>
+
+      {/* Settlement Amounts — only shown after a final status */}
+      {isFinalStatus && (
+        <div className="mt-5 pt-5 border-t border-gray-100">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-gray-500" />
+              <span className="text-sm font-semibold text-gray-900">Settlement Amounts</span>
+              {settlementSource && (
+                <span className="text-xs font-medium text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                  {SOURCE_LABELS[settlementSource] ?? settlementSource}
+                </span>
+              )}
+            </div>
+            {!settlementEditing ? (
+              <button
+                onClick={() => {
+                  setSettlementEdit({
+                    collected_amount: courier?.collected_amount ?? 0,
+                    delivery_charge: courier?.delivery_charge ?? 0,
+                  });
+                  setSettlementEditing(true);
+                }}
+                className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+                Edit
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                <button onClick={() => setSettlementEditing(false)} className="p-1.5 hover:bg-gray-100 rounded transition-colors">
+                  <X className="w-4 h-4 text-gray-500" />
+                </button>
+                <button
+                  onClick={handleSaveSettlement}
+                  disabled={settlementSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {settlementSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-medium text-gray-500 mb-1">Collected Amount</div>
+              {settlementEditing
+                ? <input
+                    type="number"
+                    value={settlementEdit.collected_amount}
+                    onChange={e => setSettlementEdit(p => ({ ...p, collected_amount: parseFloat(e.target.value) || 0 }))}
+                    className={inputCls}
+                    placeholder="0.00"
+                    min="0"
+                    step="0.01"
+                  />
+                : <div className="text-sm font-semibold text-gray-900">
+                    ৳{(courier?.collected_amount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                  </div>
+              }
+            </div>
+            <div>
+              <div className="text-xs font-medium text-gray-500 mb-1">Delivery Charge</div>
+              {settlementEditing
+                ? <input
+                    type="number"
+                    value={settlementEdit.delivery_charge}
+                    onChange={e => setSettlementEdit(p => ({ ...p, delivery_charge: parseFloat(e.target.value) || 0 }))}
+                    className={inputCls}
+                    placeholder="0.00"
+                    min="0"
+                    step="0.01"
+                  />
+                : <div className="text-sm font-semibold text-gray-900">
+                    ৳{(courier?.delivery_charge ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                  </div>
+              }
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirm Order Section */}
       {isConfirmable && (
@@ -189,7 +332,6 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
           </div>
 
           <div className="space-y-3">
-            {/* Courier Entry Method */}
             <div>
               <div className="text-xs font-medium text-gray-500 mb-1.5">Courier Entry Method</div>
               <div className="grid grid-cols-2 gap-2">

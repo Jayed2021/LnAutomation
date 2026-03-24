@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, X, CreditCard as Edit2, CheckCircle } from 'lucide-react';
+import { Save, X, CreditCard as Edit2, CheckCircle, AlertCircle } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail, OrderCourierInfo } from './types';
 import { logActivity } from './service';
@@ -11,10 +11,6 @@ const CONFIRMATION_TYPES = [
   { value: 'prepaid', label: 'Prepaid' },
   { value: 'partial_paid', label: 'Partial Paid' },
   { value: 'assumption', label: 'Assumption' },
-];
-const COURIER_ENTRY_METHODS = [
-  { value: 'manual', label: 'Manual Entry' },
-  { value: 'api', label: 'Automatic API' },
 ];
 
 interface Props {
@@ -74,14 +70,18 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     }
   };
 
+  const hasTrackingNumber = !!(courier?.tracking_number?.trim());
+  const isManualEntry = confirmEdit.courier_entry_method === 'manual';
+  const canConfirm = !!confirmEdit.confirmation_type && (!isManualEntry || hasTrackingNumber);
+
   const handleConfirmOrder = async () => {
-    if (!confirmEdit.confirmation_type) return;
+    if (!canConfirm) return;
     setConfirmingOrder(true);
     try {
       await supabase.from('orders').update({
         cs_status: 'confirmed',
         confirmation_type: confirmEdit.confirmation_type,
-        courier_entry_method: confirmEdit.courier_entry_method,
+        courier_entry_method: 'manual',
         confirmed_by: userId,
         fulfillment_status: 'not_printed',
         updated_at: new Date().toISOString(),
@@ -144,10 +144,18 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
         </div>
 
         <div>
-          <div className="text-xs font-medium text-gray-500 mb-1">Tracking Number</div>
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="text-xs font-medium text-gray-500">Tracking Number</span>
+            {isConfirmable && !hasTrackingNumber && (
+              <span className="text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">Required to confirm</span>
+            )}
+          </div>
           {editing
-            ? <input value={edit.tracking_number} onChange={e => setEdit(p => ({ ...p, tracking_number: e.target.value }))} className={inputCls} placeholder="Tracking #" />
-            : <div className="text-sm text-gray-900 font-mono">{courier?.tracking_number || '—'}</div>}
+            ? <input value={edit.tracking_number} onChange={e => setEdit(p => ({ ...p, tracking_number: e.target.value }))} className={`${inputCls} ${isConfirmable && !edit.tracking_number ? 'border-amber-400 focus:ring-amber-400' : ''}`} placeholder="Enter tracking number from courier" />
+            : <div className={`text-sm font-mono ${courier?.tracking_number ? 'text-gray-900' : 'text-gray-400'}`}>{courier?.tracking_number || '—'}</div>}
+          {editing && isConfirmable && !edit.tracking_number && (
+            <p className="text-xs text-amber-600 mt-1">Enter the tracking number before confirming the order.</p>
+          )}
         </div>
 
         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
@@ -179,6 +187,17 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
             <CheckCircle className="w-4 h-4 text-gray-600" />
             <span className="text-sm font-semibold text-gray-900">Confirm Order</span>
           </div>
+
+          {!hasTrackingNumber && (
+            <div className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-amber-800">Tracking Number Required</p>
+                <p className="text-xs text-amber-700 mt-0.5">Enter and save the tracking number in the fields above before confirming this order.</p>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-3">
             <div>
               <div className="text-xs font-medium text-gray-500 mb-1">Confirmation Type</div>
@@ -186,24 +205,15 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                 value={confirmEdit.confirmation_type}
                 onChange={e => setConfirmEdit(p => ({ ...p, confirmation_type: e.target.value }))}
                 className={inputCls}
+                disabled={!hasTrackingNumber}
               >
                 <option value="">Select type...</option>
                 {CONFIRMATION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
-            <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">Courier Entry Method</div>
-              <select
-                value={confirmEdit.courier_entry_method}
-                onChange={e => setConfirmEdit(p => ({ ...p, courier_entry_method: e.target.value }))}
-                className={inputCls}
-              >
-                {COURIER_ENTRY_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
-            </div>
             <button
               onClick={handleConfirmOrder}
-              disabled={confirmingOrder || !confirmEdit.confirmation_type}
+              disabled={confirmingOrder || !canConfirm}
               className="w-full py-2.5 bg-gray-700 hover:bg-gray-800 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors"
             >
               {confirmingOrder ? 'Confirming...' : 'Confirm Order'}

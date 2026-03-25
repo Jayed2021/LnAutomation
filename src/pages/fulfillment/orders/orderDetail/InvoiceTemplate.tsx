@@ -110,12 +110,19 @@ export function buildInvoiceHtml(
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, Helvetica, sans-serif; color: #111; background: #fff; }
+    #print-btn { position:fixed; top:16px; right:16px; z-index:9999; display:flex; align-items:center; gap:8px; padding:10px 20px; background:#111; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,0.18); transition:background 0.15s; }
+    #print-btn:hover { background:#333; }
     @media print {
+      #print-btn { display:none !important; }
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
+  <button id="print-btn" onclick="window.print()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+    Print / Download
+  </button>
   <div style="max-width:794px;margin:0 auto;padding:48px 48px 64px;">
 
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;">
@@ -275,12 +282,19 @@ export function buildPackingSlipHtml(
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, Helvetica, sans-serif; color: #111; background: #fff; }
+    #print-btn { position:fixed; top:16px; right:16px; z-index:9999; display:flex; align-items:center; gap:8px; padding:10px 20px; background:#111; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,0.18); transition:background 0.15s; }
+    #print-btn:hover { background:#333; }
     @media print {
+      #print-btn { display:none !important; }
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
+  <button id="print-btn" onclick="window.print()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+    Print / Download
+  </button>
   <div style="max-width:794px;margin:0 auto;padding:32px 40px 48px;">
 
     <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;border-bottom:2px solid #111;margin-bottom:20px;">

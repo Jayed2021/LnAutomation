@@ -145,14 +145,31 @@ export interface FifoLotInfo {
 }
 
 export async function fetchFifoLotsForItems(
-  items: { id: string; product_id: string | null }[]
+  items: { id: string; product_id: string | null; sku?: string }[]
 ): Promise<Map<string, FifoLotInfo>> {
   const result = new Map<string, FifoLotInfo>();
-  const itemsWithProduct = items.filter(i => i.product_id);
-  if (itemsWithProduct.length === 0) return result;
+
+  const skusWithoutProduct = items.filter(i => !i.product_id && i.sku).map(i => i.sku!);
+  let skuToProductId = new Map<string, string>();
+  if (skusWithoutProduct.length > 0) {
+    const { data: prods } = await supabase
+      .from('products')
+      .select('id, sku')
+      .in('sku', skusWithoutProduct);
+    if (prods) {
+      for (const p of prods) skuToProductId.set(p.sku, p.id);
+    }
+  }
+
+  const resolved = items.map(i => ({
+    id: i.id,
+    product_id: i.product_id ?? (i.sku ? skuToProductId.get(i.sku) ?? null : null),
+  })).filter(i => i.product_id);
+
+  if (resolved.length === 0) return result;
 
   await Promise.all(
-    itemsWithProduct.map(async item => {
+    resolved.map(async item => {
       const { data: lots } = await supabase
         .from('inventory_lots')
         .select('lot_number, barcode, location:warehouse_locations(code)')

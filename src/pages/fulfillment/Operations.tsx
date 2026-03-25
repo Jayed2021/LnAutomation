@@ -16,6 +16,12 @@ import { BarcodeScannerModal } from '../../components/fulfillment/BarcodeScanner
 import { LabInvoiceModal } from '../../components/fulfillment/LabInvoiceModal';
 import { PackedExportModal } from '../../components/fulfillment/PackedExportModal';
 import { STATUS_CONFIG } from './orders/types';
+import { buildInvoiceHtml, buildPackingSlipHtml } from './orders/orderDetail/InvoiceTemplate';
+import {
+  fetchStoreProfile, fetchFifoLotsForItems,
+  fetchOrderPrescriptions, fetchPackagingItems,
+} from './orders/orderDetail/service';
+import type { OrderDetail, OrderItem, OrderPrescription, PackagingItem } from './orders/orderDetail/types';
 
 interface Order {
   id: string;
@@ -253,43 +259,113 @@ export default function Operations() {
     }
   };
 
-  const handlePrintInvoice = (order: Order) => {
-    const displayId = order.woo_order_number ? `#${order.woo_order_number}` : order.order_number;
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.write(`
-      <html><head><title>Invoice ${displayId}</title>
-      <style>
-        body { font-family: sans-serif; padding: 24px; font-size: 13px; color: #111; }
-        h1 { font-size: 20px; margin: 0 0 4px; }
-        .row { display: flex; justify-content: space-between; margin-bottom: 2px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-        th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
-        th { background: #f3f4f6; }
-        .total { font-weight: bold; }
-        @media print { body { padding: 0; } }
-      </style></head><body>
-      <h1>Invoice ${displayId}</h1>
-      <div class="row"><span>Customer: ${order.customer.full_name}</span><span>${new Date().toLocaleDateString()}</span></div>
-      <div class="row"><span>Phone: ${order.customer.phone_primary}</span></div>
-      <table>
-        <tr><th>#</th><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Total</th></tr>
-        ${order.items.map((item, i) => `
-          <tr>
-            <td>${i + 1}</td>
-            <td>${item.product_name}</td>
-            <td>${item.sku}</td>
-            <td>${item.quantity}</td>
-            <td>৳${item.unit_price?.toFixed(2) ?? '—'}</td>
-            <td>৳${((item.unit_price ?? 0) * item.quantity).toFixed(2)}</td>
-          </tr>
-        `).join('')}
-        <tr class="total"><td colspan="5">Total</td><td>৳${order.total_amount.toFixed(2)}</td></tr>
-      </table>
-      </body></html>
-    `);
-    w.document.close();
-    w.print();
+  const openPrintTab = (html: string) => {
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const tab = window.open(url, '_blank');
+    if (tab) {
+      tab.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+    } else {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const buildOrderDetailForPrint = (order: Order): OrderDetail => ({
+    id: order.id,
+    order_number: order.order_number,
+    woo_order_id: order.woo_order_id,
+    woo_order_number: order.woo_order_number,
+    order_date: order.order_date,
+    created_at: order.order_date,
+    cs_status: order.cs_status,
+    fulfillment_status: order.fulfillment_status,
+    payment_method: null,
+    payment_status: '',
+    payment_reference: null,
+    subtotal: order.total_amount,
+    discount_amount: 0,
+    shipping_fee: 0,
+    total_amount: order.total_amount,
+    order_source: null,
+    conversation_url: null,
+    meta_screenshot_url: null,
+    confirmation_type: null,
+    courier_entry_method: null,
+    late_delivery_reason: null,
+    expected_delivery_date: null,
+    exchange_return_id: null,
+    cancellation_reason: null,
+    partial_delivery_notes: null,
+    notes: null,
+    coupon_lines: null,
+    fee_lines: null,
+    customer_note: null,
+    customer: {
+      id: '',
+      full_name: order.customer.full_name,
+      phone_primary: order.customer.phone_primary,
+      email: null,
+      address_line1: order.customer.address_line1 ?? null,
+      city: order.customer.city ?? null,
+      district: order.customer.district ?? null,
+    },
+    assigned_user: null,
+    confirmed_user: null,
+  });
+
+  const fetchFullOrderForPrint = async (orderId: string) => {
+    const { data } = await supabase
+      .from('orders')
+      .select(`
+        id, order_number, woo_order_id, woo_order_number,
+        order_date, created_at, cs_status, fulfillment_status,
+        payment_method, payment_status, payment_reference,
+        subtotal, discount_amount, shipping_fee, total_amount,
+        order_source, conversation_url, meta_screenshot_url,
+        confirmation_type, courier_entry_method,
+        late_delivery_reason, expected_delivery_date,
+        exchange_return_id, cancellation_reason, partial_delivery_notes, notes,
+        coupon_lines, fee_lines, customer_note,
+        customer:customers(id, full_name, phone_primary, email, address_line1, city, district),
+        assigned_user:users!orders_assigned_to_fkey(id, full_name),
+        confirmed_user:users!orders_confirmed_by_fkey(id, full_name)
+      `)
+      .eq('id', orderId)
+      .maybeSingle();
+    return data as OrderDetail | null;
+  };
+
+  const handlePrintInvoice = async (order: Order) => {
+    const [storeProfile, prescriptions, fullItems, fullOrder] = await Promise.all([
+      fetchStoreProfile(),
+      fetchOrderPrescriptions(order.id),
+      supabase
+        .from('order_items')
+        .select('id, product_id, sku, product_name, quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id')
+        .eq('order_id', order.id)
+        .order('created_at')
+        .then(r => (r.data ?? []) as OrderItem[]),
+      fetchFullOrderForPrint(order.id),
+    ]);
+    const orderDetail = fullOrder ?? buildOrderDetailForPrint(order);
+    openPrintTab(buildInvoiceHtml(orderDetail, fullItems, prescriptions as OrderPrescription[], storeProfile));
+  };
+
+  const handlePrintPackingSlip = async (order: Order) => {
+    const [storeProfile, packagingItems, fullItems, fullOrder] = await Promise.all([
+      fetchStoreProfile(),
+      fetchPackagingItems(order.id),
+      supabase
+        .from('order_items')
+        .select('id, product_id, sku, product_name, quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id')
+        .eq('order_id', order.id)
+        .order('created_at')
+        .then(r => (r.data ?? []) as OrderItem[]),
+      fetchFullOrderForPrint(order.id),
+    ]);
+    const fifoLots = await fetchFifoLotsForItems(fullItems);
+    const orderDetail = fullOrder ?? buildOrderDetailForPrint(order);
+    openPrintTab(buildPackingSlipHtml(orderDetail, fullItems, packagingItems as PackagingItem[], fifoLots, storeProfile));
   };
 
   const handleMarkAsPrinted = async (orderId: string) => {
@@ -533,6 +609,7 @@ export default function Operations() {
                 displayId={displayId}
                 getAddress={getAddress}
                 onPrintInvoice={handlePrintInvoice}
+                onPrintPackingSlip={handlePrintPackingSlip}
                 onMarkPrinted={handleMarkAsPrinted}
                 onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
@@ -545,6 +622,8 @@ export default function Operations() {
                 displayId={displayId}
                 isPartiallyPicked={isPartiallyPicked}
                 isFullyPicked={isFullyPicked}
+                onPrintInvoice={handlePrintInvoice}
+                onPrintPackingSlip={handlePrintPackingSlip}
                 onStartPick={(order) => { setSelectedOrder(order); setShowPickModal(true); }}
                 onForcePack={async (order) => {
                   await supabase.from('orders').update({
@@ -688,6 +767,7 @@ function NotPrintedTable({
   displayId,
   getAddress,
   onPrintInvoice,
+  onPrintPackingSlip,
   onMarkPrinted,
   onMarkProcessing,
   isWarehouseRole,
@@ -697,6 +777,7 @@ function NotPrintedTable({
   displayId: (o: Order) => string;
   getAddress: (o: Order) => string;
   onPrintInvoice: (o: Order) => void;
+  onPrintPackingSlip: (o: Order) => void;
   onMarkPrinted: (id: string) => void;
   onMarkProcessing: (id: string) => void;
   isWarehouseRole: boolean;
@@ -747,7 +828,7 @@ function NotPrintedTable({
                     <FileText className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => onPrintInvoice(order)}
+                    onClick={() => onPrintPackingSlip(order)}
                     title="Print Packing Slip"
                     className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
                   >
@@ -785,6 +866,8 @@ function PrintedTable({
   displayId,
   isPartiallyPicked,
   isFullyPicked,
+  onPrintInvoice,
+  onPrintPackingSlip,
   onStartPick,
   onForcePack,
   onMarkProcessing,
@@ -795,6 +878,8 @@ function PrintedTable({
   displayId: (o: Order) => string;
   isPartiallyPicked: (o: Order) => boolean;
   isFullyPicked: (o: Order) => boolean;
+  onPrintInvoice: (o: Order) => void;
+  onPrintPackingSlip: (o: Order) => void;
   onStartPick: (o: Order) => void;
   onForcePack: (o: Order) => void;
   onMarkProcessing: (id: string) => void;
@@ -855,6 +940,20 @@ function PrintedTable({
                 </td>
                 <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => onPrintInvoice(order)}
+                      title="Print Invoice"
+                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+                    >
+                      <FileText className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => onPrintPackingSlip(order)}
+                      title="Print Packing Slip"
+                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+                    >
+                      <Printer className="h-4 w-4" />
+                    </button>
                     {isWarehouseRole && (
                       <button
                         onClick={() => onMarkProcessing(order.id)}

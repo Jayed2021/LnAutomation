@@ -82,6 +82,8 @@ export interface OrderCourierInfo {
   delivery_charge: number;
   cod_charge: number;
   settlement_source: 'courier_api' | 'invoice_upload' | 'manual' | null;
+  total_receivable_modified_after_ship: boolean;
+  total_receivable_ship_note: string | null;
 }
 
 export interface OrderPrescription {

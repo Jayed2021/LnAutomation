@@ -53,7 +53,12 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
     setEditing(true);
   };
 
+  const isNonCod = edit.payment_method !== 'COD';
+  const referenceRequired = isNonCod && !edit.payment_reference.trim();
+  const canSave = !referenceRequired;
+
   const handleSave = async () => {
+    if (!canSave) return;
     setSaving(true);
     try {
       await supabase.from('customers').update({
@@ -106,8 +111,8 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
             </button>
             <button
               onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors"
+              disabled={saving || !canSave}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-xs font-medium transition-colors"
             >
               <Save className="w-3.5 h-3.5" />
               {saving ? 'Saving...' : 'Save'}
@@ -190,12 +195,28 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
             )}
         </Field>
 
-        {(edit.payment_method !== 'COD' || editing) && (
-          <Field label="Payment Reference">
+        {(order.payment_method !== 'COD' || editing) && (
+          <div>
+            <div className="text-xs font-medium text-gray-500 mb-1">
+              Payment Reference
+              {editing && isNonCod && <span className="text-red-500 ml-1">*</span>}
+            </div>
             {editing
-              ? <input value={edit.payment_reference} onChange={e => setEdit(p => ({ ...p, payment_reference: e.target.value }))} className={inputCls} placeholder="Ref / TxID" />
+              ? (
+                <>
+                  <input
+                    value={edit.payment_reference}
+                    onChange={e => setEdit(p => ({ ...p, payment_reference: e.target.value }))}
+                    className={`${inputCls} ${referenceRequired ? 'border-red-400 focus:ring-red-400' : ''}`}
+                    placeholder="Transaction ID / Reference No."
+                  />
+                  {referenceRequired && (
+                    <p className="text-xs text-red-600 mt-1">Payment reference is required for non-COD payment methods.</p>
+                  )}
+                </>
+              )
               : <div className="text-sm text-gray-900">{order.payment_reference || '—'}</div>}
-          </Field>
+          </div>
         )}
 
         {order.customer_note && (

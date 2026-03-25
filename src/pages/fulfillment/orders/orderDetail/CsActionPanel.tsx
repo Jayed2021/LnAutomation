@@ -17,6 +17,7 @@ interface Props {
 interface CancellationReason {
   id: string;
   reason_text: string;
+  cancellation_type: string;
 }
 
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
@@ -101,7 +102,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   });
 
   useEffect(() => {
-    supabase.from('cancellation_reasons').select('id, reason_text').eq('is_active', true).order('sort_order').then(({ data }) => {
+    supabase.from('cancellation_reasons').select('id, reason_text, cancellation_type').eq('is_active', true).order('sort_order').then(({ data }) => {
       setCancellationReasons(data ?? []);
     });
   }, []);
@@ -642,7 +643,12 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
                 <div className="text-xs font-medium text-red-800 mb-1">Cancellation Reason *</div>
                 <select value={form.cancellation_reason_id} onChange={e => setForm(p => ({ ...p, cancellation_reason_id: e.target.value }))} className={inputCls}>
                   <option value="">Select a reason...</option>
-                  {cancellationReasons.map(r => <option key={r.id} value={r.id}>{r.reason_text}</option>)}
+                  {cancellationReasons
+                    .filter(r => {
+                      const type = selectedAction === 'cancel_after_dispatch' ? 'cad' : 'cbd';
+                      return r.cancellation_type === type || r.cancellation_type === 'both';
+                    })
+                    .map(r => <option key={r.id} value={r.id}>{r.reason_text}</option>)}
                 </select>
               </div>
             </div>

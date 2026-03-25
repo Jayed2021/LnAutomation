@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Trash2, AlertTriangle, X } from 'lucide-react';
-import ReactDOM from 'react-dom/client';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { supabase } from '../../../../lib/supabase';
 import { useAuth } from '../../../../contexts/AuthContext';
 import {
@@ -86,22 +86,12 @@ export default function OrderDetail() {
   }, [load]);
 
   const printContent = (content: React.ReactElement) => {
+    const html = renderToStaticMarkup(content);
     const printWindow = window.open('', '_blank', 'width=900,height=750');
     if (!printWindow) return;
-    printWindow.document.write(`
-      <!DOCTYPE html><html><head>
-      <meta charset="UTF-8">
-      <title>Print</title>
-      <style>
-        @page { margin: 0.5cm; }
-        @media print { html, body { margin: 0; padding: 0; } }
-      </style>
-      </head><body><div id="root"></div></body></html>
-    `);
+    printWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Print</title></head><body>${html}</body></html>`);
     printWindow.document.close();
-    const root = ReactDOM.createRoot(printWindow.document.getElementById('root')!);
-    root.render(content);
-    setTimeout(() => { printWindow.print(); }, 800);
+    setTimeout(() => { printWindow.print(); }, 400);
   };
 
   const handlePrintInvoice = () => {

@@ -94,12 +94,10 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           .from('inventory_lots')
           .select('id, location_id, received_quantity, remaining_quantity')
           .eq('barcode', item.sku)
-          .eq('location_id', allLocations.map(l => l.id))
-          .order('received_quantity', { ascending: false });
+          .in('location_id', allLocations.map(l => l.id))
+          .order('remaining_quantity', { ascending: false });
 
-        const storageLots = (lots ?? []).filter(l =>
-          allLocations.some(loc => loc.id === l.location_id)
-        );
+        const storageLots = lots ?? [];
 
         if (storageLots.length > 0) {
           const locationTotals: Record<string, { received: number; remaining: number; lotId: string }> = {};
@@ -115,9 +113,14 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
             }
           }
 
+          let topRemaining = -1;
           let topReceived = -1;
           for (const [locId, totals] of Object.entries(locationTotals)) {
-            if (totals.received > topReceived) {
+            if (
+              totals.remaining > topRemaining ||
+              (totals.remaining === topRemaining && totals.received > topReceived)
+            ) {
+              topRemaining = totals.remaining;
               topReceived = totals.received;
               bestLocationId = locId;
               bestLotId = totals.remaining > 0 ? totals.lotId : null;

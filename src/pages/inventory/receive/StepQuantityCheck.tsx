@@ -227,9 +227,14 @@ export default function StepQuantityCheck({
                         className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent max-w-[200px]"
                       >
                         {locations.map(l => (
-                          <option key={l.id} value={l.id}>{l.code} — {l.name}</option>
+                          <option key={l.id} value={l.id}>
+                            {l.id === line.recommended_location_id ? '★ ' : ''}{l.code} — {l.name}
+                          </option>
                         ))}
                       </select>
+                      {line.recommended_location_id && line.location_id === line.recommended_location_id && (
+                        <p className="text-xs text-emerald-600 mt-1">Recommended based on stock history</p>
+                      )}
                     </td>
                   </tr>
                 );

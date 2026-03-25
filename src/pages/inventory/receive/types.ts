@@ -44,6 +44,7 @@ export interface ReceiptLine {
   qty_damaged: number;
   landed_cost_per_unit: number;
   location_id: string;
+  recommended_location_id?: string;
   barcode: string;
   line_notes: string;
   lot_id?: string | null;

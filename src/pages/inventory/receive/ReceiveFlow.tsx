@@ -41,6 +41,47 @@ async function resolveProductIds(lines: ReceiptLine[]): Promise<ReceiptLine[]> {
   return lines.map(l => ({ ...l, product_id: map[l.sku] || null }));
 }
 
+async function applyLocationRecommendations(lines: ReceiptLine[], locationIds: string[]): Promise<ReceiptLine[]> {
+  if (!locationIds.length) return lines;
+  const skus = [...new Set(lines.map(l => l.sku))];
+  const { data: lots } = await supabase
+    .from('inventory_lots')
+    .select('barcode, location_id, received_quantity, remaining_quantity')
+    .in('barcode', skus)
+    .in('location_id', locationIds);
+
+  const bestLocation: Record<string, string> = {};
+  if (lots && lots.length > 0) {
+    const totals: Record<string, Record<string, { remaining: number; received: number }>> = {};
+    for (const lot of lots) {
+      if (!lot.barcode || !lot.location_id) continue;
+      if (!totals[lot.barcode]) totals[lot.barcode] = {};
+      if (!totals[lot.barcode][lot.location_id]) totals[lot.barcode][lot.location_id] = { remaining: 0, received: 0 };
+      totals[lot.barcode][lot.location_id].remaining += lot.remaining_quantity ?? 0;
+      totals[lot.barcode][lot.location_id].received += lot.received_quantity ?? 0;
+    }
+    for (const [sku, locMap] of Object.entries(totals)) {
+      let topRemaining = -1;
+      let topReceived = -1;
+      let best = '';
+      for (const [locId, t] of Object.entries(locMap)) {
+        if (t.remaining > topRemaining || (t.remaining === topRemaining && t.received > topReceived)) {
+          topRemaining = t.remaining;
+          topReceived = t.received;
+          best = locId;
+        }
+      }
+      if (best) bestLocation[sku] = best;
+    }
+  }
+
+  return lines.map(l => {
+    const rec = bestLocation[l.sku];
+    if (rec) return { ...l, location_id: rec, recommended_location_id: rec };
+    return l;
+  });
+}
+
 function buildShipmentName(po: POForReceiving): string {
   const existing = po.activeSessions.length;
   const baseName = po.po_shipment_name || po.po_number;
@@ -74,6 +115,7 @@ export default function ReceiveFlow({ po, locations, resumeSessionId, onBack, on
       const shipmentName = buildShipmentName(po);
       let lines = buildDefaultLines(po, shipmentName, defaultLocationId);
       lines = await resolveProductIds(lines);
+      lines = await applyLocationRecommendations(lines, locations.map(l => l.id));
 
       setSession({
         po_id: po.id,

@@ -202,6 +202,13 @@ export default function Returns() {
 
   const handleQcAction = async (returnId: string, action: 'qc_passed' | 'qc_failed') => {
     await supabase.from('returns').update({ status: action }).eq('id', returnId);
+    if (action === 'qc_passed') {
+      await supabase
+        .from('return_items')
+        .update({ qc_status: 'passed' })
+        .eq('return_id', returnId)
+        .eq('qc_status', 'pending');
+    }
     fetchReturns();
   };
 

@@ -6,6 +6,7 @@ interface ReturnItemData {
   id: string;
   sku: string;
   quantity: number;
+  qc_status: string | null;
   product_id: string;
   order_item_id: string | null;
   order_item: { product_name: string } | null;
@@ -30,6 +31,8 @@ interface ItemRestockState {
   item: ReturnItemData;
   selectedLocationId: string;
   lotId: string | null;
+  recommendedLocationId: string;
+  recommendedStockQty: number;
 }
 
 interface Props {
@@ -45,7 +48,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
 
-  const items = (returnData.items ?? []).filter(i => !i.sku.startsWith('LN_'));
+  const items = (returnData.items ?? []).filter(i => i.qc_status !== 'failed');
 
   useEffect(() => {
     loadData();
@@ -69,18 +72,38 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
       for (const item of items) {
         let bestLocationId = '';
         let bestLotId: string | null = null;
+        let bestStockQty = 0;
 
         if (item.product_id) {
           const { data: lots } = await supabase
             .from('inventory_lots')
-            .select('id, location_id, remaining_quantity')
+            .select('id, location_id, received_quantity, remaining_quantity')
             .eq('product_id', item.product_id)
-            .gt('remaining_quantity', 0)
-            .order('remaining_quantity', { ascending: false });
+            .order('received_quantity', { ascending: false });
 
           if (lots && lots.length > 0) {
-            bestLocationId = lots[0].location_id;
-            bestLotId = lots[0].id;
+            const locationTotals: Record<string, { received: number; remaining: number; lotId: string }> = {};
+            for (const lot of lots) {
+              if (!lot.location_id) continue;
+              if (!locationTotals[lot.location_id]) {
+                locationTotals[lot.location_id] = { received: 0, remaining: 0, lotId: lot.id };
+              }
+              locationTotals[lot.location_id].received += lot.received_quantity ?? 0;
+              locationTotals[lot.location_id].remaining += lot.remaining_quantity ?? 0;
+              if ((lot.remaining_quantity ?? 0) > 0) {
+                locationTotals[lot.location_id].lotId = lot.id;
+              }
+            }
+
+            let topReceived = -1;
+            for (const [locId, totals] of Object.entries(locationTotals)) {
+              if (totals.received > topReceived) {
+                topReceived = totals.received;
+                bestLocationId = locId;
+                bestLotId = totals.remaining > 0 ? totals.lotId : null;
+                bestStockQty = totals.remaining;
+              }
+            }
           }
         }
 
@@ -92,6 +115,8 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           item,
           selectedLocationId: bestLocationId,
           lotId: bestLotId,
+          recommendedLocationId: bestLocationId,
+          recommendedStockQty: bestStockQty,
         });
       }
 
@@ -125,6 +150,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     setItemStates(prev => prev.map((s, i) =>
       i === index ? { ...s, selectedLocationId: locationId, lotId } : s
     ));
+
   };
 
   const handleConfirmRestock = async () => {
@@ -238,36 +264,44 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {itemStates.map((state, idx) => (
-                    <tr key={state.item.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3.5">
-                        <div className="font-medium text-gray-900 text-sm">{getItemName(state.item)}</div>
-                        <div className="text-xs text-gray-400 mt-0.5">
-                          SKU: {state.item.sku} &nbsp;|&nbsp; Qty: {state.item.quantity}
-                        </div>
-                        {state.lotId && (
-                          <div className="flex items-center gap-1 mt-1">
-                            <Check className="w-3 h-3 text-emerald-500" />
-                            <span className="text-xs text-emerald-600">Existing lot found at this location</span>
+                  {itemStates.map((state, idx) => {
+                    const isRecommended = state.selectedLocationId === state.recommendedLocationId && state.recommendedLocationId !== '';
+                    return (
+                      <tr key={state.item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3.5">
+                          <div className="font-medium text-gray-900 text-sm">{getItemName(state.item)}</div>
+                          <div className="text-xs text-gray-400 mt-0.5">
+                            SKU: {state.item.sku} &nbsp;|&nbsp; Qty: {state.item.quantity}
                           </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <select
-                          value={state.selectedLocationId}
-                          onChange={e => handleLocationChange(idx, e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-white"
-                        >
-                          <option value="">Select location...</option>
-                          {locations.map(loc => (
-                            <option key={loc.id} value={loc.id}>
-                              {loc.code} — {loc.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
+                          {state.lotId && isRecommended && (
+                            <div className="flex items-center gap-1 mt-1">
+                              <Check className="w-3 h-3 text-emerald-500" />
+                              <span className="text-xs text-emerald-600">
+                                Currently stocked here ({state.recommendedStockQty} units)
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <select
+                            value={state.selectedLocationId}
+                            onChange={e => handleLocationChange(idx, e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-white"
+                          >
+                            <option value="">Select location...</option>
+                            {locations.map(loc => (
+                              <option key={loc.id} value={loc.id}>
+                                {loc.id === state.recommendedLocationId ? '★ ' : ''}{loc.code} — {loc.name}
+                              </option>
+                            ))}
+                          </select>
+                          {isRecommended && (
+                            <p className="text-xs text-emerald-600 mt-1">Recommended based on stock history</p>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

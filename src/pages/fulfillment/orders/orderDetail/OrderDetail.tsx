@@ -84,24 +84,28 @@ export default function OrderDetail() {
     fetchStoreProfile().then(sp => setStoreProfile(sp));
   }, [load]);
 
-  const openPrintWindow = (html: string) => {
-    const printWindow = window.open('', '_blank', 'width=900,height=750');
-    if (!printWindow) return;
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    setTimeout(() => { printWindow.print(); }, 400);
+  const openPrintTab = (html: string) => {
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const tab = window.open(url, '_blank');
+    if (tab) {
+      tab.addEventListener('load', () => {
+        URL.revokeObjectURL(url);
+      }, { once: true });
+    } else {
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handlePrintInvoice = () => {
     if (!order) return;
-    openPrintWindow(buildInvoiceHtml(order, items, prescriptions, storeProfile));
+    openPrintTab(buildInvoiceHtml(order, items, prescriptions, storeProfile));
   };
 
   const handlePrintPackingSlip = async () => {
     if (!order) return;
     const fifoLots = await fetchFifoLotsForItems(items);
-    openPrintWindow(buildPackingSlipHtml(order, items, packagingItems, fifoLots, storeProfile));
+    openPrintTab(buildPackingSlipHtml(order, items, packagingItems, fifoLots, storeProfile));
   };
 
   const handleDeleteOrder = async () => {

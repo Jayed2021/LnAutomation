@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, RotateCcw, MapPin, Package, AlertTriangle, Check } from 'lucide-react';
+import { X, RotateCcw, MapPin, Package, AlertTriangle, Check, ArrowRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface ReturnItemData {
@@ -7,6 +7,8 @@ interface ReturnItemData {
   sku: string;
   quantity: number;
   qc_status: string | null;
+  receive_status: string;
+  hold_location_id: string | null;
   product_id: string;
   order_item_id: string | null;
   order_item: { product_name: string } | null;
@@ -25,14 +27,16 @@ interface WarehouseLocation {
   id: string;
   code: string;
   name: string;
+  location_type: string;
 }
 
 interface ItemRestockState {
   item: ReturnItemData;
   selectedLocationId: string;
-  lotId: string | null;
+  targetLotId: string | null;
   recommendedLocationId: string;
   recommendedStockQty: number;
+  holdLocationCode: string;
 }
 
 interface Props {
@@ -48,7 +52,9 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
 
-  const items = (returnData.items ?? []).filter(i => i.qc_status !== 'failed');
+  const items = (returnData.items ?? []).filter(
+    i => i.qc_status === 'passed' && i.receive_status === 'received'
+  );
 
   useEffect(() => {
     loadData();
@@ -60,12 +66,22 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
 
       const { data: locs } = await supabase
         .from('warehouse_locations')
-        .select('id, code, name')
+        .select('id, code, name, location_type')
         .eq('is_active', true)
+        .eq('location_type', 'storage')
         .order('code');
 
       const allLocations: WarehouseLocation[] = locs || [];
       setLocations(allLocations);
+
+      const { data: holdLocations } = await supabase
+        .from('warehouse_locations')
+        .select('id, code')
+        .eq('location_type', 'return_hold')
+        .eq('is_active', true);
+
+      const holdLocMap: Record<string, string> = {};
+      for (const h of holdLocations ?? []) holdLocMap[h.id] = h.code;
 
       const states: ItemRestockState[] = [];
 
@@ -76,13 +92,18 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
 
         const { data: lots } = await supabase
           .from('inventory_lots')
-          .select('id, location_id, received_quantity, remaining_quantity, product_id')
+          .select('id, location_id, received_quantity, remaining_quantity')
           .eq('barcode', item.sku)
+          .eq('location_id', allLocations.map(l => l.id))
           .order('received_quantity', { ascending: false });
 
-        if (lots && lots.length > 0) {
+        const storageLots = (lots ?? []).filter(l =>
+          allLocations.some(loc => loc.id === l.location_id)
+        );
+
+        if (storageLots.length > 0) {
           const locationTotals: Record<string, { received: number; remaining: number; lotId: string }> = {};
-          for (const lot of lots) {
+          for (const lot of storageLots) {
             if (!lot.location_id) continue;
             if (!locationTotals[lot.location_id]) {
               locationTotals[lot.location_id] = { received: 0, remaining: 0, lotId: lot.id };
@@ -109,12 +130,15 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           bestLocationId = allLocations[0].id;
         }
 
+        const holdCode = item.hold_location_id ? (holdLocMap[item.hold_location_id] ?? 'Return Hold') : 'Return Hold';
+
         states.push({
           item,
           selectedLocationId: bestLocationId,
-          lotId: bestLotId,
+          targetLotId: bestLotId,
           recommendedLocationId: bestLocationId,
           recommendedStockQty: bestStockQty,
+          holdLocationCode: holdCode,
         });
       }
 
@@ -146,9 +170,8 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     }
 
     setItemStates(prev => prev.map((s, i) =>
-      i === index ? { ...s, selectedLocationId: locationId, lotId } : s
+      i === index ? { ...s, selectedLocationId: locationId, targetLotId: lotId } : s
     ));
-
   };
 
   const handleConfirmRestock = async () => {
@@ -159,46 +182,55 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
       for (const state of itemStates) {
         if (!state.selectedLocationId) continue;
 
-        let resolvedLotId = state.lotId;
-        let resolvedProductId = state.item.product_id;
+        const item = state.item;
+        const barcode = item.sku;
+        const productId = item.product_id;
+        const holdLocationId = item.hold_location_id;
 
-        if (state.lotId) {
-          const { data: lot } = await supabase
+        if (holdLocationId) {
+          const { data: holdLot } = await supabase
             .from('inventory_lots')
-            .select('remaining_quantity, product_id')
-            .eq('id', state.lotId)
+            .select('id, remaining_quantity')
+            .eq('barcode', barcode)
+            .eq('location_id', holdLocationId)
             .maybeSingle();
 
-          if (lot) {
-            resolvedProductId = lot.product_id ?? resolvedProductId;
+          if (holdLot && holdLot.remaining_quantity > 0) {
+            const deduct = Math.min(item.quantity, holdLot.remaining_quantity);
             await supabase
               .from('inventory_lots')
-              .update({ remaining_quantity: lot.remaining_quantity + state.item.quantity })
-              .eq('id', state.lotId);
+              .update({ remaining_quantity: holdLot.remaining_quantity - deduct })
+              .eq('id', holdLot.id);
           }
-        } else {
-          const { data: existingLot } = await supabase
+        }
+
+        let resolvedLotId: string | null = null;
+
+        const { data: existingLot } = await supabase
+          .from('inventory_lots')
+          .select('id, remaining_quantity')
+          .eq('barcode', barcode)
+          .eq('location_id', state.selectedLocationId)
+          .maybeSingle();
+
+        if (existingLot) {
+          resolvedLotId = existingLot.id;
+          await supabase
             .from('inventory_lots')
-            .select('id, product_id')
-            .eq('barcode', state.item.sku)
-            .limit(1)
-            .maybeSingle();
-
-          if (existingLot) {
-            resolvedProductId = existingLot.product_id ?? resolvedProductId;
-          }
-
-          const lotNumber = `RET-${returnData.return_number}-${state.item.sku}`;
+            .update({ remaining_quantity: existingLot.remaining_quantity + item.quantity })
+            .eq('id', existingLot.id);
+        } else {
+          const lotNumber = `RET-STOCK-${returnData.return_number}-${barcode}`;
           const { data: newLot } = await supabase
             .from('inventory_lots')
             .insert({
               lot_number: lotNumber,
-              barcode: state.item.sku,
-              product_id: resolvedProductId,
+              barcode,
+              product_id: productId,
               location_id: state.selectedLocationId,
               received_date: new Date().toISOString().split('T')[0],
-              received_quantity: state.item.quantity,
-              remaining_quantity: state.item.quantity,
+              received_quantity: item.quantity,
+              remaining_quantity: item.quantity,
               landed_cost_per_unit: 0,
             })
             .select('id')
@@ -209,17 +241,23 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           }
         }
 
-        if (resolvedProductId && resolvedLotId) {
+        if (resolvedLotId) {
           await supabase.from('stock_movements').insert({
             movement_type: 'return_restock',
-            product_id: resolvedProductId,
+            product_id: productId,
             lot_id: resolvedLotId,
+            from_location_id: holdLocationId,
             to_location_id: state.selectedLocationId,
-            quantity: state.item.quantity,
+            quantity: item.quantity,
             reference_type: 'return',
             reference_id: returnData.id,
           });
         }
+
+        await supabase
+          .from('return_items')
+          .update({ hold_location_id: state.selectedLocationId })
+          .eq('id', item.id);
       }
 
       await supabase
@@ -258,7 +296,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                 Restock Return — Order {orderLabel}
               </h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Select the restock location for each item. The default is based on where the product is currently stocked.
+                Select the destination for each item. Stock will transfer from Return Hold to the chosen location.
               </p>
             </div>
           </div>
@@ -276,7 +314,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           ) : items.length === 0 ? (
             <div className="flex items-center gap-2 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              No restockable items found in this return.
+              No QC-passed items found to restock.
             </div>
           ) : (
             <div className="rounded-xl border border-gray-200 overflow-hidden">
@@ -292,7 +330,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                     <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                       <div className="flex items-center gap-1.5">
                         <MapPin className="w-3.5 h-3.5" />
-                        Restock Location
+                        Transfer To
                       </div>
                     </th>
                   </tr>
@@ -307,11 +345,19 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                           <div className="text-xs text-gray-400 mt-0.5">
                             SKU: {state.item.sku} &nbsp;|&nbsp; Qty: {state.item.quantity}
                           </div>
-                          {state.lotId && isRecommended && (
+                          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-blue-600">
+                            <MapPin className="w-3 h-3" />
+                            {state.holdLocationCode}
+                            <ArrowRight className="w-3 h-3 text-gray-400" />
+                            <span className="text-emerald-600 font-medium">
+                              {locations.find(l => l.id === state.selectedLocationId)?.code ?? '...'}
+                            </span>
+                          </div>
+                          {state.targetLotId && isRecommended && (
                             <div className="flex items-center gap-1 mt-1">
                               <Check className="w-3 h-3 text-emerald-500" />
                               <span className="text-xs text-emerald-600">
-                                Currently stocked here ({state.recommendedStockQty} units)
+                                Already stocked here ({state.recommendedStockQty} units)
                               </span>
                             </div>
                           )}
@@ -329,7 +375,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                               </option>
                             ))}
                           </select>
-                          {isRecommended && (
+                          {isRecommended && state.recommendedLocationId && (
                             <p className="text-xs text-emerald-600 mt-1">Recommended based on stock history</p>
                           )}
                         </td>

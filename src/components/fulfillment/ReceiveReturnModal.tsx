@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Download, ScanLine, Camera, Check, Package } from 'lucide-react';
+import { X, Download, ScanLine, Camera, Check, Package, AlertTriangle, XCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { downloadSingleBarcode } from '../inventory/barcodePrint';
 
@@ -29,10 +29,18 @@ interface Props {
   onReceived: () => void;
 }
 
+type ItemAction = 'received' | 'lost' | null;
+
+interface LostReasonState {
+  [itemId: string]: string;
+}
+
 export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
   const items = returnData.items ?? [];
 
-  const [scannedItems, setScannedItems] = useState<Set<string>>(new Set());
+  const [itemActions, setItemActions] = useState<Record<string, ItemAction>>({});
+  const [lostReasons, setLostReasons] = useState<LostReasonState>({});
+  const [lostItemId, setLostItemId] = useState<string | null>(null);
   const [scanInput, setScanInput] = useState('');
   const [scanError, setScanError] = useState('');
   const [currentItemIndex, setCurrentItemIndex] = useState(0);
@@ -40,9 +48,12 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
   const scanRef = useRef<HTMLInputElement>(null);
 
   const totalItems = items.length;
-  const receivedCount = scannedItems.size;
-  const allScanned = totalItems > 0 && receivedCount === totalItems;
+  const actedCount = Object.keys(itemActions).length;
+  const receivedIds = new Set(Object.entries(itemActions).filter(([, v]) => v === 'received').map(([k]) => k));
+  const lostIds = new Set(Object.entries(itemActions).filter(([, v]) => v === 'lost').map(([k]) => k));
+  const allActed = totalItems > 0 && actedCount === totalItems;
   const currentItem = items[currentItemIndex] ?? null;
+  const canComplete = totalItems === 0 || (actedCount > 0 && receivedIds.size > 0);
 
   useEffect(() => {
     scanRef.current?.focus();
@@ -53,7 +64,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
 
   const handleScan = (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed || !currentItem || scannedItems.has(currentItem.id)) return;
+    if (!trimmed || !currentItem || itemActions[currentItem.id]) return;
     setScanError('');
 
     const expectedBarcode = currentItem.expected_barcode ?? currentItem.sku;
@@ -64,21 +75,41 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
       return;
     }
 
-    const next = new Set(scannedItems);
-    next.add(currentItem.id);
-    setScannedItems(next);
+    setItemActions(prev => ({ ...prev, [currentItem.id]: 'received' }));
     setScanInput('');
 
-    const nextUnscanned = items.findIndex((item, idx) => idx !== currentItemIndex && !next.has(item.id));
-    if (nextUnscanned !== -1) {
-      setCurrentItemIndex(nextUnscanned);
+    const nextUnacted = items.findIndex((item, idx) => idx !== currentItemIndex && !itemActions[item.id]);
+    if (nextUnacted !== -1) {
+      setCurrentItemIndex(nextUnacted);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleScan(scanInput);
-    }
+    if (e.key === 'Enter') handleScan(scanInput);
+  };
+
+  const handleMarkLost = (itemId: string) => {
+    setLostItemId(itemId);
+  };
+
+  const confirmMarkLost = (itemId: string) => {
+    const reason = lostReasons[itemId] || 'Not delivered by courier';
+    setItemActions(prev => ({ ...prev, [itemId]: 'lost' }));
+    setLostReasons(prev => ({ ...prev, [itemId]: reason }));
+    setLostItemId(null);
+
+    const nextUnacted = items.findIndex(item => item.id !== itemId && !itemActions[item.id]);
+    if (nextUnacted !== -1) setCurrentItemIndex(nextUnacted);
+  };
+
+  const handleUndoAction = (itemId: string) => {
+    setItemActions(prev => {
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
+    const idx = items.findIndex(i => i.id === itemId);
+    if (idx !== -1) setCurrentItemIndex(idx);
   };
 
   const handleDownloadBarcode = (item: ReturnItemData) => {
@@ -91,10 +122,114 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
     try {
       setProcessing(true);
 
+      const { data: returnHoldLoc } = await supabase
+        .from('warehouse_locations')
+        .select('id')
+        .eq('location_type', 'return_hold')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
+      const returnHoldId = returnHoldLoc?.id ?? null;
+
+      for (const item of items) {
+        const action = itemActions[item.id];
+        if (!action) continue;
+
+        if (action === 'received') {
+          await supabase
+            .from('return_items')
+            .update({
+              receive_status: 'received',
+              hold_location_id: returnHoldId,
+            })
+            .eq('id', item.id);
+
+          if (returnHoldId) {
+            const productId = item.product_id;
+            const barcode = item.expected_barcode || item.sku;
+
+            const { data: existingLot } = await supabase
+              .from('inventory_lots')
+              .select('id, remaining_quantity')
+              .eq('barcode', barcode)
+              .eq('location_id', returnHoldId)
+              .maybeSingle();
+
+            if (existingLot) {
+              await supabase
+                .from('inventory_lots')
+                .update({ remaining_quantity: existingLot.remaining_quantity + item.quantity })
+                .eq('id', existingLot.id);
+
+              await supabase.from('stock_movements').insert({
+                movement_type: 'return_receive',
+                product_id: productId,
+                lot_id: existingLot.id,
+                to_location_id: returnHoldId,
+                quantity: item.quantity,
+                reference_type: 'return',
+                reference_id: returnData.id,
+              });
+            } else {
+              const lotNumber = `RET-HOLD-${returnData.return_number}-${item.sku}`;
+              const { data: newLot } = await supabase
+                .from('inventory_lots')
+                .insert({
+                  lot_number: lotNumber,
+                  barcode,
+                  product_id: productId,
+                  location_id: returnHoldId,
+                  received_date: new Date().toISOString().split('T')[0],
+                  received_quantity: item.quantity,
+                  remaining_quantity: item.quantity,
+                  landed_cost_per_unit: 0,
+                })
+                .select('id')
+                .single();
+
+              if (newLot) {
+                await supabase.from('stock_movements').insert({
+                  movement_type: 'return_receive',
+                  product_id: productId,
+                  lot_id: newLot.id,
+                  to_location_id: returnHoldId,
+                  quantity: item.quantity,
+                  reference_type: 'return',
+                  reference_id: returnData.id,
+                });
+              }
+            }
+          }
+        } else if (action === 'lost') {
+          const lostReason = lostReasons[item.id] || 'Not delivered by courier';
+          await supabase
+            .from('return_items')
+            .update({
+              receive_status: 'lost',
+              lost_reason: lostReason,
+              lost_at: new Date().toISOString(),
+            })
+            .eq('id', item.id);
+        }
+      }
+
+      const hasReceived = receivedIds.size > 0;
+      const allLost = lostIds.size === totalItems;
+      const newStatus = allLost ? 'expected' : 'received';
+
       await supabase
         .from('returns')
-        .update({ status: 'received', updated_at: new Date().toISOString() })
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', returnData.id);
+
+      if (!hasReceived && allLost) {
+      } else {
+        await supabase
+          .from('returns')
+          .update({ status: 'received', updated_at: new Date().toISOString() })
+          .eq('id', returnData.id);
+      }
 
       onReceived();
     } catch (err) {
@@ -108,7 +243,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
     ? `#${returnData.order.woo_order_id}`
     : returnData.order?.order_number ?? returnData.return_number;
 
-  const progressPct = totalItems > 0 ? (receivedCount / totalItems) * 100 : 0;
+  const progressPct = totalItems > 0 ? (actedCount / totalItems) * 100 : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -120,10 +255,10 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
             </div>
             <div>
               <h2 className="font-semibold text-gray-900 text-base">
-                Receive Return Items for Order {orderLabel}
+                Receive Return Items — Order {orderLabel}
               </h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Scan each returned item's barcode to confirm receipt. The barcode shown is the exact one that was dispatched with this order.
+                Scan each item to confirm receipt. Items will be placed in the Return Hold location.
               </p>
             </div>
           </div>
@@ -136,12 +271,20 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
           <div className="px-5 py-3 border-b border-gray-100">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-medium text-gray-600">Progress</span>
-              <span className="text-xs font-semibold text-blue-600">{receivedCount} / {totalItems} items received</span>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="font-semibold text-blue-600">{receivedIds.size} received</span>
+                {lostIds.size > 0 && <span className="font-semibold text-red-500">{lostIds.size} lost</span>}
+                <span className="text-gray-400">{actedCount}/{totalItems}</span>
+              </div>
             </div>
-            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden flex">
               <div
                 className="h-full bg-blue-500 rounded-full transition-all duration-300"
-                style={{ width: `${progressPct}%` }}
+                style={{ width: `${(receivedIds.size / totalItems) * 100}%` }}
+              />
+              <div
+                className="h-full bg-red-400 transition-all duration-300"
+                style={{ width: `${(lostIds.size / totalItems) * 100}%` }}
               />
             </div>
           </div>
@@ -155,47 +298,102 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
               </div>
               <div className="space-y-2">
                 {items.map((item, idx) => {
-                  const isScanned = scannedItems.has(item.id);
-                  const isCurrent = idx === currentItemIndex;
+                  const action = itemActions[item.id];
+                  const isReceived = action === 'received';
+                  const isLost = action === 'lost';
+                  const isCurrent = idx === currentItemIndex && !action;
                   return (
-                    <div
-                      key={item.id}
-                      onClick={() => !isScanned && setCurrentItemIndex(idx)}
-                      className={`flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all ${
-                        isScanned
-                          ? 'bg-green-50 border-green-200'
-                          : isCurrent
-                            ? 'bg-blue-50 border-blue-300 shadow-sm'
-                            : 'bg-white border-gray-200 hover:border-gray-300 cursor-pointer'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                          isScanned
-                            ? 'bg-green-500 text-white'
-                            : isCurrent
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-gray-200 text-gray-600'
-                        }`}>
-                          {isScanned ? <Check className="w-3 h-3" /> : idx + 1}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-medium text-gray-900 text-sm truncate">{getItemName(item)}</div>
-                          <div className="text-xs text-gray-500">
-                            SKU: {item.sku} | Qty: {item.quantity}
-                            {item.expected_barcode && (
-                              <> | <span className={isCurrent && !isScanned ? 'text-blue-600 font-medium' : ''}>Barcode: {item.expected_barcode}</span></>
-                            )}
+                    <div key={item.id}>
+                      <div
+                        onClick={() => !action && setCurrentItemIndex(idx)}
+                        className={`flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all ${
+                          isReceived
+                            ? 'bg-green-50 border-green-200'
+                            : isLost
+                              ? 'bg-red-50 border-red-200'
+                              : isCurrent
+                                ? 'bg-blue-50 border-blue-300 shadow-sm'
+                                : 'bg-white border-gray-200 hover:border-gray-300 cursor-pointer'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                            isReceived
+                              ? 'bg-green-500 text-white'
+                              : isLost
+                                ? 'bg-red-500 text-white'
+                                : isCurrent
+                                  ? 'bg-blue-600 text-white'
+                                  : 'bg-gray-200 text-gray-600'
+                          }`}>
+                            {isReceived ? <Check className="w-3 h-3" /> : isLost ? <XCircle className="w-3 h-3" /> : idx + 1}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-medium text-gray-900 text-sm truncate">{getItemName(item)}</div>
+                            <div className="text-xs text-gray-500">
+                              SKU: {item.sku} | Qty: {item.quantity}
+                              {isLost && lostReasons[item.id] && (
+                                <span className="text-red-500 ml-1">— {lostReasons[item.id]}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          {!action && (
+                            <button
+                              onClick={e => { e.stopPropagation(); handleMarkLost(item.id); }}
+                              title="Mark as lost"
+                              className="p-1.5 rounded-lg hover:bg-red-50 border border-transparent hover:border-red-200 text-gray-300 hover:text-red-500 transition-all"
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {action && (
+                            <button
+                              onClick={e => { e.stopPropagation(); handleUndoAction(item.id); }}
+                              title="Undo"
+                              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-all text-xs"
+                            >
+                              Undo
+                            </button>
+                          )}
+                          <button
+                            onClick={e => { e.stopPropagation(); handleDownloadBarcode(item); }}
+                            title="Download barcode"
+                            className="p-1.5 rounded-lg hover:bg-white border border-transparent hover:border-gray-200 text-gray-400 hover:text-gray-600 transition-all"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                      <button
-                        onClick={e => { e.stopPropagation(); handleDownloadBarcode(item); }}
-                        title="Download barcode"
-                        className="shrink-0 p-1.5 rounded-lg hover:bg-white border border-transparent hover:border-gray-200 text-gray-400 hover:text-gray-600 transition-all ml-2"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
+
+                      {lostItemId === item.id && (
+                        <div className="mt-1.5 p-3 bg-red-50 border border-red-200 rounded-lg">
+                          <div className="text-xs font-semibold text-red-700 mb-1.5">Mark as Lost — {getItemName(item)}</div>
+                          <input
+                            type="text"
+                            value={lostReasons[item.id] ?? 'Not delivered by courier'}
+                            onChange={e => setLostReasons(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            placeholder="Reason (e.g. Not delivered by courier)"
+                            className="w-full px-3 py-2 border border-red-200 rounded-lg text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-red-400 mb-2 bg-white"
+                            autoFocus
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => confirmMarkLost(item.id)}
+                              className="flex-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-lg transition-colors"
+                            >
+                              Confirm Lost
+                            </button>
+                            <button
+                              onClick={() => setLostItemId(null)}
+                              className="px-3 py-1.5 border border-red-200 text-red-600 text-xs font-medium rounded-lg hover:bg-white transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -209,7 +407,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
             </div>
           )}
 
-          {currentItem && !allScanned && !scannedItems.has(currentItem.id) && (
+          {currentItem && !itemActions[currentItem.id] && lostItemId !== currentItem.id && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
               <div className="text-xs font-semibold text-blue-700 mb-2.5 uppercase tracking-wide">
                 Current Item ({currentItemIndex + 1}/{totalItems})
@@ -241,7 +439,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
                   <div className="flex items-center gap-1.5 mb-1.5">
                     <Package className="w-3.5 h-3.5 text-amber-600" />
-                    <span className="text-xs font-semibold text-amber-700">Expected Barcode (From Dispatch)</span>
+                    <span className="text-xs font-semibold text-amber-700">Expected Barcode</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="font-mono font-bold text-amber-700 text-base">
@@ -252,12 +450,9 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-200 rounded-lg text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      Download Barcode
+                      Download
                     </button>
                   </div>
-                  <p className="text-xs text-amber-500 mt-1.5 italic">
-                    This is the exact barcode that was sent with this order. Download it if the product arrived without packaging.
-                  </p>
                 </div>
               )}
 
@@ -294,18 +489,26 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                 {scanError && (
                   <p className="text-xs text-red-600 mt-1.5">{scanError}</p>
                 )}
+                <button
+                  onClick={() => handleMarkLost(currentItem.id)}
+                  className="mt-2 text-xs text-red-500 hover:text-red-700 underline underline-offset-2 transition-colors"
+                >
+                  Item not received? Mark as lost
+                </button>
               </div>
             </div>
           )}
 
-          {allScanned && (
+          {allActed && receivedIds.size > 0 && (
             <div className="flex items-center gap-2.5 p-3.5 bg-green-50 border border-green-200 rounded-xl text-green-700">
               <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center shrink-0">
                 <Check className="w-4 h-4 text-white" />
               </div>
               <div>
-                <div className="font-semibold text-sm">All items confirmed</div>
-                <div className="text-xs text-green-600">You can now complete the receive process.</div>
+                <div className="font-semibold text-sm">All items processed</div>
+                <div className="text-xs text-green-600">
+                  {receivedIds.size} received, {lostIds.size} lost. Items will go to Return Hold location.
+                </div>
               </div>
             </div>
           )}
@@ -321,24 +524,18 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
           </button>
           <button
             onClick={handleCompleteReceive}
-            disabled={processing || (totalItems > 0 && !allScanned && receivedCount === 0)}
+            disabled={processing || !canComplete}
             className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-              allScanned || totalItems === 0
+              canComplete
                 ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                : receivedCount > 0
-                  ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
           >
             {processing
               ? 'Processing...'
-              : allScanned
-                ? `Complete Receive (${receivedCount}/${totalItems})`
-                : receivedCount > 0
-                  ? `Complete Receive (${receivedCount}/${totalItems} - Partial)`
-                  : totalItems === 0
-                    ? 'Mark as Received'
-                    : `Complete Receive (0/${totalItems})`
+              : totalItems === 0
+                ? 'Mark as Received'
+                : `Complete Receive (${receivedIds.size} received${lostIds.size > 0 ? `, ${lostIds.size} lost` : ''})`
             }
           </button>
         </div>

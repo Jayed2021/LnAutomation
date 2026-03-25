@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   PackageX, Search, Package, PackageCheck, PackageOpen,
-  ClipboardList, RotateCcw, Wrench, ScanLine
+  ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ReceiveReturnModal } from '../../components/fulfillment/ReceiveReturnModal';
 import { RestockModal } from '../../components/fulfillment/RestockModal';
+import { QCReviewModal } from '../../components/fulfillment/QCReviewModal';
 import { STATUS_CONFIG } from './orders/types';
 
 interface ReturnItem {
@@ -17,11 +18,14 @@ interface ReturnItem {
   sku: string;
   quantity: number;
   qc_status: string | null;
+  receive_status: string;
+  hold_location_id: string | null;
   expected_barcode: string | null;
   product_id: string;
   order_item_id: string | null;
   order_item: { product_name: string; unit_price: number } | null;
   product: { name: string; sku: string } | null;
+  hold_location: { code: string; name: string; location_type: string } | null;
 }
 
 interface Return {
@@ -109,6 +113,17 @@ const RETURN_STATUS_LABELS: Record<string, string> = {
   damaged: 'Damaged',
 };
 
+const ITEM_QC_BADGE: Record<string, { label: string; cls: string }> = {
+  passed:  { label: 'QC Pass',  cls: 'text-green-700 bg-green-50 border-green-200' },
+  failed:  { label: 'QC Fail',  cls: 'text-red-700 bg-red-50 border-red-200' },
+  pending: { label: 'Pending',  cls: 'text-amber-700 bg-amber-50 border-amber-200' },
+};
+
+const ITEM_RECEIVE_BADGE: Record<string, { label: string; cls: string }> = {
+  received: { label: 'Received', cls: 'text-blue-700 bg-blue-50 border-blue-200' },
+  lost:     { label: 'Lost',     cls: 'text-red-700 bg-red-50 border-red-200' },
+  pending:  { label: 'Expected', cls: 'text-gray-600 bg-gray-50 border-gray-200' },
+};
 
 export default function Returns() {
   const { lastRefreshed } = useRefresh();
@@ -118,6 +133,8 @@ export default function Returns() {
   const [searchQuery, setSearchQuery] = useState('');
   const [receivingReturn, setReceivingReturn] = useState<Return | null>(null);
   const [restockingReturn, setRestockingReturn] = useState<Return | null>(null);
+  const [qcReturn, setQcReturn] = useState<Return | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const fetchReturns = useCallback(async () => {
     try {
@@ -140,11 +157,14 @@ export default function Returns() {
             sku,
             quantity,
             qc_status,
+            receive_status,
+            hold_location_id,
             expected_barcode,
             product_id,
             order_item_id,
             order_item:order_items!order_item_id(product_name, unit_price),
-            product:products!product_id(name, sku)
+            product:products!product_id(name, sku),
+            hold_location:warehouse_locations!hold_location_id(code, name, location_type)
           )
         `)
         .neq('return_reason', 'Refund')
@@ -191,8 +211,6 @@ export default function Returns() {
     );
   });
 
-  const getItemCount = (r: Return) => r.items?.length ?? 0;
-
   const getItemDisplay = (r: Return) => {
     if (!r.items?.length) return '—';
     const names = r.items.map(i => i.order_item?.product_name || i.product?.name || i.sku);
@@ -200,20 +218,12 @@ export default function Returns() {
     return `${names[0]} +${names.length - 1} more`;
   };
 
-  const handleQcAction = async (returnId: string, action: 'qc_passed' | 'qc_failed') => {
-    await supabase.from('returns').update({ status: action }).eq('id', returnId);
-    if (action === 'qc_passed') {
-      await supabase
-        .from('return_items')
-        .update({ qc_status: 'passed' })
-        .eq('return_id', returnId)
-        .eq('qc_status', 'pending');
-    }
-    fetchReturns();
-  };
-
-  const handleRestock = (r: Return) => {
-    setRestockingReturn(r);
+  const toggleExpand = (id: string) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   };
 
   const handleWriteOff = async (returnId: string) => {
@@ -294,117 +304,166 @@ export default function Returns() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filteredReturns.map(r => {
-                  const itemCount = getItemCount(r);
+                  const itemCount = r.items?.length ?? 0;
+                  const isExpanded = expandedRows.has(r.id);
+                  const hasLostItems = r.items?.some(i => i.receive_status === 'lost');
+
                   return (
-                    <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <span className="font-mono text-xs font-semibold text-gray-800">{r.return_number}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-gray-800">
-                          {r.order?.woo_order_id ? `#${r.order.woo_order_id}` : (r.order?.order_number ?? '—')}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {r.order?.cs_status ? (() => {
-                          const cfg = STATUS_CONFIG[r.order.cs_status];
-                          return cfg ? (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
-                              {cfg.label}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-gray-500">{r.order.cs_status}</span>
-                          );
-                        })() : <span className="text-gray-400 text-xs">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-gray-800 font-medium">{r.customer?.full_name ?? '—'}</div>
-                        {r.customer?.phone_primary && (
-                          <div className="text-xs text-gray-400 mt-0.5">{r.customer.phone_primary}</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {itemCount > 0 ? (
-                          <div>
-                            <span className="text-gray-800 text-xs">{getItemDisplay(r)}</span>
-                            {itemCount > 1 && (
-                              <span className="ml-1 text-xs text-gray-400">({itemCount})</span>
+                    <>
+                      <tr
+                        key={r.id}
+                        className={`hover:bg-gray-50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-50' : ''}`}
+                        onClick={() => itemCount > 0 && toggleExpand(r.id)}
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono text-xs font-semibold text-gray-800">{r.return_number}</span>
+                            {hasLostItems && (
+                              <AlertTriangle className="w-3.5 h-3.5 text-red-400" title="Has lost items" />
                             )}
                           </div>
-                        ) : (
-                          <span className="text-gray-400 text-xs">No items</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
-                          r.status === 'expected'  ? 'text-amber-700 bg-amber-50 border-amber-200' :
-                          r.status === 'received'  ? 'text-blue-700 bg-blue-50 border-blue-200' :
-                          r.status === 'qc_passed' ? 'text-green-700 bg-green-50 border-green-200' :
-                          r.status === 'qc_failed' ? 'text-red-700 bg-red-50 border-red-200' :
-                          r.status === 'restocked' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' :
-                          'text-gray-600 bg-gray-50 border-gray-200'
-                        }`}>
-                          {RETURN_STATUS_LABELS[r.status] ?? r.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                        {new Date(r.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {r.status === 'expected' && (
-                            <Button
-                              size="sm"
-                              onClick={() => setReceivingReturn(r)}
-                              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5"
-                            >
-                              <ScanLine className="w-3.5 h-3.5" />
-                              Receive
-                            </Button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-800">
+                            {r.order?.woo_order_id ? `#${r.order.woo_order_id}` : (r.order?.order_number ?? '—')}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {r.order?.cs_status ? (() => {
+                            const cfg = STATUS_CONFIG[r.order.cs_status];
+                            return cfg ? (
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+                                {cfg.label}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-500">{r.order.cs_status}</span>
+                            );
+                          })() : <span className="text-gray-400 text-xs">—</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="text-gray-800 font-medium">{r.customer?.full_name ?? '—'}</div>
+                          {r.customer?.phone_primary && (
+                            <div className="text-xs text-gray-400 mt-0.5">{r.customer.phone_primary}</div>
                           )}
-                          {r.status === 'received' && (
-                            <>
+                        </td>
+                        <td className="px-4 py-3">
+                          {itemCount > 0 ? (
+                            <div>
+                              <span className="text-gray-800 text-xs">{getItemDisplay(r)}</span>
+                              {itemCount > 1 && (
+                                <span className="ml-1 text-xs text-gray-400">({itemCount})</span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-xs">No items</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
+                            r.status === 'expected'  ? 'text-amber-700 bg-amber-50 border-amber-200' :
+                            r.status === 'received'  ? 'text-blue-700 bg-blue-50 border-blue-200' :
+                            r.status === 'qc_passed' ? 'text-green-700 bg-green-50 border-green-200' :
+                            r.status === 'qc_failed' ? 'text-red-700 bg-red-50 border-red-200' :
+                            r.status === 'restocked' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' :
+                            'text-gray-600 bg-gray-50 border-gray-200'
+                          }`}>
+                            {RETURN_STATUS_LABELS[r.status] ?? r.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                          {new Date(r.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1.5">
+                            {r.status === 'expected' && (
                               <Button
                                 size="sm"
-                                onClick={() => handleQcAction(r.id, 'qc_passed')}
-                                className="gap-1 bg-green-600 hover:bg-green-700 text-white text-xs px-2.5 py-1.5"
+                                onClick={() => setReceivingReturn(r)}
+                                className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5"
                               >
-                                <PackageCheck className="w-3.5 h-3.5" />
-                                QC Pass
+                                <ScanLine className="w-3.5 h-3.5" />
+                                Receive
                               </Button>
+                            )}
+                            {r.status === 'received' && (
                               <Button
                                 size="sm"
-                                onClick={() => handleQcAction(r.id, 'qc_failed')}
-                                className="gap-1 bg-red-600 hover:bg-red-700 text-white text-xs px-2.5 py-1.5"
+                                onClick={() => setQcReturn(r)}
+                                className="gap-1 bg-amber-500 hover:bg-amber-600 text-white text-xs px-2.5 py-1.5"
                               >
-                                <PackageX className="w-3.5 h-3.5" />
-                                QC Fail
+                                <ClipboardList className="w-3.5 h-3.5" />
+                                QC Review
                               </Button>
-                            </>
-                          )}
-                          {r.status === 'qc_passed' && (
-                            <Button
-                              size="sm"
-                              onClick={() => handleRestock(r)}
-                              className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5" />
-                              Restock
-                            </Button>
-                          )}
-                          {r.status === 'qc_failed' && (
-                            <Button
-                              size="sm"
-                              onClick={() => handleWriteOff(r.id)}
-                              className="gap-1 bg-gray-700 hover:bg-gray-800 text-white text-xs px-3 py-1.5"
-                            >
-                              <Wrench className="w-3.5 h-3.5" />
-                              Write Off
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                            )}
+                            {r.status === 'qc_passed' && (
+                              <Button
+                                size="sm"
+                                onClick={() => setRestockingReturn(r)}
+                                className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                Restock
+                              </Button>
+                            )}
+                            {r.status === 'qc_failed' && (
+                              <Button
+                                size="sm"
+                                onClick={() => handleWriteOff(r.id)}
+                                className="gap-1 bg-gray-700 hover:bg-gray-800 text-white text-xs px-3 py-1.5"
+                              >
+                                <Wrench className="w-3.5 h-3.5" />
+                                Write Off
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {isExpanded && r.items && r.items.length > 0 && (
+                        <tr key={`${r.id}-expanded`} className="bg-gray-50 border-b border-gray-100">
+                          <td colSpan={8} className="px-6 py-3">
+                            <div className="space-y-1.5">
+                              {r.items.map(item => {
+                                const receiveBadge = ITEM_RECEIVE_BADGE[item.receive_status] ?? ITEM_RECEIVE_BADGE.pending;
+                                const qcBadge = item.qc_status ? (ITEM_QC_BADGE[item.qc_status] ?? null) : null;
+                                return (
+                                  <div key={item.id} className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div className="min-w-0">
+                                        <div className="font-medium text-gray-900 text-xs truncate">
+                                          {item.order_item?.product_name || item.product?.name || item.sku}
+                                        </div>
+                                        <div className="text-xs text-gray-400">SKU: {item.sku} | Qty: {item.quantity}</div>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      {item.hold_location && (
+                                        <div className="flex items-center gap-1 text-xs text-gray-500">
+                                          <MapPin className="w-3 h-3" />
+                                          <span className={`font-medium ${
+                                            item.hold_location.location_type === 'return_hold' ? 'text-blue-600' :
+                                            item.hold_location.location_type === 'damaged' ? 'text-red-600' :
+                                            'text-emerald-600'
+                                          }`}>{item.hold_location.code}</span>
+                                        </div>
+                                      )}
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${receiveBadge.cls}`}>
+                                        {receiveBadge.label}
+                                      </span>
+                                      {qcBadge && (
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${qcBadge.cls}`}>
+                                          {qcBadge.label}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   );
                 })}
               </tbody>
@@ -419,6 +478,17 @@ export default function Returns() {
           onClose={() => setReceivingReturn(null)}
           onReceived={() => {
             setReceivingReturn(null);
+            fetchReturns();
+          }}
+        />
+      )}
+
+      {qcReturn && (
+        <QCReviewModal
+          returnData={qcReturn}
+          onClose={() => setQcReturn(null)}
+          onQcComplete={() => {
+            setQcReturn(null);
             fetchReturns();
           }}
         />

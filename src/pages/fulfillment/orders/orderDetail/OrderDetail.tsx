@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Trash2, AlertTriangle, X } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
@@ -26,7 +25,7 @@ import { PrescriptionCard } from './PrescriptionCard';
 import { SmsCard } from './SmsCard';
 import { ActivityLogCard } from './ActivityLogCard';
 import { CsActionPanel } from './CsActionPanel';
-import { InvoiceTemplate, PackingSlipTemplate } from './InvoiceTemplate';
+import { buildInvoiceHtml, buildPackingSlipHtml } from './InvoiceTemplate';
 
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
@@ -85,54 +84,24 @@ export default function OrderDetail() {
     fetchStoreProfile().then(sp => setStoreProfile(sp));
   }, [load]);
 
-  const printContent = (content: React.ReactElement) => {
+  const openPrintWindow = (html: string) => {
     const printWindow = window.open('', '_blank', 'width=900,height=750');
     if (!printWindow) return;
-
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    root.render(content);
-
-    setTimeout(() => {
-      const html = container.innerHTML;
-      root.unmount();
-      document.body.removeChild(container);
-
-      printWindow.document.write(
-        `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Print</title></head><body>${html}</body></html>`
-      );
-      printWindow.document.close();
-      setTimeout(() => { printWindow.print(); }, 400);
-    }, 100);
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    setTimeout(() => { printWindow.print(); }, 400);
   };
 
   const handlePrintInvoice = () => {
     if (!order) return;
-    printContent(
-      <InvoiceTemplate
-        order={order}
-        items={items}
-        prescriptions={prescriptions}
-        packagingItems={packagingItems}
-        storeProfile={storeProfile}
-      />
-    );
+    openPrintWindow(buildInvoiceHtml(order, items, prescriptions, storeProfile));
   };
 
   const handlePrintPackingSlip = async () => {
     if (!order) return;
     const fifoLots = await fetchFifoLotsForItems(items);
-    printContent(
-      <PackingSlipTemplate
-        order={order}
-        items={items}
-        packagingItems={packagingItems}
-        fifoLots={fifoLots}
-        storeProfile={storeProfile}
-      />
-    );
+    openPrintWindow(buildPackingSlipHtml(order, items, packagingItems, fifoLots, storeProfile));
   };
 
   const handleDeleteOrder = async () => {

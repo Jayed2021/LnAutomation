@@ -115,3 +115,60 @@ export async function logActivity(orderId: string, action: string, userId: strin
     performed_by: userId,
   });
 }
+
+export interface StoreProfile {
+  store_name: string | null;
+  logo_url: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  postal_code: string | null;
+  country: string | null;
+  phone_primary: string | null;
+  email: string | null;
+  website: string | null;
+  invoice_footer: string | null;
+}
+
+export async function fetchStoreProfile(): Promise<StoreProfile | null> {
+  const { data } = await supabase
+    .from('store_profile')
+    .select('store_name, logo_url, address_line1, address_line2, city, postal_code, country, phone_primary, email, website, invoice_footer')
+    .limit(1)
+    .maybeSingle();
+  return data as StoreProfile | null;
+}
+
+export interface FifoLotInfo {
+  barcode: string;
+  location_code: string;
+}
+
+export async function fetchFifoLotsForItems(
+  items: { id: string; product_id: string | null }[]
+): Promise<Map<string, FifoLotInfo>> {
+  const result = new Map<string, FifoLotInfo>();
+  const itemsWithProduct = items.filter(i => i.product_id);
+  if (itemsWithProduct.length === 0) return result;
+
+  await Promise.all(
+    itemsWithProduct.map(async item => {
+      const { data: lots } = await supabase
+        .from('inventory_lots')
+        .select('lot_number, barcode, location:warehouse_locations(code)')
+        .eq('product_id', item.product_id!)
+        .gt('remaining_quantity', 0)
+        .order('received_date', { ascending: true })
+        .limit(1);
+      if (lots && lots[0]) {
+        const lot = lots[0] as any;
+        result.set(item.id, {
+          barcode: lot.barcode || lot.lot_number,
+          location_code: lot.location?.code || 'N/A',
+        });
+      }
+    })
+  );
+
+  return result;
+}

@@ -11,7 +11,9 @@ import {
 import {
   fetchOrderDetail, fetchOrderItems, fetchOrderCourierInfo,
   fetchOrderPrescriptions, fetchOrderNotes, fetchCallLog,
-  fetchActivityLog, fetchPackagingItems
+  fetchActivityLog, fetchPackagingItems,
+  fetchStoreProfile, fetchFifoLotsForItems,
+  StoreProfile,
 } from './service';
 import { OrderHeader } from './OrderHeader';
 import { CustomerInfoCard } from './CustomerInfoCard';
@@ -40,6 +42,7 @@ export default function OrderDetail() {
   const [activityLog, setActivityLog] = useState<ActivityLog[]>([]);
   const [packagingItems, setPackagingItems] = useState<PackagingItem[]>([]);
   const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
+  const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -79,38 +82,53 @@ export default function OrderDetail() {
     supabase.from('users').select('id, full_name').eq('is_active', true).order('full_name').then(({ data }) => {
       setUsers(data ?? []);
     });
+    fetchStoreProfile().then(sp => setStoreProfile(sp));
   }, [load]);
 
   const printContent = (content: React.ReactElement) => {
-    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    const printWindow = window.open('', '_blank', 'width=900,height=750');
     if (!printWindow) return;
     printWindow.document.write(`
       <!DOCTYPE html><html><head>
       <meta charset="UTF-8">
       <title>Print</title>
       <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        @media print { body { margin: 0; } }
-        table { border-collapse: collapse; }
+        @page { margin: 0.5cm; }
+        @media print { html, body { margin: 0; padding: 0; } }
       </style>
       </head><body><div id="root"></div></body></html>
     `);
     printWindow.document.close();
     const root = ReactDOM.createRoot(printWindow.document.getElementById('root')!);
     root.render(content);
-    setTimeout(() => { printWindow.print(); }, 600);
+    setTimeout(() => { printWindow.print(); }, 800);
   };
 
   const handlePrintInvoice = () => {
     if (!order) return;
     printContent(
-      <InvoiceTemplate order={order} items={items} prescriptions={prescriptions} packagingItems={packagingItems} />
+      <InvoiceTemplate
+        order={order}
+        items={items}
+        prescriptions={prescriptions}
+        packagingItems={packagingItems}
+        storeProfile={storeProfile}
+      />
     );
   };
 
-  const handlePrintPackingSlip = () => {
+  const handlePrintPackingSlip = async () => {
     if (!order) return;
-    printContent(<PackingSlipTemplate order={order} items={items} />);
+    const fifoLots = await fetchFifoLotsForItems(items);
+    printContent(
+      <PackingSlipTemplate
+        order={order}
+        items={items}
+        packagingItems={packagingItems}
+        fifoLots={fifoLots}
+        storeProfile={storeProfile}
+      />
+    );
   };
 
   const handleDeleteOrder = async () => {

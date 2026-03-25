@@ -29,6 +29,7 @@ export interface OrderListItem {
   total_amount: number;
   expected_delivery_date: string | null;
   has_prescription: boolean;
+  shipped_at: string | null;
   customer: {
     full_name: string;
     phone_primary: string;

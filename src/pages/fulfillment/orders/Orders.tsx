@@ -84,23 +84,25 @@ function formatDateLabel(start: Date | null, end: Date | null): string {
   return `${fmt(start)} - ${fmt(end)}`;
 }
 
-type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'shipped' | 'cancelled';
+type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'lab_orders' | 'shipped' | 'cancelled';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'all', label: 'All Orders' },
   { key: 'needs_action', label: 'Needs Action' },
   { key: 'scheduled', label: 'Scheduled' },
   { key: 'in_progress', label: 'In Progress' },
+  { key: 'lab_orders', label: 'Lab Orders' },
   { key: 'shipped', label: 'Shipped' },
-  { key: 'cancelled', label: 'Cancelled' },
+  { key: 'cancelled', label: 'CBD' },
 ];
 
 const TAB_STATUSES: Record<Tab, string[]> = {
   all: [],
-  needs_action: ['new_not_called', 'new_called', 'awaiting_payment'],
-  scheduled: ['late_delivery'],
-  in_progress: ['exchange', 'send_to_lab', 'in_lab', 'not_printed', 'printed', 'packed'],
-  shipped: ['shipped'],
+  needs_action: ['new_not_called', 'new_called'],
+  scheduled: ['late_delivery', 'awaiting_payment'],
+  in_progress: ['exchange', 'not_printed', 'printed', 'packed'],
+  lab_orders: ['send_to_lab', 'in_lab'],
+  shipped: [],
   cancelled: ['cancelled', 'refund'],
 };
 
@@ -228,7 +230,7 @@ export default function Orders() {
         .select(`
           id, order_number, woo_order_id, woo_order_number,
           order_date, cs_status, total_amount, expected_delivery_date,
-          has_prescription,
+          has_prescription, shipped_at,
           customer:customers(full_name, phone_primary),
           assigned_user:users!orders_assigned_to_fkey(id, full_name),
           confirmed_user:users!orders_confirmed_by_fkey(id, full_name)
@@ -267,7 +269,9 @@ export default function Orders() {
   }, [fetchOrders]);
 
   const filtered = orders.filter(order => {
-    if (activeTab !== 'all' && TAB_STATUSES[activeTab].length > 0) {
+    if (activeTab === 'shipped') {
+      if (!order.shipped_at) return false;
+    } else if (activeTab !== 'all' && TAB_STATUSES[activeTab].length > 0) {
       if (!TAB_STATUSES[activeTab].includes(order.cs_status)) return false;
     }
     if (statusFilter && order.cs_status !== statusFilter) return false;
@@ -288,6 +292,7 @@ export default function Orders() {
   const tabCounts = Object.fromEntries(
     TABS.map(tab => {
       if (tab.key === 'all') return [tab.key, orders.length];
+      if (tab.key === 'shipped') return [tab.key, orders.filter(o => !!o.shipped_at).length];
       const statuses = TAB_STATUSES[tab.key];
       return [tab.key, orders.filter(o => statuses.includes(o.cs_status)).length];
     })
@@ -295,7 +300,7 @@ export default function Orders() {
 
   const totalValue = filtered.reduce((s, o) => s + (o.total_amount ?? 0), 0);
   const avgValue = filtered.length > 0 ? totalValue / filtered.length : 0;
-  const shippedCount = filtered.filter(o => o.cs_status === 'shipped').length;
+  const shippedCount = orders.filter(o => !!o.shipped_at).length;
 
   const formatAmount = (v: number) => `৳${v.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 

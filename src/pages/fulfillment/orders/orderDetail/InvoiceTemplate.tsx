@@ -149,14 +149,6 @@ export function buildInvoiceHtml(
         <table style="border-collapse:collapse;">
           <tbody>
             <tr>
-              <td style="color:#555;padding-right:24px;padding-bottom:2px;white-space:nowrap;">Invoice Number:</td>
-              <td style="font-weight:500;padding-bottom:2px;">${esc(String(invoiceNumber))}</td>
-            </tr>
-            <tr>
-              <td style="color:#555;padding-right:24px;padding-bottom:2px;white-space:nowrap;">Invoice Date:</td>
-              <td style="font-weight:500;padding-bottom:2px;">${fmtDate(order.order_date)}</td>
-            </tr>
-            <tr>
               <td style="color:#555;padding-right:24px;padding-bottom:2px;white-space:nowrap;">Order Number:</td>
               <td style="font-weight:500;padding-bottom:2px;">${esc(String(invoiceNumber))}</td>
             </tr>

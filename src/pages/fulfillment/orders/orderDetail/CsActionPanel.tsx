@@ -31,7 +31,7 @@ const BASE_ACTIONS: Record<string, string[]> = {
   not_printed:       ['mark_processing'],
   printed:           ['mark_processing'],
   packed:            ['mark_processing'],
-  shipped:           ['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery', 'reverse_pick', 'refund'],
+  shipped:           ['mark_processing', 'delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   delivered:         ['exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   cancelled:         ['mark_processing', 'refund'],
   cancelled_cbd:     ['mark_processing', 'refund'],

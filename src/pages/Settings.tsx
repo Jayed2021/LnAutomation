@@ -34,13 +34,15 @@ export default function Settings() {
       title: 'Courier Settings',
       description: 'Configure Pathao and Steadfast integration',
       icon: Truck,
-      color: 'emerald'
+      color: 'emerald',
+      route: '/settings/courier'
     },
     {
       title: 'SMS Settings',
       description: 'Configure SMS gateway and templates',
       icon: MessageSquare,
-      color: 'amber'
+      color: 'amber',
+      route: '/settings/sms'
     },
     {
       title: 'Barcode Settings',

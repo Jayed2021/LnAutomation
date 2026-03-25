@@ -8,7 +8,6 @@ import { useRefresh } from '../../contexts/RefreshContext';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { STATUS_CONFIG } from './orders/types';
 import { ReceiveReturnModal } from '../../components/fulfillment/ReceiveReturnModal';
 
 interface ReturnItem {
@@ -33,7 +32,7 @@ interface Return {
   created_at: string;
   order_id: string;
   order: { order_number: string; woo_order_id: number | null; cs_status: string } | null;
-  customer: { full_name: string } | null;
+  customer: { full_name: string; phone_primary: string | null } | null;
   items: ReturnItem[];
 }
 
@@ -108,17 +107,6 @@ const RETURN_STATUS_LABELS: Record<string, string> = {
   damaged: 'Damaged',
 };
 
-const REASON_COLORS: Record<string, string> = {
-  'Exchange':         'text-blue-700 bg-blue-50 border-blue-200',
-  'Partial Delivery': 'text-orange-700 bg-orange-50 border-orange-200',
-  'Reverse Pick':     'text-rose-700 bg-rose-50 border-rose-200',
-  'Refund':           'text-red-700 bg-red-50 border-red-200',
-  'CAD':              'text-red-900 bg-red-100 border-red-300',
-};
-
-function getReasonColor(reason: string) {
-  return REASON_COLORS[reason] ?? 'text-gray-700 bg-gray-50 border-gray-200';
-}
 
 export default function Returns() {
   const { lastRefreshed } = useRefresh();
@@ -143,7 +131,7 @@ export default function Returns() {
           created_at,
           order_id,
           order:orders!order_id(order_number, woo_order_id, cs_status),
-          customer:customers!customer_id(full_name),
+          customer:customers!customer_id(full_name, phone_primary),
           items:return_items(
             id,
             sku,
@@ -156,6 +144,7 @@ export default function Returns() {
             product:products!product_id(name, sku)
           )
         `)
+        .neq('return_reason', 'Refund')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -285,9 +274,8 @@ export default function Returns() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Return ID</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Original Order</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Reason</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Items</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Created</th>
@@ -296,7 +284,6 @@ export default function Returns() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filteredReturns.map(r => {
-                  const orderStatusCfg = r.order?.cs_status ? STATUS_CONFIG[r.order.cs_status] : null;
                   const itemCount = getItemCount(r);
                   return (
                     <tr key={r.id} className="hover:bg-gray-50 transition-colors">
@@ -305,28 +292,14 @@ export default function Returns() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-gray-800">
-                          {r.order?.order_number ?? '—'}
+                          {r.order?.woo_order_id ? `#${r.order.woo_order_id}` : (r.order?.order_number ?? '—')}
                         </div>
-                        {r.order?.woo_order_id && (
-                          <div className="text-xs text-gray-400">#{r.order.woo_order_id}</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-gray-700">
-                        {r.customer?.full_name ?? '—'}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {r.return_reason && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getReasonColor(r.return_reason)}`}>
-                              {r.return_reason}
-                            </span>
-                          )}
-                          {orderStatusCfg && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${orderStatusCfg.color} ${orderStatusCfg.bg} ${orderStatusCfg.border}`}>
-                              {orderStatusCfg.label}
-                            </span>
-                          )}
-                        </div>
+                        <div className="text-gray-800 font-medium">{r.customer?.full_name ?? '—'}</div>
+                        {r.customer?.phone_primary && (
+                          <div className="text-xs text-gray-400 mt-0.5">{r.customer.phone_primary}</div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         {itemCount > 0 ? (

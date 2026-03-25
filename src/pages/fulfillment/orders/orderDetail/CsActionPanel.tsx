@@ -282,6 +282,22 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         }).select('id').single();
         if (newReturn) {
           updates.exchange_return_id = newReturn.id;
+          const { data: retOrderItems } = await supabase
+            .from('order_items')
+            .select('id, product_id, sku, quantity')
+            .eq('order_id', retOrder.id);
+          if (retOrderItems?.length) {
+            await supabase.from('return_items').insert(
+              retOrderItems.map(oi => ({
+                return_id: newReturn.id,
+                order_item_id: oi.id,
+                product_id: oi.product_id,
+                sku: oi.sku,
+                quantity: oi.quantity,
+                qc_status: 'pending',
+              }))
+            );
+          }
         }
         await supabase.from('orders').update({
           cs_status: 'exchange_returnable',
@@ -325,14 +341,32 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           .maybeSingle();
         if (!existingCadReturn) {
           const returnNumber = `RET-${Date.now()}`;
-          await supabase.from('returns').insert({
+          const { data: cadReturn } = await supabase.from('returns').insert({
             return_number: returnNumber,
             order_id: order.id,
             customer_id: order.customer.id,
             return_reason: 'CAD',
             status: 'expected',
             created_by: userId,
-          });
+          }).select('id').single();
+          if (cadReturn) {
+            const { data: cadOrderItems } = await supabase
+              .from('order_items')
+              .select('id, product_id, sku, quantity')
+              .eq('order_id', order.id);
+            if (cadOrderItems?.length) {
+              await supabase.from('return_items').insert(
+                cadOrderItems.map(oi => ({
+                  return_id: cadReturn.id,
+                  order_item_id: oi.id,
+                  product_id: oi.product_id,
+                  sku: oi.sku,
+                  quantity: oi.quantity,
+                  qc_status: 'pending',
+                }))
+              );
+            }
+          }
         }
       }
 
@@ -375,14 +409,32 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
 
       if (selectedAction === 'reverse_pick') {
         const returnNumber = `RET-${Date.now()}`;
-        await supabase.from('returns').insert({
+        const { data: rpReturn } = await supabase.from('returns').insert({
           return_number: returnNumber,
           order_id: order.id,
           customer_id: order.customer.id,
           return_reason: 'Reverse Pick',
           status: 'expected',
           created_by: userId,
-        });
+        }).select('id').single();
+        if (rpReturn) {
+          const { data: rpOrderItems } = await supabase
+            .from('order_items')
+            .select('id, product_id, sku, quantity')
+            .eq('order_id', order.id);
+          if (rpOrderItems?.length) {
+            await supabase.from('return_items').insert(
+              rpOrderItems.map(oi => ({
+                return_id: rpReturn.id,
+                order_item_id: oi.id,
+                product_id: oi.product_id,
+                sku: oi.sku,
+                quantity: oi.quantity,
+                qc_status: 'pending',
+              }))
+            );
+          }
+        }
       }
 
       if (selectedAction === 'refund') {
@@ -403,27 +455,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         }).select('id').single();
         if (newExpense) {
           updates.order_refund_expense_id = newExpense.id;
-        }
-        const postDispatchStatuses = ['shipped', 'delivered', 'exchange', 'partial_delivery', 'reverse_pick', 'exchange_returnable'];
-        if (postDispatchStatuses.includes(order.cs_status)) {
-          const { data: existingReturn } = await supabase
-            .from('returns')
-            .select('id')
-            .eq('order_id', order.id)
-            .eq('status', 'expected')
-            .maybeSingle();
-          if (!existingReturn) {
-            const returnNumber = `RET-${Date.now()}`;
-            await supabase.from('returns').insert({
-              return_number: returnNumber,
-              order_id: order.id,
-              customer_id: order.customer.id,
-              return_reason: 'Refund',
-              status: 'expected',
-              refund_amount: amount,
-              created_by: userId,
-            });
-          }
         }
       }
 

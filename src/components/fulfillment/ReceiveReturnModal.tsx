@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Download, ScanLine, Camera, Check, Package } from 'lucide-react';
+import { X, Download, ScanLine, Camera, Check, Package, FlaskConical } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { downloadSingleBarcode } from '../inventory/barcodePrint';
 
@@ -31,7 +31,8 @@ interface Props {
 
 export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
   const rawItems = returnData.items ?? [];
-  const items = rawItems.filter(i => !i.sku.startsWith('LN_'));
+  const labItems = rawItems.filter(i => i.sku.startsWith('LN_'));
+  const physicalItems = rawItems.filter(i => !i.sku.startsWith('LN_'));
 
   const [scannedItems, setScannedItems] = useState<Set<string>>(new Set());
   const [scanInput, setScanInput] = useState('');
@@ -40,6 +41,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
   const [processing, setProcessing] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
 
+  const items = physicalItems;
   const totalItems = items.length;
   const receivedCount = scannedItems.size;
   const allScanned = totalItems > 0 && receivedCount === totalItems;
@@ -133,24 +135,26 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
           </button>
         </div>
 
-        <div className="px-5 py-3 border-b border-gray-100">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-medium text-gray-600">Progress</span>
-            <span className="text-xs font-semibold text-blue-600">{receivedCount} / {totalItems} items received</span>
+        {totalItems > 0 && (
+          <div className="px-5 py-3 border-b border-gray-100">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-medium text-gray-600">Progress</span>
+              <span className="text-xs font-semibold text-blue-600">{receivedCount} / {totalItems} items received</span>
+            </div>
+            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
           </div>
-          <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-blue-500 rounded-full transition-all duration-300"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-        </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {totalItems > 0 ? (
+          {totalItems > 0 && (
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2.5">
-                Expected Return Items:
+                Physical Items to Scan:
               </div>
               <div className="space-y-2">
                 {items.map((item, idx) => {
@@ -200,9 +204,43 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                 })}
               </div>
             </div>
-          ) : (
+          )}
+
+          {labItems.length > 0 && (
+            <div className="bg-teal-50 rounded-xl border border-teal-200 p-3">
+              <div className="flex items-center gap-1.5 mb-2.5">
+                <FlaskConical className="w-3.5 h-3.5 text-teal-600" />
+                <span className="text-xs font-semibold text-teal-700 uppercase tracking-wide">
+                  Lab / Prescription Items — No Scan Required
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {labItems.map(item => (
+                  <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-white border border-teal-100">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-5 h-5 rounded-full bg-teal-500 flex items-center justify-center shrink-0">
+                        <Check className="w-3 h-3 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-800 text-sm truncate">{getItemName(item)}</div>
+                        <div className="text-xs text-gray-500">SKU: {item.sku} | Qty: {item.quantity}</div>
+                      </div>
+                    </div>
+                    <span className="text-xs text-teal-600 font-medium shrink-0 ml-2">Lab Return</span>
+                  </div>
+                ))}
+              </div>
+              {totalItems === 0 && (
+                <p className="text-xs text-teal-600 mt-2.5">
+                  This return contains only lab/prescription items. No barcode scanning needed — click "Mark as Received" to proceed.
+                </p>
+              )}
+            </div>
+          )}
+
+          {totalItems === 0 && labItems.length === 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-              No specific items are linked to this return. You can still mark it as received.
+              No items are linked to this return. You can still mark it as received.
             </div>
           )}
 
@@ -312,7 +350,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
             onClick={handleCompleteReceive}
             disabled={processing || (totalItems > 0 && !allScanned && receivedCount === 0)}
             className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-              allScanned
+              allScanned || totalItems === 0
                 ? 'bg-blue-600 hover:bg-blue-700 text-white'
                 : receivedCount > 0
                   ? 'bg-amber-500 hover:bg-amber-600 text-white'

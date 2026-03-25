@@ -271,7 +271,8 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         const returnNumber = `RET-${Date.now()}`;
         const { data: newReturn } = await supabase.from('returns').insert({
           return_number: returnNumber,
-          order_id: order.id,
+          order_id: retOrder.id,
+          exchange_order_id: order.id,
           customer_id: order.customer.id,
           return_reason: 'Exchange',
           status: 'expected',
@@ -382,6 +383,27 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         }).select('id').single();
         if (newExpense) {
           updates.order_refund_expense_id = newExpense.id;
+        }
+        const postDispatchStatuses = ['shipped', 'delivered', 'exchange', 'partial_delivery', 'reverse_pick', 'exchange_returnable'];
+        if (postDispatchStatuses.includes(order.cs_status)) {
+          const { data: existingReturn } = await supabase
+            .from('returns')
+            .select('id')
+            .eq('order_id', order.id)
+            .eq('status', 'expected')
+            .maybeSingle();
+          if (!existingReturn) {
+            const returnNumber = `RET-${Date.now()}`;
+            await supabase.from('returns').insert({
+              return_number: returnNumber,
+              order_id: order.id,
+              customer_id: order.customer.id,
+              return_reason: 'Refund',
+              status: 'expected',
+              refund_amount: amount,
+              created_by: userId,
+            });
+          }
         }
       }
 

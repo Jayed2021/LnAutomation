@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PackageX, Search, Eye } from 'lucide-react';
+import { PackageX, Search, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
 import { Card } from '../../components/ui/Card';
@@ -8,12 +8,23 @@ import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { Input } from '../../components/ui/Input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
+import { STATUS_CONFIG } from './orders/types';
+
+interface ReturnItem {
+  sku: string;
+  quantity: number;
+  qc_status: string;
+  order_item: {
+    product_name: string;
+  } | null;
+}
 
 interface Return {
   id: string;
   return_number: string;
   order: {
     order_number: string;
+    cs_status: string;
   };
   customer: {
     full_name: string;
@@ -26,12 +37,6 @@ interface Return {
   items: ReturnItem[];
 }
 
-interface ReturnItem {
-  sku: string;
-  quantity: number;
-  qc_status: string;
-}
-
 export default function Returns() {
   const navigate = useNavigate();
   const { lastRefreshed } = useRefresh();
@@ -39,6 +44,7 @@ export default function Returns() {
   const [returns, setReturns] = useState<Return[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   const statusCounts = {
     expected: returns.filter(r => r.status === 'expected').length,
@@ -62,14 +68,19 @@ export default function Returns() {
           refund_amount,
           refund_status,
           created_at,
-          order:orders(order_number),
+          order:orders(order_number, cs_status),
           customer:customers(full_name),
-          items:return_items(sku, quantity, qc_status)
+          items:return_items(
+            sku,
+            quantity,
+            qc_status,
+            order_item:order_items(product_name)
+          )
         `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setReturns(data || []);
+      setReturns((data as unknown as Return[]) || []);
     } catch (error) {
       console.error('Error fetching returns:', error);
     } finally {
@@ -107,6 +118,18 @@ export default function Returns() {
     return matchesTab && matchesSearch;
   });
 
+  const toggleItemExpand = (returnId: string) => {
+    setExpandedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(returnId)) {
+        next.delete(returnId);
+      } else {
+        next.add(returnId);
+      }
+      return next;
+    });
+  };
+
   const getStatusBadgeVariant = (status: string) => {
     const variants: Record<string, string> = {
       expected: 'amber',
@@ -130,6 +153,18 @@ export default function Returns() {
     };
     return labels[status] || status;
   };
+
+  const getReasonBadgeColor = (reason: string) => {
+    if (reason === 'Exchange') return 'text-blue-700 bg-blue-50 border-blue-200';
+    if (reason === 'Partial Delivery') return 'text-orange-700 bg-orange-50 border-orange-200';
+    if (reason === 'Reverse Pick') return 'text-rose-700 bg-rose-50 border-rose-200';
+    if (reason === 'Refund') return 'text-red-700 bg-red-50 border-red-200';
+    return 'text-gray-700 bg-gray-50 border-gray-200';
+  };
+
+  const hasItemDetails = (returnItem: Return) =>
+    returnItem.items?.length > 0 &&
+    returnItem.items.some(i => i.order_item?.product_name || i.sku);
 
   return (
     <div className="p-6">
@@ -209,50 +244,109 @@ export default function Returns() {
               </div>
             ) : (
               <div className="space-y-3">
-                {filteredReturns.map(returnItem => (
-                  <div
-                    key={returnItem.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <span className="font-semibold text-gray-900">
-                            {returnItem.return_number}
-                          </span>
-                          <Badge variant={getStatusBadgeVariant(returnItem.status) as any}>
-                            {getStatusLabel(returnItem.status)}
-                          </Badge>
-                          {returnItem.refund_status === 'completed' && (
-                            <Badge variant="green">Refunded</Badge>
-                          )}
-                        </div>
-                        <div className="text-sm text-gray-600 space-y-1">
-                          <div>Order: {returnItem.order?.order_number}</div>
-                          <div>Customer: {returnItem.customer?.full_name}</div>
-                          <div>Reason: {returnItem.return_reason || 'Not specified'}</div>
-                          <div>
-                            Items: {returnItem.items?.length || 0} •
-                            {returnItem.refund_amount && ` Refund: ৳${returnItem.refund_amount}`}
+                {filteredReturns.map(returnItem => {
+                  const isExpanded = expandedItems.has(returnItem.id);
+                  const showItems = hasItemDetails(returnItem);
+                  const orderCsStatus = returnItem.order?.cs_status;
+                  const orderStatusCfg = orderCsStatus ? STATUS_CONFIG[orderCsStatus] : null;
+
+                  return (
+                    <div
+                      key={returnItem.id}
+                      className="border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+                    >
+                      <div className="p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2.5 flex-wrap mb-2">
+                              <span className="font-semibold text-gray-900">
+                                {returnItem.return_number}
+                              </span>
+                              <Badge variant={getStatusBadgeVariant(returnItem.status) as any}>
+                                {getStatusLabel(returnItem.status)}
+                              </Badge>
+                              {returnItem.return_reason && (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getReasonBadgeColor(returnItem.return_reason)}`}>
+                                  {returnItem.return_reason}
+                                </span>
+                              )}
+                              {orderStatusCfg && (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${orderStatusCfg.color} ${orderStatusCfg.bg} ${orderStatusCfg.border}`}>
+                                  {orderStatusCfg.label}
+                                </span>
+                              )}
+                              {returnItem.refund_status === 'completed' && (
+                                <Badge variant="green">Refunded</Badge>
+                              )}
+                            </div>
+                            <div className="text-sm text-gray-600 space-y-0.5">
+                              <div>Order: <span className="font-medium text-gray-800">{returnItem.order?.order_number}</span></div>
+                              <div>Customer: {returnItem.customer?.full_name}</div>
+                              {returnItem.refund_amount && (
+                                <div>Refund Amount: <span className="font-medium">৳{returnItem.refund_amount}</span></div>
+                              )}
+                              <div className="text-xs text-gray-400 pt-0.5">
+                                Created: {new Date(returnItem.created_at).toLocaleDateString()}
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-xs text-gray-500">
-                            Created: {new Date(returnItem.created_at).toLocaleDateString()}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {showItems && (
+                              <button
+                                onClick={() => toggleItemExpand(returnItem.id)}
+                                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1.5 rounded border border-gray-200 hover:bg-gray-50 transition-colors"
+                              >
+                                {isExpanded ? (
+                                  <>Hide Items <ChevronUp className="w-3.5 h-3.5" /></>
+                                ) : (
+                                  <>{returnItem.items.length} Item{returnItem.items.length !== 1 ? 's' : ''} <ChevronDown className="w-3.5 h-3.5" /></>
+                                )}
+                              </button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => navigate(`/fulfillment/returns/${returnItem.id}`)}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View Details
+                            </Button>
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => navigate(`/fulfillment/returns/${returnItem.id}`)}
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          View Details
-                        </Button>
-                      </div>
+
+                      {showItems && isExpanded && (
+                        <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
+                          <div className="text-xs font-medium text-gray-500 mb-2 uppercase tracking-wide">Expected Items</div>
+                          <div className="space-y-1.5">
+                            {returnItem.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center justify-between text-sm bg-white border border-gray-100 rounded-md px-3 py-2">
+                                <div>
+                                  <span className="font-medium text-gray-800">
+                                    {item.order_item?.product_name || item.sku}
+                                  </span>
+                                  {item.order_item?.product_name && (
+                                    <span className="text-gray-400 text-xs ml-2">({item.sku})</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="text-gray-500 text-xs">Qty: <span className="font-medium text-gray-700">{item.quantity}</span></span>
+                                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                    item.qc_status === 'passed' ? 'bg-green-100 text-green-700' :
+                                    item.qc_status === 'failed' ? 'bg-red-100 text-red-700' :
+                                    'bg-gray-100 text-gray-500'
+                                  }`}>
+                                    {item.qc_status === 'pending' ? 'Pending QC' : item.qc_status}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </TabsContent>

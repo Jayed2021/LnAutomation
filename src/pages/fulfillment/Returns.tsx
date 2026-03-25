@@ -9,6 +9,8 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ReceiveReturnModal } from '../../components/fulfillment/ReceiveReturnModal';
+import { RestockModal } from '../../components/fulfillment/RestockModal';
+import { STATUS_CONFIG } from './orders/types';
 
 interface ReturnItem {
   id: string;
@@ -115,6 +117,7 @@ export default function Returns() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [receivingReturn, setReceivingReturn] = useState<Return | null>(null);
+  const [restockingReturn, setRestockingReturn] = useState<Return | null>(null);
 
   const fetchReturns = useCallback(async () => {
     try {
@@ -202,9 +205,8 @@ export default function Returns() {
     fetchReturns();
   };
 
-  const handleRestock = async (returnId: string) => {
-    await supabase.from('returns').update({ status: 'restocked' }).eq('id', returnId);
-    fetchReturns();
+  const handleRestock = (r: Return) => {
+    setRestockingReturn(r);
   };
 
   const handleWriteOff = async (returnId: string) => {
@@ -275,6 +277,7 @@ export default function Returns() {
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Return ID</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order Status</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Items</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
@@ -294,6 +297,18 @@ export default function Returns() {
                         <div className="font-medium text-gray-800">
                           {r.order?.woo_order_id ? `#${r.order.woo_order_id}` : (r.order?.order_number ?? '—')}
                         </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.order?.cs_status ? (() => {
+                          const cfg = STATUS_CONFIG[r.order.cs_status];
+                          return cfg ? (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+                              {cfg.label}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500">{r.order.cs_status}</span>
+                          );
+                        })() : <span className="text-gray-400 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3">
                         <div className="text-gray-800 font-medium">{r.customer?.full_name ?? '—'}</div>
@@ -363,7 +378,7 @@ export default function Returns() {
                           {r.status === 'qc_passed' && (
                             <Button
                               size="sm"
-                              onClick={() => handleRestock(r.id)}
+                              onClick={() => handleRestock(r)}
                               className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5"
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
@@ -397,6 +412,17 @@ export default function Returns() {
           onClose={() => setReceivingReturn(null)}
           onReceived={() => {
             setReceivingReturn(null);
+            fetchReturns();
+          }}
+        />
+      )}
+
+      {restockingReturn && (
+        <RestockModal
+          returnData={restockingReturn}
+          onClose={() => setRestockingReturn(null)}
+          onRestocked={() => {
+            setRestockingReturn(null);
             fetchReturns();
           }}
         />

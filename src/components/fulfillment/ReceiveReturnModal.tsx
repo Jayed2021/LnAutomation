@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Printer, ScanLine, Camera, Check, Package } from 'lucide-react';
+import { X, Download, ScanLine, Camera, Check, Package } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { printBarcodeLabels } from '../inventory/barcodePrint';
+import { downloadSingleBarcode } from '../inventory/barcodePrint';
 
 interface ReturnItemData {
   id: string;
@@ -30,6 +30,9 @@ interface Props {
 }
 
 export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
+  const rawItems = returnData.items ?? [];
+  const items = rawItems.filter(i => !i.sku.startsWith('LN_'));
+
   const [scannedItems, setScannedItems] = useState<Set<string>>(new Set());
   const [scanInput, setScanInput] = useState('');
   const [scanError, setScanError] = useState('');
@@ -37,7 +40,6 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
   const [processing, setProcessing] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
 
-  const items = returnData.items ?? [];
   const totalItems = items.length;
   const receivedCount = scannedItems.size;
   const allScanned = totalItems > 0 && receivedCount === totalItems;
@@ -52,33 +54,23 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
 
   const handleScan = (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (!trimmed || !currentItem || scannedItems.has(currentItem.id)) return;
     setScanError('');
 
-    const matched = items.find(i =>
-      i.sku === trimmed ||
-      i.expected_barcode === trimmed ||
-      i.product?.sku === trimmed
-    );
+    const expectedBarcode = currentItem.expected_barcode ?? currentItem.sku;
 
-    if (!matched) {
-      setScanError(`No item found for barcode "${trimmed}". Expected: ${currentItem?.expected_barcode ?? currentItem?.sku ?? 'N/A'}`);
-      setScanInput('');
-      return;
-    }
-
-    if (scannedItems.has(matched.id)) {
-      setScanError(`Item "${getItemName(matched)}" was already scanned.`);
+    if (trimmed !== expectedBarcode && trimmed !== currentItem.sku && trimmed !== currentItem.product?.sku) {
+      setScanError(`Wrong barcode. Expected: ${expectedBarcode}`);
       setScanInput('');
       return;
     }
 
     const next = new Set(scannedItems);
-    next.add(matched.id);
+    next.add(currentItem.id);
     setScannedItems(next);
     setScanInput('');
 
-    const nextUnscanned = items.findIndex((item, idx) => idx !== items.indexOf(matched) && !next.has(item.id));
+    const nextUnscanned = items.findIndex((item, idx) => idx !== currentItemIndex && !next.has(item.id));
     if (nextUnscanned !== -1) {
       setCurrentItemIndex(nextUnscanned);
     }
@@ -90,10 +82,10 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
     }
   };
 
-  const handlePrint = (item: ReturnItemData) => {
+  const handleDownloadBarcode = (item: ReturnItemData) => {
     const barcode = item.expected_barcode || item.sku;
     if (!barcode) return;
-    printBarcodeLabels([{ barcode, name: getItemName(item) }]);
+    downloadSingleBarcode(barcode);
   };
 
   const handleCompleteReceive = async () => {
@@ -132,8 +124,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                 Receive Return Items for Order {orderLabel}
               </h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Scan each returned item's barcode to confirm receipt. The barcode
-                shown is the exact one that was dispatched with this order.
+                Scan each returned item's barcode to confirm receipt. Click an item to switch to it.
               </p>
             </div>
           </div>
@@ -168,12 +159,13 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                   return (
                     <div
                       key={item.id}
+                      onClick={() => !isScanned && setCurrentItemIndex(idx)}
                       className={`flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all ${
                         isScanned
                           ? 'bg-green-50 border-green-200'
                           : isCurrent
                             ? 'bg-blue-50 border-blue-300 shadow-sm'
-                            : 'bg-white border-gray-200'
+                            : 'bg-white border-gray-200 hover:border-gray-300 cursor-pointer'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -197,11 +189,11 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                         </div>
                       </div>
                       <button
-                        onClick={() => handlePrint(item)}
-                        title="Print barcode"
+                        onClick={e => { e.stopPropagation(); handleDownloadBarcode(item); }}
+                        title="Download barcode"
                         className="shrink-0 p-1.5 rounded-lg hover:bg-white border border-transparent hover:border-gray-200 text-gray-400 hover:text-gray-600 transition-all ml-2"
                       >
-                        <Printer className="w-3.5 h-3.5" />
+                        <Download className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   );
@@ -214,7 +206,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
             </div>
           )}
 
-          {currentItem && !allScanned && (
+          {currentItem && !allScanned && !scannedItems.has(currentItem.id) && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
               <div className="text-xs font-semibold text-blue-700 mb-2.5 uppercase tracking-wide">
                 Current Item ({currentItemIndex + 1}/{totalItems})
@@ -245,15 +237,15 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                       {currentItem.expected_barcode ?? currentItem.sku}
                     </span>
                     <button
-                      onClick={() => handlePrint(currentItem)}
+                      onClick={() => handleDownloadBarcode(currentItem)}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-200 rounded-lg text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors"
                     >
-                      <Printer className="w-3.5 h-3.5" />
-                      Print
+                      <Download className="w-3.5 h-3.5" />
+                      Download Barcode
                     </button>
                   </div>
                   <p className="text-xs text-amber-500 mt-1.5 italic">
-                    This is the exact barcode that was sent with this order. Print it if the product arrived without packaging.
+                    This is the exact barcode that was sent with this order. Download it if the product arrived without packaging.
                   </p>
                 </div>
               )}

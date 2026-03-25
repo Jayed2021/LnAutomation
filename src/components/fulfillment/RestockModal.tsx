@@ -74,35 +74,33 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
         let bestLotId: string | null = null;
         let bestStockQty = 0;
 
-        if (item.product_id) {
-          const { data: lots } = await supabase
-            .from('inventory_lots')
-            .select('id, location_id, received_quantity, remaining_quantity')
-            .eq('product_id', item.product_id)
-            .order('received_quantity', { ascending: false });
+        const { data: lots } = await supabase
+          .from('inventory_lots')
+          .select('id, location_id, received_quantity, remaining_quantity, product_id')
+          .eq('barcode', item.sku)
+          .order('received_quantity', { ascending: false });
 
-          if (lots && lots.length > 0) {
-            const locationTotals: Record<string, { received: number; remaining: number; lotId: string }> = {};
-            for (const lot of lots) {
-              if (!lot.location_id) continue;
-              if (!locationTotals[lot.location_id]) {
-                locationTotals[lot.location_id] = { received: 0, remaining: 0, lotId: lot.id };
-              }
-              locationTotals[lot.location_id].received += lot.received_quantity ?? 0;
-              locationTotals[lot.location_id].remaining += lot.remaining_quantity ?? 0;
-              if ((lot.remaining_quantity ?? 0) > 0) {
-                locationTotals[lot.location_id].lotId = lot.id;
-              }
+        if (lots && lots.length > 0) {
+          const locationTotals: Record<string, { received: number; remaining: number; lotId: string }> = {};
+          for (const lot of lots) {
+            if (!lot.location_id) continue;
+            if (!locationTotals[lot.location_id]) {
+              locationTotals[lot.location_id] = { received: 0, remaining: 0, lotId: lot.id };
             }
+            locationTotals[lot.location_id].received += lot.received_quantity ?? 0;
+            locationTotals[lot.location_id].remaining += lot.remaining_quantity ?? 0;
+            if ((lot.remaining_quantity ?? 0) > 0) {
+              locationTotals[lot.location_id].lotId = lot.id;
+            }
+          }
 
-            let topReceived = -1;
-            for (const [locId, totals] of Object.entries(locationTotals)) {
-              if (totals.received > topReceived) {
-                topReceived = totals.received;
-                bestLocationId = locId;
-                bestLotId = totals.remaining > 0 ? totals.lotId : null;
-                bestStockQty = totals.remaining;
-              }
+          let topReceived = -1;
+          for (const [locId, totals] of Object.entries(locationTotals)) {
+            if (totals.received > topReceived) {
+              topReceived = totals.received;
+              bestLocationId = locId;
+              bestLotId = totals.remaining > 0 ? totals.lotId : null;
+              bestStockQty = totals.remaining;
             }
           }
         }
@@ -132,11 +130,11 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     const item = items[index];
     let lotId: string | null = null;
 
-    if (item.product_id && locationId) {
+    if (item.sku && locationId) {
       const { data: lots } = await supabase
         .from('inventory_lots')
         .select('id')
-        .eq('product_id', item.product_id)
+        .eq('barcode', item.sku)
         .eq('location_id', locationId)
         .gt('remaining_quantity', 0)
         .order('remaining_quantity', { ascending: false })
@@ -161,29 +159,65 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
       for (const state of itemStates) {
         if (!state.selectedLocationId) continue;
 
+        let resolvedLotId = state.lotId;
+        let resolvedProductId = state.item.product_id;
+
         if (state.lotId) {
           const { data: lot } = await supabase
             .from('inventory_lots')
-            .select('remaining_quantity')
+            .select('remaining_quantity, product_id')
             .eq('id', state.lotId)
             .maybeSingle();
 
           if (lot) {
+            resolvedProductId = lot.product_id ?? resolvedProductId;
             await supabase
               .from('inventory_lots')
               .update({ remaining_quantity: lot.remaining_quantity + state.item.quantity })
               .eq('id', state.lotId);
           }
         } else {
+          const { data: existingLot } = await supabase
+            .from('inventory_lots')
+            .select('id, product_id')
+            .eq('barcode', state.item.sku)
+            .limit(1)
+            .maybeSingle();
+
+          if (existingLot) {
+            resolvedProductId = existingLot.product_id ?? resolvedProductId;
+          }
+
           const lotNumber = `RET-${returnData.return_number}-${state.item.sku}`;
-          await supabase.from('inventory_lots').insert({
-            lot_number: lotNumber,
-            product_id: state.item.product_id,
-            location_id: state.selectedLocationId,
-            received_date: new Date().toISOString().split('T')[0],
-            received_quantity: state.item.quantity,
-            remaining_quantity: state.item.quantity,
-            landed_cost_per_unit: 0,
+          const { data: newLot } = await supabase
+            .from('inventory_lots')
+            .insert({
+              lot_number: lotNumber,
+              barcode: state.item.sku,
+              product_id: resolvedProductId,
+              location_id: state.selectedLocationId,
+              received_date: new Date().toISOString().split('T')[0],
+              received_quantity: state.item.quantity,
+              remaining_quantity: state.item.quantity,
+              landed_cost_per_unit: 0,
+            })
+            .select('id')
+            .single();
+
+          if (newLot) {
+            resolvedLotId = newLot.id;
+          }
+        }
+
+        if (resolvedProductId && resolvedLotId) {
+          await supabase.from('stock_movements').insert({
+            movement_type: 'return_restock',
+            product_id: resolvedProductId,
+            lot_id: resolvedLotId,
+            to_location_id: state.selectedLocationId,
+            quantity: state.item.quantity,
+            reference_type: 'return',
+            reference_id: returnData.id,
           });
         }
       }

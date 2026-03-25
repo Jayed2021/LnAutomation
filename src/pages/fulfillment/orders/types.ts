@@ -11,6 +11,8 @@ export type CsStatus =
   | 'shipped'
   | 'delivered'
   | 'cancelled'
+  | 'cancelled_cbd'
+  | 'cancelled_cad'
   | 'refund'
   | 'exchange'
   | 'partial_delivery'
@@ -61,6 +63,8 @@ export const STATUS_CONFIG: Record<string, StatusConfig> = {
   shipped:        { label: 'Shipped',           color: 'text-green-700', bg: 'bg-green-50', border: 'border-green-200' },
   delivered:      { label: 'Delivered',         color: 'text-green-800', bg: 'bg-green-100', border: 'border-green-300' },
   cancelled:      { label: 'Cancelled',         color: 'text-red-700', bg: 'bg-red-50', border: 'border-red-200' },
+  cancelled_cbd:  { label: 'CBD',               color: 'text-amber-800', bg: 'bg-amber-100', border: 'border-amber-300' },
+  cancelled_cad:  { label: 'CAD',               color: 'text-red-900', bg: 'bg-red-200', border: 'border-red-400' },
   refund:         { label: 'Refund',            color: 'text-red-800', bg: 'bg-red-100', border: 'border-red-300' },
   exchange:           { label: 'Exchange',                   color: 'text-blue-800',  bg: 'bg-blue-100',  border: 'border-blue-300' },
   partial_delivery:   { label: 'Partial Delivery',           color: 'text-orange-800', bg: 'bg-orange-100', border: 'border-orange-300' },

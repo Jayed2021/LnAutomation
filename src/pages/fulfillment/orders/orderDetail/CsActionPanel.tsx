@@ -34,6 +34,8 @@ const BASE_ACTIONS: Record<string, string[]> = {
   shipped:           ['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   delivered:         ['exchange', 'partial_delivery', 'reverse_pick', 'refund'],
   cancelled:         ['mark_processing', 'refund'],
+  cancelled_cbd:     ['mark_processing', 'refund'],
+  cancelled_cad:     ['refund'],
   refund:            [],
   exchange:          ['refund'],
   partial_delivery:  ['refund'],
@@ -73,8 +75,8 @@ const STATUS_MAP: Record<string, string> = {
   awaiting_payment:       'awaiting_payment',
   late_delivery:          'late_delivery',
   exchange:               'exchange',
-  cancel_before_dispatch: 'cancelled',
-  cancel_after_dispatch:  'cancelled',
+  cancel_before_dispatch: 'cancelled_cbd',
+  cancel_after_dispatch:  'cancelled_cad',
   partial_delivery:       'partial_delivery',
   reverse_pick:           'reverse_pick',
   refund:                 'refund',
@@ -297,6 +299,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         const reason = cancellationReasons.find(r => r.id === form.cancellation_reason_id);
         updates.cancellation_reason = reason?.reason_text ?? '';
         updates.cancellation_reason_id = form.cancellation_reason_id;
+        updates.cancellation_type = 'cbd';
         const wooResult = await callWooProxy('cancel-order');
         if (!wooResult.ok) {
           wooSyncWarning = wooResult.skipped
@@ -314,6 +317,23 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         const reason = cancellationReasons.find(r => r.id === form.cancellation_reason_id);
         updates.cancellation_reason = reason?.reason_text ?? '';
         updates.cancellation_reason_id = form.cancellation_reason_id;
+        updates.cancellation_type = 'cad';
+        const { data: existingCadReturn } = await supabase
+          .from('returns')
+          .select('id')
+          .eq('order_id', order.id)
+          .maybeSingle();
+        if (!existingCadReturn) {
+          const returnNumber = `RET-${Date.now()}`;
+          await supabase.from('returns').insert({
+            return_number: returnNumber,
+            order_id: order.id,
+            customer_id: order.customer.id,
+            return_reason: 'CAD',
+            status: 'expected',
+            created_by: userId,
+          });
+        }
       }
 
       if (selectedAction === 'partial_delivery') {

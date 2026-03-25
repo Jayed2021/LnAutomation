@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Download, ScanLine, Camera, Check, Package, FlaskConical } from 'lucide-react';
+import { X, Download, ScanLine, Camera, Check, Package } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { downloadSingleBarcode } from '../inventory/barcodePrint';
 
@@ -11,7 +11,7 @@ interface ReturnItemData {
   expected_barcode: string | null;
   product_id: string;
   order_item_id: string | null;
-  order_item: { product_name: string } | null;
+  order_item: { product_name: string; unit_price: number } | null;
   product: { name: string; sku: string } | null;
 }
 
@@ -30,9 +30,7 @@ interface Props {
 }
 
 export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
-  const rawItems = returnData.items ?? [];
-  const labItems = rawItems.filter(i => i.sku.startsWith('LN_'));
-  const physicalItems = rawItems.filter(i => !i.sku.startsWith('LN_'));
+  const items = returnData.items ?? [];
 
   const [scannedItems, setScannedItems] = useState<Set<string>>(new Set());
   const [scanInput, setScanInput] = useState('');
@@ -41,7 +39,6 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
   const [processing, setProcessing] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
 
-  const items = physicalItems;
   const totalItems = items.length;
   const receivedCount = scannedItems.size;
   const allScanned = totalItems > 0 && receivedCount === totalItems;
@@ -126,7 +123,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                 Receive Return Items for Order {orderLabel}
               </h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Scan each returned item's barcode to confirm receipt. Click an item to switch to it.
+                Scan each returned item's barcode to confirm receipt. The barcode shown is the exact one that was dispatched with this order.
               </p>
             </div>
           </div>
@@ -154,7 +151,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
           {totalItems > 0 && (
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2.5">
-                Physical Items to Scan:
+                Expected Return Items:
               </div>
               <div className="space-y-2">
                 {items.map((item, idx) => {
@@ -206,39 +203,7 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
             </div>
           )}
 
-          {labItems.length > 0 && (
-            <div className="bg-teal-50 rounded-xl border border-teal-200 p-3">
-              <div className="flex items-center gap-1.5 mb-2.5">
-                <FlaskConical className="w-3.5 h-3.5 text-teal-600" />
-                <span className="text-xs font-semibold text-teal-700 uppercase tracking-wide">
-                  Lab / Prescription Items — No Scan Required
-                </span>
-              </div>
-              <div className="space-y-1.5">
-                {labItems.map(item => (
-                  <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-white border border-teal-100">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-5 h-5 rounded-full bg-teal-500 flex items-center justify-center shrink-0">
-                        <Check className="w-3 h-3 text-white" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-medium text-gray-800 text-sm truncate">{getItemName(item)}</div>
-                        <div className="text-xs text-gray-500">SKU: {item.sku} | Qty: {item.quantity}</div>
-                      </div>
-                    </div>
-                    <span className="text-xs text-teal-600 font-medium shrink-0 ml-2">Lab Return</span>
-                  </div>
-                ))}
-              </div>
-              {totalItems === 0 && (
-                <p className="text-xs text-teal-600 mt-2.5">
-                  This return contains only lab/prescription items. No barcode scanning needed — click "Mark as Received" to proceed.
-                </p>
-              )}
-            </div>
-          )}
-
-          {totalItems === 0 && labItems.length === 0 && (
+          {totalItems === 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
               No items are linked to this return. You can still mark it as received.
             </div>
@@ -260,6 +225,14 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
                   <div>
                     <div className="text-xs text-gray-400">Quantity</div>
                     <div className="text-sm font-medium text-gray-800">{currentItem.quantity}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400">Price</div>
+                    <div className="text-sm font-medium text-gray-800">
+                      {currentItem.order_item?.unit_price != null
+                        ? `৳${currentItem.order_item.unit_price.toFixed(2)}`
+                        : '—'}
+                    </div>
                   </div>
                 </div>
               </div>

@@ -20,7 +20,7 @@ interface ReturnItem {
   expected_barcode: string | null;
   product_id: string;
   order_item_id: string | null;
-  order_item: { product_name: string } | null;
+  order_item: { product_name: string; unit_price: number } | null;
   product: { name: string; sku: string } | null;
 }
 
@@ -143,7 +143,7 @@ export default function Returns() {
             expected_barcode,
             product_id,
             order_item_id,
-            order_item:order_items!order_item_id(product_name),
+            order_item:order_items!order_item_id(product_name, unit_price),
             product:products!product_id(name, sku)
           )
         `)

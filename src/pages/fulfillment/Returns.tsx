@@ -142,8 +142,8 @@ export default function Returns() {
           refund_status,
           created_at,
           order_id,
-          order:orders(order_number, woo_order_id, cs_status),
-          customer:customers(full_name),
+          order:orders!order_id(order_number, woo_order_id, cs_status),
+          customer:customers!customer_id(full_name),
           items:return_items(
             id,
             sku,
@@ -152,8 +152,8 @@ export default function Returns() {
             expected_barcode,
             product_id,
             order_item_id,
-            order_item:order_items(product_name),
-            product:products(name, sku)
+            order_item:order_items!order_item_id(product_name),
+            product:products!product_id(name, sku)
           )
         `)
         .order('created_at', { ascending: false });

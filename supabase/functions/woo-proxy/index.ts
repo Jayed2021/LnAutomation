@@ -321,7 +321,7 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
       woo_order_number: String(payload.number || wooOrderId),
       woo_order_status: payload.status,
       customer_id: customerId,
-      order_date: payload.date_created || new Date().toISOString(),
+      order_date: payload.date_created_gmt ? payload.date_created_gmt + "Z" : (payload.date_created || new Date().toISOString()),
       cs_status: csStatus,
       payment_method: paymentMethod,
       payment_status: payload.payment_method === "cod" ? "unpaid" : "paid",

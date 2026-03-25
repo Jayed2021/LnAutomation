@@ -181,7 +181,7 @@ export default function OrderDetail() {
       </div>
 
       {/* Order Items */}
-      <OrderItemsCard order={order} items={items} userId={user?.id ?? null} onUpdated={load} />
+      <OrderItemsCard order={order} items={items} prescriptions={prescriptions} userId={user?.id ?? null} onUpdated={load} />
 
       {/* Packaging */}
       <PackagingCard orderId={order.id} items={packagingItems} userId={user?.id ?? null} onUpdated={load} />

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Plus, Save, X, Trash2, Copy, ChevronDown, ChevronUp, FlaskConical, Upload, Download, Paperclip } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderPrescription, OrderItem } from './types';
@@ -21,13 +21,13 @@ interface Props {
   onUpdated: () => void;
 }
 
-interface RxFields {
+export interface RxFields {
   prescription_type: string;
   lens_type: string;
   custom_lens_type: string;
-  customer_price: number;
-  lens_price: number;
-  fitting_charge: number;
+  customer_price: string;
+  lens_price: string;
+  fitting_charge: string;
   od_sph: string; od_cyl: string; od_axis: string; od_pd: string;
   os_sph: string; os_cyl: string; os_axis: string; os_pd: string;
   rx_file_url: string;
@@ -35,7 +35,7 @@ interface RxFields {
 
 const EMPTY_RX: RxFields = {
   prescription_type: '', lens_type: '', custom_lens_type: '',
-  customer_price: 0, lens_price: 0, fitting_charge: 0,
+  customer_price: '0', lens_price: '0', fitting_charge: '0',
   od_sph: '', od_cyl: '', od_axis: '', od_pd: '',
   os_sph: '', os_cyl: '', os_axis: '', os_pd: '',
   rx_file_url: '',
@@ -46,9 +46,9 @@ function prescriptionToFields(p: OrderPrescription): RxFields {
     prescription_type: p.prescription_type ?? '',
     lens_type: p.lens_type ?? '',
     custom_lens_type: p.custom_lens_type ?? '',
-    customer_price: p.customer_price ?? 0,
-    lens_price: p.lens_price ?? 0,
-    fitting_charge: p.fitting_charge ?? 0,
+    customer_price: String(p.customer_price ?? 0),
+    lens_price: String(p.lens_price ?? 0),
+    fitting_charge: String(p.fitting_charge ?? 0),
     od_sph: p.od_sph ?? '', od_cyl: p.od_cyl ?? '',
     od_axis: p.od_axis ?? '', od_pd: p.od_pd ?? '',
     os_sph: p.os_sph ?? '', os_cyl: p.os_cyl ?? '',
@@ -61,6 +61,183 @@ interface FormState {
   itemId: string;
   fields: RxFields;
   editingId: string | null;
+}
+
+interface RxFormProps {
+  fields: RxFields;
+  onChange: (f: RxFields) => void;
+  uploading: boolean;
+  onChooseFile: () => void;
+  fileInputRef: React.RefObject<HTMLInputElement>;
+  onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+}
+
+const inputCls = "px-2.5 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full bg-white";
+const rxInput = "px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full text-center";
+
+function RxForm({ fields, onChange, uploading, onChooseFile, fileInputRef, onFileChange }: RxFormProps) {
+  const lensOptions = fields.prescription_type ? (LENS_TYPES[fields.prescription_type] ?? []) : [];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div>
+          <div className="text-xs font-medium text-gray-500 mb-1">Prescription Type</div>
+          <select
+            value={fields.prescription_type}
+            onChange={e => onChange({ ...fields, prescription_type: e.target.value, lens_type: '' })}
+            className={inputCls}
+          >
+            <option value="">Select type</option>
+            {PRESCRIPTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <div className="text-xs font-medium text-gray-500 mb-1">Lens Type</div>
+          <select
+            value={fields.lens_type}
+            onChange={e => onChange({ ...fields, lens_type: e.target.value })}
+            className={inputCls}
+            disabled={!fields.prescription_type}
+          >
+            <option value="">{fields.prescription_type ? 'Select lens' : 'Select type first'}</option>
+            {lensOptions.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <div className="text-xs font-medium text-gray-500 mb-1">
+            Customer Price (৳)
+            <span className="ml-1 text-blue-500 font-normal">Added to order</span>
+          </div>
+          <input
+            type="number"
+            value={fields.customer_price}
+            onChange={e => onChange({ ...fields, customer_price: e.target.value })}
+            className={inputCls}
+            min="0"
+          />
+        </div>
+        <div>
+          <div className="text-xs font-medium text-gray-500 mb-1">Upload Prescription</div>
+          <input ref={fileInputRef} type="file" accept=".pdf,image/*" className="hidden" onChange={onFileChange} />
+          {fields.rx_file_url ? (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <a
+                href={fields.rx_file_url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 px-2 py-1 rounded bg-blue-50"
+              >
+                <Paperclip className="w-3 h-3" />
+                View File
+              </a>
+              <a
+                href={fields.rx_file_url}
+                download
+                className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded hover:bg-gray-50"
+              >
+                <Download className="w-3 h-3" />
+                Download
+              </a>
+              <button
+                type="button"
+                onClick={() => onChange({ ...fields, rx_file_url: '' })}
+                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 border border-red-100 px-2 py-1 rounded hover:bg-red-50"
+              >
+                <X className="w-3 h-3" />
+                Remove
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={onChooseFile}
+              disabled={uploading}
+              className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 w-full justify-center"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              {uploading ? 'Uploading...' : 'Choose File'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {fields.lens_type === 'Custom' && (
+        <div>
+          <div className="text-xs font-medium text-gray-500 mb-1">Custom Lens Type</div>
+          <input
+            value={fields.custom_lens_type}
+            onChange={e => onChange({ ...fields, custom_lens_type: e.target.value })}
+            className={inputCls}
+            placeholder="Describe custom lens type"
+          />
+        </div>
+      )}
+
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+        <div className="flex items-center gap-1.5 mb-2.5">
+          <FlaskConical className="w-3.5 h-3.5 text-gray-400" />
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Lab Cost — Internal Only</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-xs font-medium text-gray-500 mb-1">Lab Lens Price (৳)</div>
+            <input
+              type="number"
+              value={fields.lens_price}
+              onChange={e => onChange({ ...fields, lens_price: e.target.value })}
+              className={inputCls}
+              min="0"
+            />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-gray-500 mb-1">Lab Fitting Charge (৳)</div>
+            <input
+              type="number"
+              value={fields.fitting_charge}
+              onChange={e => onChange({ ...fields, fitting_charge: e.target.value })}
+              className={inputCls}
+              min="0"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="border border-gray-100 rounded-lg overflow-hidden">
+        <table className="w-full">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left text-xs font-semibold text-gray-500 px-3 py-2 w-20">Eye</th>
+              {['SPH', 'CYL', 'AXIS', 'PD'].map(h => (
+                <th key={h} className="text-center text-xs font-semibold text-gray-500 px-2 py-2">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {(['od', 'os'] as const).map(prefix => (
+              <tr key={prefix}>
+                <td className="py-2 px-3 text-sm font-medium text-gray-700 whitespace-nowrap">
+                  {prefix === 'od' ? 'Right (OD)' : 'Left (OS)'}
+                </td>
+                {(['sph', 'cyl', 'axis', 'pd'] as const).map(field => (
+                  <td key={field} className="py-2 px-1">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={fields[`${prefix}_${field}` as keyof RxFields] as string}
+                      onChange={e => onChange({ ...fields, [`${prefix}_${field}`]: e.target.value })}
+                      className={rxInput}
+                      placeholder="—"
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpdated }: Props) {
@@ -80,8 +257,11 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
       const path = `orders/${orderId}/${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from('prescription-files').upload(path, file, { upsert: true });
       if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from('prescription-files').getPublicUrl(path);
-      setOpenForm(prev => prev ? { ...prev, fields: { ...prev.fields, rx_file_url: publicUrl } } : null);
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from('prescription-files')
+        .createSignedUrl(path, 60 * 60 * 24 * 365);
+      if (signedError) throw signedError;
+      setOpenForm(prev => prev ? { ...prev, fields: { ...prev.fields, rx_file_url: signedData.signedUrl, _storagePath: path } as any } : null);
     } catch (err) {
       console.error('File upload failed:', err);
       alert('Failed to upload prescription file. Please try again.');
@@ -111,19 +291,48 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
     setDuplicateTargetId(null);
   };
 
+  const recalcOrderTotal = useCallback(async () => {
+    const { data: allItems } = await supabase
+      .from('order_items')
+      .select('quantity, unit_price')
+      .eq('order_id', orderId);
+    if (!allItems) return;
+    const { data: allRx } = await supabase
+      .from('order_prescriptions')
+      .select('customer_price')
+      .eq('order_id', orderId);
+    const { data: ord } = await supabase
+      .from('orders')
+      .select('shipping_fee, discount_amount')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (!ord) return;
+    const itemsSubtotal = allItems.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+    const rxFee = (allRx ?? []).reduce((s, r) => s + (r.customer_price ?? 0), 0);
+    const subtotal = itemsSubtotal + rxFee;
+    const total = subtotal + (ord.shipping_fee ?? 0) - (ord.discount_amount ?? 0);
+    await supabase.from('orders').update({
+      subtotal,
+      total_amount: Math.max(0, total),
+    }).eq('id', orderId);
+  }, [orderId]);
+
   const handleSave = async () => {
     if (!openForm || !openForm.fields.prescription_type) return;
     setSaving(true);
     try {
+      const targetItem = eligibleItems.find(i => i.id === openForm.itemId);
+      const itemLabel = targetItem?.product_name ?? 'item';
+
       const payload = {
         order_id: orderId,
         order_item_id: openForm.itemId || null,
         prescription_type: openForm.fields.prescription_type,
         lens_type: openForm.fields.lens_type || null,
         custom_lens_type: openForm.fields.lens_type === 'Custom' ? openForm.fields.custom_lens_type : null,
-        customer_price: openForm.fields.customer_price,
-        lens_price: openForm.fields.lens_price,
-        fitting_charge: openForm.fields.fitting_charge,
+        customer_price: parseFloat(openForm.fields.customer_price) || 0,
+        lens_price: parseFloat(openForm.fields.lens_price) || 0,
+        fitting_charge: parseFloat(openForm.fields.fitting_charge) || 0,
         od_sph: openForm.fields.od_sph || null,
         od_cyl: openForm.fields.od_cyl || null,
         od_axis: openForm.fields.od_axis || null,
@@ -135,61 +344,15 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
         rx_file_url: openForm.fields.rx_file_url || null,
       };
 
-      const targetItem = eligibleItems.find(i => i.id === openForm.itemId);
-      const itemLabel = targetItem?.product_name ?? 'item';
-
       if (openForm.editingId) {
         await supabase.from('order_prescriptions').update(payload).eq('id', openForm.editingId);
-
-        if (openForm.fields.customer_price > 0) {
-          const { data: existingRx } = await supabase
-            .from('order_items')
-            .select('id')
-            .eq('order_id', orderId)
-            .eq('sku', 'RX')
-            .eq('product_name', `${openForm.fields.prescription_type} Lens — ${itemLabel}`)
-            .maybeSingle();
-
-          if (existingRx) {
-            await supabase.from('order_items').update({
-              unit_price: openForm.fields.customer_price,
-              line_total: openForm.fields.customer_price,
-            }).eq('id', existingRx.id);
-          } else {
-            await supabase.from('order_items').insert({
-              order_id: orderId,
-              product_id: null,
-              sku: 'RX',
-              product_name: `${openForm.fields.prescription_type} Lens — ${itemLabel}`,
-              quantity: 1,
-              unit_price: openForm.fields.customer_price,
-              line_total: openForm.fields.customer_price,
-              discount_amount: 0,
-            });
-          }
-          await recalcOrderTotal();
-        }
-
         await logActivity(orderId, `Prescription updated for ${itemLabel}: ${openForm.fields.prescription_type}`, userId);
       } else {
         await supabase.from('order_prescriptions').insert(payload);
-
-        if (openForm.fields.customer_price > 0) {
-          await supabase.from('order_items').insert({
-            order_id: orderId,
-            product_id: null,
-            sku: 'RX',
-            product_name: `${openForm.fields.prescription_type} Lens — ${itemLabel}`,
-            quantity: 1,
-            unit_price: openForm.fields.customer_price,
-            line_total: openForm.fields.customer_price,
-            discount_amount: 0,
-          });
-          await recalcOrderTotal();
-        }
-
         await logActivity(orderId, `Prescription added for ${itemLabel}: ${openForm.fields.prescription_type}`, userId);
       }
+
+      await recalcOrderTotal();
 
       setOpenForm(null);
       onUpdated();
@@ -200,34 +363,11 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
     }
   };
 
-  const recalcOrderTotal = async () => {
-    const { data: allItems } = await supabase
-      .from('order_items')
-      .select('quantity, unit_price')
-      .eq('order_id', orderId);
-    if (!allItems) return;
-    const { data: ord } = await supabase
-      .from('orders')
-      .select('shipping_fee, discount_amount')
-      .eq('id', orderId)
-      .maybeSingle();
-    if (!ord) return;
-    const subtotal = allItems.reduce((s, i) => s + i.quantity * i.unit_price, 0);
-    const total = subtotal + (ord.shipping_fee ?? 0) - (ord.discount_amount ?? 0);
-    await supabase.from('orders').update({
-      subtotal,
-      total_amount: Math.max(0, total),
-    }).eq('id', orderId);
-  };
-
   const handleDelete = async (p: OrderPrescription) => {
     await supabase.from('order_prescriptions').delete().eq('id', p.id);
+
     const targetItem = eligibleItems.find(i => i.id === p.order_item_id);
     const itemLabel = targetItem?.product_name ?? 'item';
-    const rxName = `${p.prescription_type} Lens — ${itemLabel}`;
-    await supabase.from('order_items').delete()
-      .eq('order_id', orderId).eq('sku', 'RX').eq('product_name', rxName);
-    await recalcOrderTotal();
 
     const { count } = await supabase
       .from('order_prescriptions')
@@ -235,6 +375,7 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
       .eq('order_id', orderId);
     await supabase.from('orders').update({ has_prescription: (count ?? 0) > 0 }).eq('id', orderId);
 
+    await recalcOrderTotal();
     await logActivity(orderId, `Prescription removed for ${itemLabel}`, userId);
     onUpdated();
   };
@@ -247,169 +388,13 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
     });
   };
 
-  const inputCls = "px-2.5 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full bg-white";
-  const rxInput = "px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full text-center";
+  const handleFormChange = useCallback((f: RxFields) => {
+    setOpenForm(prev => prev ? { ...prev, fields: f } : null);
+  }, []);
 
-  const RxForm = ({ fields, onChange }: { fields: RxFields; onChange: (f: RxFields) => void }) => {
-    const lensOptions = fields.prescription_type ? (LENS_TYPES[fields.prescription_type] ?? []) : [];
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div>
-            <div className="text-xs font-medium text-gray-500 mb-1">Prescription Type</div>
-            <select
-              value={fields.prescription_type}
-              onChange={e => onChange({ ...fields, prescription_type: e.target.value, lens_type: '' })}
-              className={inputCls}
-            >
-              <option value="">Select type</option>
-              {PRESCRIPTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <div className="text-xs font-medium text-gray-500 mb-1">Lens Type</div>
-            <select
-              value={fields.lens_type}
-              onChange={e => onChange({ ...fields, lens_type: e.target.value })}
-              className={inputCls}
-              disabled={!fields.prescription_type}
-            >
-              <option value="">{fields.prescription_type ? 'Select lens' : 'Select type first'}</option>
-              {lensOptions.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <div className="text-xs font-medium text-gray-500 mb-1">
-              Customer Price (৳)
-              <span className="ml-1 text-blue-500 font-normal">Added to order</span>
-            </div>
-            <input
-              type="number"
-              value={fields.customer_price}
-              onChange={e => onChange({ ...fields, customer_price: parseFloat(e.target.value) || 0 })}
-              className={inputCls}
-            />
-          </div>
-          <div>
-            <div className="text-xs font-medium text-gray-500 mb-1">Upload Prescription</div>
-            <input ref={fileInputRef} type="file" accept=".pdf,image/*" className="hidden" onChange={handleRxFileUpload} />
-            {fields.rx_file_url ? (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <a
-                  href={fields.rx_file_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 px-2 py-1 rounded bg-blue-50"
-                >
-                  <Paperclip className="w-3 h-3" />
-                  View File
-                </a>
-                <a
-                  href={fields.rx_file_url}
-                  download
-                  className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded hover:bg-gray-50"
-                >
-                  <Download className="w-3 h-3" />
-                  Download
-                </a>
-                <button
-                  type="button"
-                  onClick={() => onChange({ ...fields, rx_file_url: '' })}
-                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 border border-red-100 px-2 py-1 rounded hover:bg-red-50"
-                >
-                  <X className="w-3 h-3" />
-                  Remove
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 w-full justify-center"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                {uploading ? 'Uploading...' : 'Choose File'}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {fields.lens_type === 'Custom' && (
-          <div>
-            <div className="text-xs font-medium text-gray-500 mb-1">Custom Lens Type</div>
-            <input
-              value={fields.custom_lens_type}
-              onChange={e => onChange({ ...fields, custom_lens_type: e.target.value })}
-              className={inputCls}
-              placeholder="Describe custom lens type"
-            />
-          </div>
-        )}
-
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-          <div className="flex items-center gap-1.5 mb-2.5">
-            <FlaskConical className="w-3.5 h-3.5 text-gray-400" />
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Lab Cost — Internal Only</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">Lab Lens Price (৳)</div>
-              <input
-                type="number"
-                value={fields.lens_price}
-                onChange={e => onChange({ ...fields, lens_price: parseFloat(e.target.value) || 0 })}
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">Lab Fitting Charge (৳)</div>
-              <input
-                type="number"
-                value={fields.fitting_charge}
-                onChange={e => onChange({ ...fields, fitting_charge: parseFloat(e.target.value) || 0 })}
-                className={inputCls}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="border border-gray-100 rounded-lg overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="text-left text-xs font-semibold text-gray-500 px-3 py-2 w-20">Eye</th>
-                {['SPH', 'CYL', 'AXIS', 'PD'].map(h => (
-                  <th key={h} className="text-center text-xs font-semibold text-gray-500 px-2 py-2">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {(['od', 'os'] as const).map(prefix => (
-                <tr key={prefix}>
-                  <td className="py-2 px-3 text-sm font-medium text-gray-700 whitespace-nowrap">
-                    {prefix === 'od' ? 'Right (OD)' : 'Left (OS)'}
-                  </td>
-                  {(['sph', 'cyl', 'axis', 'pd'] as const).map(field => (
-                    <td key={field} className="py-2 px-1">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={fields[`${prefix}_${field}` as keyof RxFields] as string}
-                        onChange={e => onChange({ ...fields, [`${prefix}_${field}`]: e.target.value })}
-                        className={rxInput}
-                        placeholder="—"
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
+  const handleChooseFile = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
 
   const PrescriptionSummary = ({ p, itemId }: { p: OrderPrescription; itemId: string }) => {
     const expanded = expandedIds.has(p.id);
@@ -520,7 +505,8 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
                 </a>
                 <a
                   href={p.rx_file_url}
-                  download
+                  target="_blank"
+                  rel="noreferrer"
                   className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded hover:bg-gray-50"
                 >
                   <Download className="w-3 h-3" />
@@ -593,7 +579,11 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
                           </div>
                           <RxForm
                             fields={openForm!.fields}
-                            onChange={f => setOpenForm(prev => prev ? { ...prev, fields: f } : null)}
+                            onChange={handleFormChange}
+                            uploading={uploading}
+                            onChooseFile={handleChooseFile}
+                            fileInputRef={fileInputRef}
+                            onFileChange={handleRxFileUpload}
                           />
                           <div className="flex gap-2">
                             <button
@@ -631,7 +621,11 @@ export function PrescriptionCard({ orderId, prescriptions, items, userId, onUpda
                     </div>
                     <RxForm
                       fields={openForm.fields}
-                      onChange={f => setOpenForm(prev => prev ? { ...prev, fields: f } : null)}
+                      onChange={handleFormChange}
+                      uploading={uploading}
+                      onChooseFile={handleChooseFile}
+                      fileInputRef={fileInputRef}
+                      onFileChange={handleRxFileUpload}
                     />
                     <div className="flex gap-2">
                       <button

@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock } from 'lucide-react';
+import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock, Eye } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
-import { OrderItem, OrderDetail } from './types';
+import { OrderItem, OrderDetail, OrderPrescription } from './types';
 import { logActivity } from './service';
 import { AddProductsModal } from './AddProductsModal';
 
 interface Props {
   order: OrderDetail;
   items: OrderItem[];
+  prescriptions: OrderPrescription[];
   userId: string | null;
   onUpdated: () => void;
 }
@@ -42,7 +43,7 @@ function fmt(n: number): string {
   return '৳' + n.toLocaleString('en-BD', { minimumFractionDigits: 2 });
 }
 
-export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
+export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [editItems, setEditItems] = useState<EditableItem[]>([]);
   const [feeRows, setFeeRows] = useState<FeeRow[]>([]);
@@ -278,14 +279,17 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
     setAddingFee(false);
   };
 
+  const rxFeeTotal = prescriptions.reduce((s, p) => s + (p.customer_price ?? 0), 0);
+
   const displayItems = editing
-    ? editItems.filter(i => !i._deleted)
-    : items;
+    ? editItems.filter(i => !i._deleted && i.sku !== 'RX')
+    : items.filter(i => i.sku !== 'RX');
 
   const subtotal = editing
-    ? editItems.filter(i => !i._deleted).reduce((s, i) => s + i.quantity * i.unit_price, 0)
+    ? editItems.filter(i => !i._deleted && i.sku !== 'RX').reduce((s, i) => s + i.quantity * i.unit_price, 0)
       + feeRows.reduce((s, f) => s + f.amount, 0)
-    : items.reduce((s, i) => s + i.line_total, 0);
+      + rxFeeTotal
+    : items.filter(i => i.sku !== 'RX').reduce((s, i) => s + i.line_total, 0) + rxFeeTotal;
 
   const couponLines = order.coupon_lines ?? [];
   const hasCoupons = couponLines.length > 0;
@@ -492,6 +496,16 @@ export function OrderItemsCard({ order, items, userId, onUpdated }: Props) {
           <span className="text-gray-500">Subtotal:</span>
           <span>{fmt(subtotal)}</span>
         </div>
+
+        {rxFeeTotal > 0 && (
+          <div className="flex justify-between text-sm">
+            <span className="flex items-center gap-1.5 text-gray-500">
+              <Eye className="w-3.5 h-3.5 shrink-0 text-blue-400" />
+              Prescription Lens Fee:
+            </span>
+            <span className="text-blue-700 font-medium">{fmt(rxFeeTotal)}</span>
+          </div>
+        )}
 
         {hasFees && (
           <div className="space-y-1.5">

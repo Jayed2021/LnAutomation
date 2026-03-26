@@ -5,6 +5,18 @@ import { OrderDetail } from './types';
 
 const PAYMENT_METHODS = ['COD', 'SSL Commerz', 'bKash', 'Nagad', 'Bank Transfer', 'bKash+COD', 'SSL+COD', 'Nagad+COD'];
 
+const inputCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+const selectCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500";
+
+function Field({ label, value, children }: { label: string; value?: string; children?: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-xs font-medium text-gray-500 mb-1">{label}</div>
+      {children ?? <div className="text-sm text-gray-900 font-medium">{value || '—'}</div>}
+    </div>
+  );
+}
+
 interface Props {
   order: OrderDetail;
   onUpdated: () => void;
@@ -92,16 +104,6 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
       setSaving(false);
     }
   };
-
-  const Field = ({ label, value, children }: { label: string; value?: string; children?: React.ReactNode }) => (
-    <div>
-      <div className="text-xs font-medium text-gray-500 mb-1">{label}</div>
-      {children ?? <div className="text-sm text-gray-900 font-medium">{value || '—'}</div>}
-    </div>
-  );
-
-  const inputCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
-  const selectCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500";
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4">

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Save, RefreshCw, ScanLine, AlertTriangle } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
@@ -24,6 +24,7 @@ export default function BarcodeSettings() {
     barcode_format: 'CODE128',
     dpi: 300,
   });
+  const [scanEnforcement, setScanEnforcement] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -37,18 +38,21 @@ export default function BarcodeSettings() {
   }, [settings]);
 
   const loadSettings = async () => {
-    const { data } = await supabase
-      .from('barcode_label_settings')
-      .select('*')
-      .maybeSingle();
-    if (data) {
+    const [labelRes, enforcementRes] = await Promise.all([
+      supabase.from('barcode_label_settings').select('*').maybeSingle(),
+      supabase.from('app_settings').select('value').eq('key', 'pick_scan_enforcement_enabled').maybeSingle(),
+    ]);
+    if (labelRes.data) {
       setSettings({
-        id: data.id,
-        label_width_in: data.label_width_in,
-        label_height_in: data.label_height_in,
-        barcode_format: data.barcode_format,
-        dpi: data.dpi,
+        id: labelRes.data.id,
+        label_width_in: labelRes.data.label_width_in,
+        label_height_in: labelRes.data.label_height_in,
+        barcode_format: labelRes.data.barcode_format,
+        dpi: labelRes.data.dpi,
       });
+    }
+    if (enforcementRes.data) {
+      setScanEnforcement(enforcementRes.data.value !== false);
     }
     setLoading(false);
   };
@@ -106,6 +110,24 @@ export default function BarcodeSettings() {
           .single();
         if (data) setSettings(prev => ({ ...prev, id: data.id }));
       }
+
+      const { data: existing } = await supabase
+        .from('app_settings')
+        .select('id')
+        .eq('key', 'pick_scan_enforcement_enabled')
+        .maybeSingle();
+      if (existing) {
+        await supabase
+          .from('app_settings')
+          .update({ value: scanEnforcement, updated_at: new Date().toISOString() })
+          .eq('key', 'pick_scan_enforcement_enabled');
+      } else {
+        await supabase.from('app_settings').insert({
+          key: 'pick_scan_enforcement_enabled',
+          value: scanEnforcement,
+        });
+      }
+
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {
@@ -222,6 +244,45 @@ export default function BarcodeSettings() {
           <p className="text-xs text-gray-400 mt-2">
             Most label printers use 203 or 300 DPI. Use 300+ for crisp barcodes on small labels.
           </p>
+        </div>
+
+        <div className="border-t border-gray-100 pt-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 p-2 bg-gray-100 rounded-lg">
+                <ScanLine className="w-4 h-4 text-gray-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">Require Barcode Scan During Picking</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  When enabled, pickers must scan the item barcode. Manual confirm and free text entry are disabled.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={scanEnforcement}
+              onClick={() => setScanEnforcement(prev => !prev)}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                scanEnforcement ? 'bg-blue-600' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
+                  scanEnforcement ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+          {!scanEnforcement && (
+            <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-700">
+                Scan enforcement is disabled. Pickers can confirm items without scanning. All overrides are still logged.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end">

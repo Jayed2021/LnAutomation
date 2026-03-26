@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Package, MapPin, CheckCircle2, ScanLine, Camera, AlertTriangle, FlaskConical, Check } from 'lucide-react';
+import { X, Package, MapPin, CheckCircle2, ScanLine, Camera, AlertTriangle, FlaskConical, Check, Lock } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Dialog, DialogContent } from '../ui/Dialog';
 import { Button } from '../ui/Button';
@@ -48,6 +48,10 @@ interface ItemPickState {
   done: boolean;
 }
 
+type ScanScenario =
+  | { type: 'different_lot'; scannedBarcode: string; recommendedBarcode: string }
+  | null;
+
 export function PickModal({ order, isLabPick = false, onClose }: PickModalProps) {
   const [loading, setLoading] = useState(true);
   const [itemStates, setItemStates] = useState<ItemPickState[]>([]);
@@ -56,17 +60,33 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const [scanError, setScanError] = useState('');
   const [processing, setProcessing] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
+  const [scanEnforced, setScanEnforced] = useState(true);
+  const [scanScenario, setScanScenario] = useState<ScanScenario>(null);
+  const [discrepancyReason, setDiscrepancyReason] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const scannerFiredRef = useRef(false);
 
   useEffect(() => {
     fetchFIFORecommendations();
+    loadEnforcementSetting();
   }, []);
 
   useEffect(() => {
     if (!loading) {
       inputRef.current?.focus();
     }
-  }, [loading, currentItemIndex]);
+  }, [loading, currentItemIndex, scanScenario]);
+
+  const loadEnforcementSetting = async () => {
+    const { data } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'pick_scan_enforcement_enabled')
+      .maybeSingle();
+    if (data) {
+      setScanEnforced(data.value !== false);
+    }
+  };
 
   const fetchFIFORecommendations = async () => {
     try {
@@ -176,38 +196,22 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const currentItem = itemStates[currentItemIndex];
   const currentLot = currentItem?.lots[0];
 
-  const handleScan = (value: string) => {
-    setScanError('');
-    const trimmed = value.trim();
-    if (!trimmed || !currentItem || currentItem.done) return;
-
-    const expectedBarcode = currentLot?.barcode;
-
-    if (expectedBarcode && trimmed !== expectedBarcode) {
-      setScanError(`Wrong barcode. Expected: ${expectedBarcode}`);
-      setBarcodeInput('');
-      return;
+  const extractSkuFromBarcode = (barcode: string): string => {
+    const parts = barcode.split('_');
+    if (parts.length >= 2) {
+      return parts.slice(0, parts.length - 1).join('_');
     }
+    return barcode;
+  };
 
-    const newStates = [...itemStates];
-    newStates[currentItemIndex] = {
-      ...newStates[currentItemIndex],
-      picked_this_session: newStates[currentItemIndex].quantity - newStates[currentItemIndex].already_picked,
-      done: true,
-    };
-    setItemStates(newStates);
-    setBarcodeInput('');
-
-    const nextIndex = newStates.findIndex((s, i) => i > currentItemIndex && !s.done);
+  const advanceToNext = (states: ItemPickState[], fromIndex: number) => {
+    const nextIndex = states.findIndex((s, i) => i > fromIndex && !s.done);
     if (nextIndex >= 0) {
       setCurrentItemIndex(nextIndex);
     }
   };
 
-  const handleManualConfirm = () => {
-    if (!currentItem || currentItem.done) return;
-    setScanError('');
-
+  const markCurrentDone = () => {
     const newStates = [...itemStates];
     newStates[currentItemIndex] = {
       ...newStates[currentItemIndex],
@@ -216,11 +220,70 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
     };
     setItemStates(newStates);
     setBarcodeInput('');
+    scannerFiredRef.current = false;
+    return newStates;
+  };
 
-    const nextIndex = newStates.findIndex((s, i) => i > currentItemIndex && !s.done);
-    if (nextIndex >= 0) {
-      setCurrentItemIndex(nextIndex);
+  const handleScan = (value: string) => {
+    setScanError('');
+    setScanScenario(null);
+    const trimmed = value.trim();
+    if (!trimmed || !currentItem || currentItem.done) return;
+
+    const expectedBarcode = currentLot?.barcode;
+
+    if (expectedBarcode) {
+      if (trimmed === expectedBarcode) {
+        const newStates = markCurrentDone();
+        advanceToNext(newStates, currentItemIndex);
+        return;
+      }
+
+      const scannedSku = extractSkuFromBarcode(trimmed);
+      const isSameSku = scannedSku.toLowerCase() === currentItem.sku.toLowerCase();
+
+      if (isSameSku) {
+        setScanScenario({ type: 'different_lot', scannedBarcode: trimmed, recommendedBarcode: expectedBarcode });
+        setBarcodeInput('');
+        return;
+      }
+
+      setScanError('Wrong item scanned. This does not match the order. You must scan the correct item.');
+      setBarcodeInput('');
+      scannerFiredRef.current = false;
+      return;
     }
+
+    const newStates = markCurrentDone();
+    advanceToNext(newStates, currentItemIndex);
+  };
+
+  const handleJustPick = async () => {
+    if (!scanScenario || scanScenario.type !== 'different_lot') return;
+
+    await supabase.from('pick_discrepancy_log').insert({
+      order_id: order.id,
+      order_item_id: currentItem.item_id,
+      sku: currentItem.sku,
+      product_name: currentItem.product_name,
+      recommended_lot_barcode: scanScenario.recommendedBarcode,
+      scanned_barcode: scanScenario.scannedBarcode,
+      reason: discrepancyReason.trim() || 'No reason provided',
+      picked_by: 'operator',
+    });
+
+    setScanScenario(null);
+    setDiscrepancyReason('');
+    const newStates = markCurrentDone();
+    advanceToNext(newStates, currentItemIndex);
+  };
+
+  const handleManualConfirm = () => {
+    if (!currentItem || currentItem.done) return;
+    setScanError('');
+    setScanScenario(null);
+    const newStates = markCurrentDone();
+    advanceToNext(newStates, currentItemIndex);
   };
 
   const submitPicks = async (isPartial: boolean) => {
@@ -419,6 +482,59 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                     {processing ? 'Processing...' : 'Complete Pick'}
                   </Button>
                 </div>
+              ) : scanScenario?.type === 'different_lot' ? (
+                <div className="border border-amber-200 bg-amber-50 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 bg-amber-500 text-white flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                    <span className="text-sm font-semibold">Different Lot Scanned</span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div className="text-sm text-amber-900">
+                      The scanned barcode is the correct product but from a different lot than the FIFO recommendation.
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 text-xs">
+                      <div className="bg-white rounded-lg p-2.5 border border-amber-100">
+                        <div className="text-gray-500 mb-0.5">Recommended (FIFO)</div>
+                        <div className="font-bold text-green-700 font-mono">{scanScenario.recommendedBarcode}</div>
+                      </div>
+                      <div className="bg-white rounded-lg p-2.5 border border-amber-100">
+                        <div className="text-gray-500 mb-0.5">Scanned</div>
+                        <div className="font-bold text-amber-700 font-mono">{scanScenario.scannedBarcode}</div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-amber-800 mb-1">
+                        Reason for picking different lot (required to proceed)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Recommended lot was empty"
+                        value={discrepancyReason}
+                        onChange={e => setDiscrepancyReason(e.target.value)}
+                        className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        onClick={() => { setScanScenario(null); setDiscrepancyReason(''); setBarcodeInput(''); setTimeout(() => inputRef.current?.focus(), 50); }}
+                        className="py-2.5 border-2 border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-400 transition-colors"
+                      >
+                        Try Again
+                      </button>
+                      <button
+                        onClick={handleJustPick}
+                        disabled={!discrepancyReason.trim()}
+                        className="py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Just Pick (Log)
+                      </button>
+                    </div>
+                    <p className="text-xs text-amber-700 text-center">
+                      "Just Pick" accepts this lot and logs a discrepancy for reporting.
+                    </p>
+                  </div>
+                </div>
               ) : currentItem ? (
                 <div className="border border-blue-200 bg-blue-50 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 bg-blue-600 text-white">
@@ -473,19 +589,40 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                     <div className="space-y-2">
                       <div className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
                         <ScanLine className="h-4 w-4" /> Scan Barcode
+                        {scanEnforced && (
+                          <span className="ml-auto flex items-center gap-1 text-gray-400 font-normal">
+                            <Lock className="h-3 w-3" /> Scanner only
+                          </span>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         <input
                           ref={inputRef}
                           type="text"
-                          inputMode="text"
-                          placeholder="Scan or type barcode..."
+                          inputMode={scanEnforced ? 'none' : 'text'}
+                          readOnly={scanEnforced}
+                          placeholder={scanEnforced ? 'Waiting for scanner...' : 'Scan or type barcode...'}
                           value={barcodeInput}
-                          onChange={(e) => setBarcodeInput(e.target.value)}
+                          onChange={scanEnforced ? undefined : (e) => setBarcodeInput(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleScan(barcodeInput);
+                            if (e.key === 'Enter') {
+                              scannerFiredRef.current = true;
+                              handleScan(barcodeInput);
+                            }
                           }}
-                          className="flex-1 border border-gray-300 rounded-xl px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono bg-white min-h-[52px]"
+                          onInput={scanEnforced ? (e) => {
+                            const input = e.currentTarget;
+                            setBarcodeInput(input.value);
+                            if (input.value.endsWith('\n') || input.value.endsWith('\r')) {
+                              scannerFiredRef.current = true;
+                              handleScan(input.value.trim());
+                            }
+                          } : undefined}
+                          className={`flex-1 border rounded-xl px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono bg-white min-h-[52px] ${
+                            scanEnforced
+                              ? 'border-gray-200 bg-gray-50 text-gray-500 cursor-default'
+                              : 'border-gray-300'
+                          }`}
                         />
                         <button
                           onClick={() => setShowCamera(true)}
@@ -501,30 +638,39 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                           <p className="text-red-600 text-sm">{scanError}</p>
                         </div>
                       )}
-                      <div className="grid grid-cols-2 gap-2 pt-1">
-                        <button
-                          onClick={() => handleScan(barcodeInput)}
-                          disabled={!barcodeInput.trim()}
-                          className="flex items-center justify-center gap-2 py-3 bg-gray-800 hover:bg-gray-900 active:bg-black text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors min-h-[52px]"
-                        >
-                          <ScanLine className="h-4 w-4" /> Confirm Scan
-                        </button>
-                        <button
-                          onClick={handleManualConfirm}
-                          className="flex items-center justify-center gap-2 py-3 bg-white border-2 border-gray-300 hover:border-gray-400 active:bg-gray-50 text-gray-700 rounded-xl text-sm font-medium transition-colors min-h-[52px]"
-                        >
-                          <Check className="h-4 w-4" /> Skip / Confirm
-                        </button>
-                      </div>
-                      <p className="text-xs text-gray-400 text-center">
-                        "Skip / Confirm" picks without scanning — use if scanner unavailable
-                      </p>
+                      {!scanEnforced && (
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <button
+                            onClick={() => handleScan(barcodeInput)}
+                            disabled={!barcodeInput.trim()}
+                            className="flex items-center justify-center gap-2 py-3 bg-gray-800 hover:bg-gray-900 active:bg-black text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors min-h-[52px]"
+                          >
+                            <ScanLine className="h-4 w-4" /> Confirm Scan
+                          </button>
+                          <button
+                            onClick={handleManualConfirm}
+                            className="flex items-center justify-center gap-2 py-3 bg-white border-2 border-gray-300 hover:border-gray-400 active:bg-gray-50 text-gray-700 rounded-xl text-sm font-medium transition-colors min-h-[52px]"
+                          >
+                            <Check className="h-4 w-4" /> Skip / Confirm
+                          </button>
+                        </div>
+                      )}
+                      {scanEnforced && (
+                        <p className="text-xs text-gray-400 text-center flex items-center justify-center gap-1">
+                          <Lock className="h-3 w-3" /> Point scanner at the barcode above to continue
+                        </p>
+                      )}
+                      {!scanEnforced && (
+                        <p className="text-xs text-gray-400 text-center">
+                          "Skip / Confirm" picks without scanning — use if scanner unavailable
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
               ) : null}
 
-              {!allDone && pickedCount > 0 && (
+              {!allDone && !scanScenario && pickedCount > 0 && (
                 <div className="flex gap-2 pt-1">
                   <Button
                     variant="outline"
@@ -544,7 +690,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                 </div>
               )}
 
-              {!allDone && pickedCount === 0 && (
+              {!allDone && !scanScenario && pickedCount === 0 && (
                 <div className="flex justify-start pt-1">
                   <Button variant="outline" className="h-12 px-6" onClick={onClose} disabled={processing}>
                     Cancel

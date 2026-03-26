@@ -209,10 +209,16 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     return missing;
   };
 
+  const COURIERS_REQUIRING_AREA: string[] = [];
+
   const getAutoMissingFields = () => {
     const missing: string[] = [];
     if (!hasCourierCompany) missing.push('Courier Company');
-    if (!edit.courier_area?.trim()) missing.push('Area');
+    if (
+      edit.courier_company &&
+      COURIERS_REQUIRING_AREA.includes(edit.courier_company) &&
+      !edit.courier_area?.trim()
+    ) missing.push('Area');
     return missing;
   };
 

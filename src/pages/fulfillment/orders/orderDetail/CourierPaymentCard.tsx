@@ -33,6 +33,8 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmingOrder, setConfirmingOrder] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const [settlementEditing, setSettlementEditing] = useState(false);
   const [settlementSaving, setSettlementSaving] = useState(false);
   const [shipNoteModal, setShipNoteModal] = useState(false);
@@ -217,9 +219,19 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const missingConfirmFields = isManualEntry ? getManualMissingFields() : getAutoMissingFields();
   const canConfirm = !!confirmEdit.confirmation_method && missingConfirmFields.length === 0;
 
+  const submitToPathao = async (orderId: string): Promise<string | null> => {
+    const { data, error } = await supabase.functions.invoke('pathao-create-order', {
+      body: { order_id: orderId },
+    });
+    if (error) return error.message ?? 'Edge function invocation failed';
+    if (!data?.success) return data?.error ?? 'Pathao order creation failed';
+    return null;
+  };
+
   const handleConfirmOrder = async () => {
     if (!canConfirm) return;
     setConfirmingOrder(true);
+    setConfirmError(null);
     try {
       await supabase.from('orders').update({
         cs_status: 'not_printed',
@@ -230,11 +242,35 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
         updated_at: new Date().toISOString(),
       }).eq('id', order.id);
       await logActivity(order.id, `Order confirmed via ${confirmEdit.confirmation_method} (${confirmEdit.courier_entry_method === 'manual' ? 'Manual entry' : 'Automatic API'})`, userId);
+
+      if (confirmEdit.courier_entry_method === 'automatic') {
+        const err = await submitToPathao(order.id);
+        if (err) {
+          setConfirmError(err);
+          onUpdated();
+          return;
+        }
+      }
+
       onUpdated();
     } catch (err) {
       console.error(err);
     } finally {
       setConfirmingOrder(false);
+    }
+  };
+
+  const handleRetryPathao = async () => {
+    setRetrying(true);
+    setConfirmError(null);
+    try {
+      const err = await submitToPathao(order.id);
+      if (err) setConfirmError(err);
+      onUpdated();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -482,7 +518,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                   </button>
                 </div>
                 {confirmEdit.courier_entry_method === 'automatic' && (
-                  <p className="text-xs text-blue-600 mt-1.5">Courier API integration is pending. Confirming will mark the order as Not Printed; tracking will be assigned when the courier is connected.</p>
+                  <p className="text-xs text-blue-600 mt-1.5">Order will be submitted to Pathao automatically when you confirm.</p>
                 )}
               </div>
 
@@ -522,16 +558,47 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
               >
                 {confirmingOrder ? 'Confirming...' : 'Confirm Order'}
               </button>
+
+              {confirmError && (
+                <div className="flex items-start gap-2.5 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-red-800">Pathao Submission Failed</p>
+                    <p className="text-xs text-red-700 mt-0.5 break-words">{confirmError}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
         {isConfirmed && order.confirmation_type && (
-          <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
             <div className="flex items-center gap-2 text-sm text-green-700">
               <CheckCircle className="w-4 h-4" />
               <span>Confirmed via {CONFIRMATION_METHODS.find(t => t.value === order.confirmation_type)?.label ?? order.confirmation_type}</span>
             </div>
+
+            {order.courier_entry_method === 'automatic' && courier?.courier_api_error && !courier?.consignment_id && (
+              <div className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-amber-800">Pathao submission failed — retries available</p>
+                  <p className="text-xs text-amber-700 mt-0.5 break-words">{courier.courier_api_error}</p>
+                  {confirmError && (
+                    <p className="text-xs text-red-700 mt-1 break-words font-medium">{confirmError}</p>
+                  )}
+                  <button
+                    onClick={handleRetryPathao}
+                    disabled={retrying}
+                    className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white rounded-lg text-xs font-medium transition-colors"
+                  >
+                    <Zap className="w-3 h-3" />
+                    {retrying ? 'Retrying...' : 'Retry Pathao Submission'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -84,6 +84,11 @@ export interface OrderCourierInfo {
   settlement_source: 'courier_api' | 'invoice_upload' | 'manual' | null;
   total_receivable_modified_after_ship: boolean;
   total_receivable_ship_note: string | null;
+  consignment_id: string | null;
+  courier_status: string | null;
+  courier_status_updated_at: string | null;
+  courier_api_response: Record<string, unknown> | null;
+  courier_api_error: string | null;
 }
 
 export interface OrderPrescription {

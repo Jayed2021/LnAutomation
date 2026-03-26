@@ -25,6 +25,7 @@ import { PrescriptionCard } from './PrescriptionCard';
 import { SmsCard } from './SmsCard';
 import { ActivityLogCard } from './ActivityLogCard';
 import { CsActionPanel } from './CsActionPanel';
+import { CourierResponseCard } from './CourierResponseCard';
 import { buildInvoiceHtml, buildPackingSlipHtml } from './InvoiceTemplate';
 
 export default function OrderDetail() {
@@ -166,6 +167,7 @@ export default function OrderDetail() {
             hasPrescription={prescriptions.length > 0}
             onUpdated={load}
           />
+          <CourierResponseCard courier={courier} />
         </div>
       </div>
 

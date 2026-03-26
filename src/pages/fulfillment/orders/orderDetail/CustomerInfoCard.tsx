@@ -104,8 +104,8 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
   const selectCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500";
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-5">
+    <div className="bg-white border border-gray-200 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3.5">
         <h3 className="font-semibold text-gray-900">Customer Information</h3>
         {!editing ? (
           <button onClick={startEdit} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium">
@@ -129,7 +129,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
         )}
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         <Field label="Name">
           {editing
             ? <input value={edit.full_name} onChange={e => setEdit(p => ({ ...p, full_name: e.target.value }))} className={inputCls} />
@@ -168,72 +168,76 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
             : <div className="text-sm text-gray-900">{order.customer?.address_line1 || '—'}</div>}
         </Field>
 
-        <Field label="Email (Optional)">
-          {editing
-            ? <input value={edit.email} onChange={e => setEdit(p => ({ ...p, email: e.target.value }))} className={inputCls} placeholder="customer@example.com" />
-            : <div className="text-sm text-gray-500">{order.customer?.email || '—'}</div>}
-        </Field>
+        {(order.customer?.email || editing) && (
+          <Field label="Email (Optional)">
+            {editing
+              ? <input value={edit.email} onChange={e => setEdit(p => ({ ...p, email: e.target.value }))} className={inputCls} placeholder="customer@example.com" />
+              : <div className="text-sm text-gray-500">{order.customer?.email || '—'}</div>}
+          </Field>
+        )}
 
-        <Field label="Payment Method">
-          {editing
-            ? (
+        {editing ? (
+          <>
+            <Field label="Payment Method">
               <select value={edit.payment_method} onChange={e => setEdit(p => ({ ...p, payment_method: e.target.value }))} className={selectCls}>
                 {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
-            )
-            : <div className="text-sm text-gray-900">{order.payment_method || '—'}</div>}
-        </Field>
-
-        <Field label="Payment Status">
-          {editing
-            ? (
+            </Field>
+            <Field label="Payment Status">
               <select value={edit.payment_status} onChange={e => setEdit(p => ({ ...p, payment_status: e.target.value }))} className={selectCls}>
                 <option value="unpaid">Unpaid</option>
                 <option value="paid">Paid</option>
               </select>
-            )
-            : (
-              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${
+            </Field>
+            {isNonCod && (
+              <div>
+                <div className="text-xs font-medium text-gray-500 mb-1">
+                  Payment Reference <span className="text-red-500">*</span>
+                </div>
+                <input
+                  value={edit.payment_reference}
+                  onChange={e => setEdit(p => ({ ...p, payment_reference: e.target.value }))}
+                  className={`${inputCls} ${referenceRequired ? 'border-red-400 focus:ring-red-400' : ''}`}
+                  placeholder="Transaction ID / Reference No."
+                />
+                {referenceRequired && (
+                  <p className="text-xs text-red-600 mt-1">Payment reference is required for non-COD methods.</p>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 pt-0.5">
+            <div>
+              <div className="text-xs font-medium text-gray-500 mb-1">Payment Method</div>
+              <div className="text-sm text-gray-900">{order.payment_method || '—'}</div>
+            </div>
+            <div>
+              <div className="text-xs font-medium text-gray-500 mb-1">Payment Status</div>
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${
                 order.payment_status === 'paid'
                   ? 'bg-green-50 text-green-700 border-green-200'
                   : 'bg-amber-50 text-amber-700 border-amber-200'
               }`}>
                 {order.payment_status === 'paid' ? 'Paid' : 'Unpaid'}
               </span>
-            )}
-        </Field>
-
-        {(order.payment_method !== 'COD' || editing) && (
-          <div>
-            <div className="text-xs font-medium text-gray-500 mb-1">
-              Payment Reference
-              {editing && isNonCod && <span className="text-red-500 ml-1">*</span>}
             </div>
-            {editing
-              ? (
-                <>
-                  <input
-                    value={edit.payment_reference}
-                    onChange={e => setEdit(p => ({ ...p, payment_reference: e.target.value }))}
-                    className={`${inputCls} ${referenceRequired ? 'border-red-400 focus:ring-red-400' : ''}`}
-                    placeholder="Transaction ID / Reference No."
-                  />
-                  {referenceRequired && (
-                    <p className="text-xs text-red-600 mt-1">Payment reference is required for non-COD payment methods.</p>
-                  )}
-                </>
-              )
-              : <div className="text-sm text-gray-900">{order.payment_reference || '—'}</div>}
+            {order.payment_method !== 'COD' && order.payment_reference && (
+              <div className="col-span-2">
+                <div className="text-xs font-medium text-gray-500 mb-1">Payment Reference</div>
+                <div className="text-sm text-gray-900">{order.payment_reference}</div>
+              </div>
+            )}
           </div>
         )}
 
         {order.customer_note && (
-          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <div className="flex items-center gap-1.5 mb-1.5">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+            <div className="flex items-center gap-1.5 mb-1">
               <MessageSquare className="w-3.5 h-3.5 text-amber-600 shrink-0" />
               <span className="text-xs font-semibold text-amber-700">Customer Note</span>
             </div>
-            <p className="text-sm text-amber-900 leading-relaxed whitespace-pre-wrap">{order.customer_note}</p>
+            <p className="text-xs text-amber-900 leading-relaxed whitespace-pre-wrap">{order.customer_note}</p>
           </div>
         )}
       </div>

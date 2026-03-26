@@ -29,6 +29,20 @@ const EVENT_TO_STATUS: Record<string, string> = {
   "order.exchanged": "Exchange",
 };
 
+const CS_STATUS_EVENTS: Record<string, string> = {
+  "order.delivered": "delivered",
+  "order.returned": "cancelled_cad",
+  "order.delivery-failed": "cancelled_cad",
+  "order.paid-return": "cancelled_cad",
+};
+
+const COLLECTED_AMOUNT_EVENTS = new Set([
+  "order.delivered",
+  "order.partial-delivery",
+  "order.paid-return",
+  "order.exchanged",
+]);
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -81,14 +95,115 @@ Deno.serve(async (req: Request) => {
     const consignmentId: string | null = body?.consignment_id ?? null;
     const courierStatus: string | null = EVENT_TO_STATUS[event] ?? null;
 
-    if (consignmentId && courierStatus) {
+    if (!consignmentId) {
+      return new Response(
+        JSON.stringify({ status: 202, message: "No consignment_id, ignored", data: null }),
+        { status: 202, headers: responseHeaders }
+      );
+    }
+
+    const { data: courierInfo } = await supabase
+      .from("order_courier_info")
+      .select("id, order_id, payment_reference")
+      .eq("consignment_id", consignmentId)
+      .maybeSingle();
+
+    if (!courierInfo) {
+      return new Response(
+        JSON.stringify({ status: 202, message: "Consignment not found, ignored", data: null }),
+        { status: 202, headers: responseHeaders }
+      );
+    }
+
+    const orderId: string = courierInfo.order_id;
+    const now = new Date().toISOString();
+
+    const courierInfoUpdate: Record<string, unknown> = {
+      courier_api_response: body,
+      courier_status_updated_at: now,
+    };
+
+    if (courierStatus) {
+      courierInfoUpdate.courier_status = courierStatus;
+    }
+
+    if (COLLECTED_AMOUNT_EVENTS.has(event) && body?.collected_amount != null) {
+      courierInfoUpdate.collected_amount = body.collected_amount;
+    }
+
+    await supabase
+      .from("order_courier_info")
+      .update(courierInfoUpdate)
+      .eq("consignment_id", consignmentId);
+
+    const activityLogs: { order_id: string; action: string }[] = [];
+
+    if (courierStatus) {
+      activityLogs.push({
+        order_id: orderId,
+        action: `Courier status updated to "${courierStatus}" via Pathao webhook (${event})`,
+      });
+    }
+
+    const newCsStatus = CS_STATUS_EVENTS[event];
+    if (newCsStatus) {
       await supabase
-        .from("order_courier_info")
-        .update({
-          courier_status: courierStatus,
-          courier_status_updated_at: new Date().toISOString(),
-        })
-        .eq("consignment_id", consignmentId);
+        .from("orders")
+        .update({ cs_status: newCsStatus, updated_at: now })
+        .eq("id", orderId);
+
+      activityLogs.push({
+        order_id: orderId,
+        action: `CS status changed to "${newCsStatus}" via Pathao webhook (${event})`,
+      });
+    }
+
+    if (COLLECTED_AMOUNT_EVENTS.has(event) && body?.collected_amount != null) {
+      activityLogs.push({
+        order_id: orderId,
+        action: `Collected amount updated to ${body.collected_amount} via Pathao webhook (${event})`,
+      });
+    }
+
+    if (event === "order.paid") {
+      const { data: orderRow } = await supabase
+        .from("orders")
+        .select("payment_reference")
+        .eq("id", orderId)
+        .maybeSingle();
+
+      const invoiceId = body?.invoice_id ? String(body.invoice_id) : null;
+
+      if (invoiceId) {
+        const existing = orderRow?.payment_reference ?? "";
+        const newRef = existing
+          ? `${existing},${invoiceId}`
+          : invoiceId;
+
+        await supabase
+          .from("orders")
+          .update({ payment_status: "paid", payment_reference: newRef, updated_at: now })
+          .eq("id", orderId);
+
+        activityLogs.push({
+          order_id: orderId,
+          action: `Payment marked as paid with invoice ID ${invoiceId} via Pathao webhook`,
+        });
+      } else {
+        await supabase
+          .from("orders")
+          .update({ payment_status: "paid", updated_at: now })
+          .eq("id", orderId);
+
+        activityLogs.push({
+          order_id: orderId,
+          action: `Payment marked as paid via Pathao webhook`,
+        });
+      }
+    }
+
+    if (activityLogs.length > 0) {
+      await supabase.from("order_activity_log").insert(activityLogs);
     }
 
     return new Response(

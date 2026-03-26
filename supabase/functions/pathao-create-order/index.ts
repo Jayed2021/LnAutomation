@@ -15,6 +15,42 @@ function normalizePhone(raw: string): string | null {
   return phone;
 }
 
+async function fetchPathaoToken(baseUrl: string, creds: {
+  client_id: string;
+  client_secret: string;
+  username: string;
+  password: string;
+}): Promise<{ access_token: string } | { error: string; raw: unknown }> {
+  const res = await fetch(`${baseUrl}/aladdin/api/v1/issue-token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: creds.client_id,
+      client_secret: creds.client_secret,
+      username: creds.username,
+      password: creds.password,
+      grant_type: "password",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.access_token) {
+    return { error: data?.message || data?.error || "Unknown auth error", raw: data };
+  }
+  return { access_token: data.access_token };
+}
+
+async function fetchPathaoStoreId(baseUrl: string, accessToken: string): Promise<number | null> {
+  const res = await fetch(`${baseUrl}/aladdin/api/v1/stores`, {
+    headers: { "Authorization": `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const stores: Array<{ store_id: number; is_active?: number }> = data?.data?.data ?? data?.data ?? [];
+  if (!Array.isArray(stores) || stores.length === 0) return null;
+  const active = stores.find(s => s.is_active === 1) ?? stores[0];
+  return active?.store_id ?? null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -59,10 +95,10 @@ Deno.serve(async (req: Request) => {
       client_secret: string;
       username: string;
       password: string;
-      store_id: string;
+      store_id?: string;
     };
 
-    if (!creds?.client_id || !creds?.client_secret || !creds?.username || !creds?.password || !creds?.store_id) {
+    if (!creds?.client_id || !creds?.client_secret || !creds?.username || !creds?.password) {
       return new Response(JSON.stringify({ success: false, error: "Pathao credentials are incomplete" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -155,25 +191,12 @@ Deno.serve(async (req: Request) => {
 
     const baseUrl = pathaoConfig.base_url!;
 
-    const tokenRes = await fetch(`${baseUrl}/aladdin/api/v1/issue-token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: creds.client_id,
-        client_secret: creds.client_secret,
-        username: creds.username,
-        password: creds.password,
-        grant_type: "password",
-      }),
-    });
-
-    const tokenData = await tokenRes.json();
-
-    if (!tokenRes.ok || !tokenData.access_token) {
-      const errMsg = `Pathao auth failed: ${tokenData?.message || tokenData?.error || "Unknown error"}`;
+    const tokenResult = await fetchPathaoToken(baseUrl, creds);
+    if ("error" in tokenResult) {
+      const errMsg = `Pathao auth failed: ${tokenResult.error}`;
       await supabase.from("order_courier_info").update({
         courier_api_error: errMsg,
-        courier_api_response: tokenData,
+        courier_api_response: tokenResult.raw,
         updated_at: new Date().toISOString(),
       }).eq("order_id", order_id);
       await supabase.from("order_activity_log").insert({
@@ -187,10 +210,38 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const accessToken = tokenData.access_token;
+    const accessToken = tokenResult.access_token;
+
+    let storeId: number | null = creds.store_id ? parseInt(creds.store_id, 10) : null;
+
+    if (!storeId || isNaN(storeId)) {
+      storeId = await fetchPathaoStoreId(baseUrl, accessToken);
+
+      if (!storeId) {
+        const errMsg = "Could not retrieve a valid Pathao store ID from the /stores endpoint";
+        await supabase.from("order_courier_info").update({
+          courier_api_error: errMsg,
+          updated_at: new Date().toISOString(),
+        }).eq("order_id", order_id);
+        await supabase.from("order_activity_log").insert({
+          order_id,
+          action: `Pathao automatic order creation failed: ${errMsg}`,
+          performed_by: null,
+        });
+        return new Response(JSON.stringify({ success: false, error: errMsg }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      await supabase.from("courier_configs").update({
+        credentials: { ...creds, store_id: String(storeId) },
+        updated_at: new Date().toISOString(),
+      }).eq("courier_name", "pathao");
+    }
 
     const orderPayload: Record<string, unknown> = {
-      store_id: parseInt(creds.store_id, 10),
+      store_id: storeId,
       merchant_order_id: order.woo_order_id ? String(order.woo_order_id) : undefined,
       recipient_name: customer.full_name,
       recipient_phone: phone,

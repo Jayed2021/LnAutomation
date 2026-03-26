@@ -109,7 +109,7 @@ Deno.serve(async (req: Request) => {
       .from("orders")
       .select(`
         id, woo_order_id, customer_note,
-        customer:customers(full_name, phone_primary, address_line1)
+        customer:customers(full_name, phone_primary, phone_secondary, address_line1)
       `)
       .eq("id", order_id)
       .maybeSingle();
@@ -121,7 +121,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const customer = order.customer as { full_name: string; phone_primary: string; address_line1: string | null } | null;
+    const customer = order.customer as { full_name: string; phone_primary: string; phone_secondary: string | null; address_line1: string | null } | null;
     if (!customer) {
       return new Response(JSON.stringify({ success: false, error: "Order has no customer" }), {
         status: 400,
@@ -240,11 +240,14 @@ Deno.serve(async (req: Request) => {
       }).eq("courier_name", "pathao");
     }
 
+    const secondaryPhone = customer.phone_secondary ? normalizePhone(customer.phone_secondary) : null;
+
     const orderPayload: Record<string, unknown> = {
       store_id: storeId,
       merchant_order_id: order.woo_order_id ? String(order.woo_order_id) : undefined,
       recipient_name: customer.full_name,
       recipient_phone: phone,
+      recipient_secondary_phone: secondaryPhone ?? undefined,
       recipient_address: address,
       delivery_type: 48,
       item_type: 2,

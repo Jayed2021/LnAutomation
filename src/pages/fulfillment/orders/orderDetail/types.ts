@@ -44,6 +44,7 @@ export interface OrderDetail {
     id: string;
     full_name: string;
     phone_primary: string;
+    phone_secondary: string | null;
     email: string | null;
     address_line1: string | null;
     city: string | null;

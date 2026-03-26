@@ -41,6 +41,7 @@ interface Props {
 interface EditState {
   full_name: string;
   phone_primary: string;
+  phone_secondary: string;
   address_line1: string;
   district: string;
   email: string;
@@ -67,6 +68,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
   const [edit, setEdit] = useState<EditState>({
     full_name: order.customer?.full_name ?? '',
     phone_primary: order.customer?.phone_primary ?? '',
+    phone_secondary: order.customer?.phone_secondary ?? '',
     address_line1: order.customer?.address_line1 ?? '',
     district: order.customer?.district ?? '',
     email: order.customer?.email ?? '',
@@ -79,6 +81,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
     setEdit({
       full_name: order.customer?.full_name ?? '',
       phone_primary: order.customer?.phone_primary ?? '',
+      phone_secondary: order.customer?.phone_secondary ?? '',
       address_line1: order.customer?.address_line1 ?? '',
       district: order.customer?.district ?? '',
       email: order.customer?.email ?? '',
@@ -100,6 +103,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
       await supabase.from('customers').update({
         full_name: edit.full_name,
         phone_primary: edit.phone_primary,
+        phone_secondary: edit.phone_secondary || null,
         address_line1: edit.address_line1,
         district: edit.district,
         email: edit.email,
@@ -166,6 +170,23 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
                   </a>
                 )}
               </div>
+            )}
+        </Field>
+
+        <Field label="Secondary Phone (Optional)">
+          {editing
+            ? <input value={edit.phone_secondary} onChange={e => setEdit(p => ({ ...p, phone_secondary: e.target.value }))} className={inputCls} placeholder="e.g. 01XXXXXXXXX" />
+            : (
+              order.customer?.phone_secondary
+                ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-900">{order.customer.phone_secondary}</span>
+                    <a href={`tel:${order.customer.phone_secondary}`} className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors">
+                      <Phone className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )
+                : <div className="text-sm text-gray-400">—</div>
             )}
         </Field>
 
@@ -253,7 +274,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
             <div className="flex items-center gap-1.5 mb-1">
               <MessageSquare className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-              <span className="text-xs font-semibold text-amber-700">Customer Note</span>
+              <span className="text-xs font-semibold text-amber-700">Customer Note / Courier Instruction</span>
             </div>
             <p className="text-xs text-amber-900 leading-relaxed whitespace-pre-wrap">{order.customer_note}</p>
           </div>

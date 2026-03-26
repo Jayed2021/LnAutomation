@@ -233,23 +233,37 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     setConfirmingOrder(true);
     setConfirmError(null);
     try {
-      await supabase.from('orders').update({
-        cs_status: 'not_printed',
-        confirmation_type: confirmEdit.confirmation_method,
-        courier_entry_method: confirmEdit.courier_entry_method,
-        confirmed_by: userId,
-        fulfillment_status: 'not_printed',
-        updated_at: new Date().toISOString(),
-      }).eq('id', order.id);
-      await logActivity(order.id, `Order confirmed via ${confirmEdit.confirmation_method} (${confirmEdit.courier_entry_method === 'manual' ? 'Manual entry' : 'Automatic API'})`, userId);
-
       if (confirmEdit.courier_entry_method === 'automatic') {
+        await supabase.from('orders').update({
+          confirmation_type: confirmEdit.confirmation_method,
+          courier_entry_method: confirmEdit.courier_entry_method,
+          confirmed_by: userId,
+          updated_at: new Date().toISOString(),
+        }).eq('id', order.id);
+
         const err = await submitToPathao(order.id);
         if (err) {
           setConfirmError(err);
           onUpdated();
           return;
         }
+
+        await supabase.from('orders').update({
+          cs_status: 'not_printed',
+          fulfillment_status: 'not_printed',
+          updated_at: new Date().toISOString(),
+        }).eq('id', order.id);
+        await logActivity(order.id, `Order confirmed via ${confirmEdit.confirmation_method} (Automatic API)`, userId);
+      } else {
+        await supabase.from('orders').update({
+          cs_status: 'not_printed',
+          confirmation_type: confirmEdit.confirmation_method,
+          courier_entry_method: confirmEdit.courier_entry_method,
+          confirmed_by: userId,
+          fulfillment_status: 'not_printed',
+          updated_at: new Date().toISOString(),
+        }).eq('id', order.id);
+        await logActivity(order.id, `Order confirmed via ${confirmEdit.confirmation_method} (Manual entry)`, userId);
       }
 
       onUpdated();

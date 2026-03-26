@@ -17,6 +17,7 @@ interface CourierConfig {
   environment: 'sandbox' | 'production';
   base_url: string | null;
   credentials: Record<string, string> | null;
+  webhook_secret: string | null;
   updated_at: string;
 }
 
@@ -74,6 +75,8 @@ export default function CourierSettings() {
   const [pathaoNotice, setPathaoNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [steadfastNotice, setSteadfastNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [webhookCopied, setWebhookCopied] = useState(false);
+  const [showWebhookSecret, setShowWebhookSecret] = useState(false);
+  const [webhookSecretCopied, setWebhookSecretCopied] = useState(false);
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
   const pathaoWebhookUrl = supabaseUrl
@@ -85,6 +88,13 @@ export default function CourierSettings() {
     navigator.clipboard.writeText(pathaoWebhookUrl).then(() => {
       setWebhookCopied(true);
       setTimeout(() => setWebhookCopied(false), 2000);
+    });
+  };
+
+  const copyWebhookSecret = (secret: string) => {
+    navigator.clipboard.writeText(secret).then(() => {
+      setWebhookSecretCopied(true);
+      setTimeout(() => setWebhookSecretCopied(false), 2000);
     });
   };
 
@@ -333,6 +343,41 @@ export default function CourierSettings() {
                       </div>
                     )}
                   </div>
+
+                  {pathaoConfig?.webhook_secret && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <Link className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                        <span className="text-xs font-semibold text-gray-700">Webhook Secret</span>
+                      </div>
+                      <p className="text-xs text-gray-500 leading-relaxed">
+                        Enter this value in your Pathao merchant dashboard as the webhook integration secret. It is used to verify that incoming webhook requests are genuine.
+                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <code className="flex-1 text-xs font-mono bg-white border border-gray-200 rounded-md px-3 py-2 text-gray-800 truncate select-all">
+                          {showWebhookSecret ? pathaoConfig.webhook_secret : '•'.repeat(36)}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => setShowWebhookSecret(v => !v)}
+                          title={showWebhookSecret ? 'Hide secret' : 'Show secret'}
+                          className="flex-shrink-0 p-2 rounded-md border border-gray-200 bg-white text-gray-500 hover:text-gray-800 hover:border-gray-300 transition-colors"
+                        >
+                          {showWebhookSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => copyWebhookSecret(pathaoConfig.webhook_secret!)}
+                          title="Copy secret"
+                          className="flex-shrink-0 p-2 rounded-md border border-gray-200 bg-white text-gray-500 hover:text-gray-800 hover:border-gray-300 transition-colors"
+                        >
+                          {webhookSecretCopied
+                            ? <Check className="w-3.5 h-3.5 text-emerald-500" />
+                            : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>

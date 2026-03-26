@@ -398,7 +398,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
 
           {editing && (
             <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">COD Charge</div>
+              <div className="text-xs font-medium text-gray-500 mb-1">Delivery Charge</div>
               <input type="number" value={edit.cod_charge} onChange={e => setEdit(p => ({ ...p, cod_charge: parseFloat(e.target.value) || 0 }))} className={inputCls} />
             </div>
           )}

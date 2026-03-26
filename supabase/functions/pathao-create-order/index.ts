@@ -296,6 +296,8 @@ Deno.serve(async (req: Request) => {
       ? String(createData.consignment_id)
       : (createData?.data?.consignment_id ? String(createData.data.consignment_id) : null);
 
+    const deliveryFee = createData?.data?.delivery_fee ?? createData?.delivery_fee ?? null;
+
     await supabase.from("order_courier_info").update({
       consignment_id: consignmentId,
       tracking_number: consignmentId,
@@ -303,6 +305,7 @@ Deno.serve(async (req: Request) => {
       courier_status_updated_at: new Date().toISOString(),
       courier_api_response: createData,
       courier_api_error: null,
+      ...(deliveryFee !== null && { cod_charge: deliveryFee }),
       updated_at: new Date().toISOString(),
     }).eq("order_id", order_id);
 

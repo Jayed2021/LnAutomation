@@ -7,6 +7,28 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+const EVENT_TO_STATUS: Record<string, string> = {
+  "order.created": "Order Created",
+  "order.updated": "Order Updated",
+  "order.pickup-requested": "Pickup Requested",
+  "order.assigned-for-pickup": "Assigned For Pickup",
+  "order.picked": "Pickup",
+  "order.pickup-failed": "Pickup Failed",
+  "order.pickup-cancelled": "Pickup Cancelled",
+  "order.at-the-sorting-hub": "At the Sorting Hub",
+  "order.in-transit": "In Transit",
+  "order.received-at-last-mile-hub": "Received at Last Mile Hub",
+  "order.assigned-for-delivery": "Assigned for Delivery",
+  "order.delivered": "Delivered",
+  "order.partial-delivery": "Partial Delivery",
+  "order.returned": "Return",
+  "order.delivery-failed": "Delivery Failed",
+  "order.on-hold": "On Hold",
+  "order.paid": "Payment Invoice",
+  "order.paid-return": "Paid Return",
+  "order.exchanged": "Exchange",
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -30,38 +52,54 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const incomingSecret = req.headers.get("X-Pathao-Merchant-Webhook-Integration-Secret");
-    if (!incomingSecret || incomingSecret !== configRow.webhook_secret) {
+    const secret = configRow.webhook_secret;
+
+    const responseHeaders = {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      "X-Pathao-Merchant-Webhook-Integration-Secret": secret,
+    };
+
+    const incomingSignature = req.headers.get("X-PATHAO-Signature");
+    if (!incomingSignature || incomingSignature !== secret) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 401, headers: responseHeaders }
       );
     }
 
     const body = await req.json();
+    const event: string = body?.event ?? "";
 
-    const consignmentId = body?.consignment_id ?? body?.data?.consignment_id ?? null;
-    const courierStatus = body?.order_status ?? body?.data?.order_status ?? body?.status ?? null;
+    if (event === "webhook_integration") {
+      return new Response(
+        JSON.stringify({ status: 202, message: "Successfully accepted webhook_integration", data: null }),
+        { status: 202, headers: responseHeaders }
+      );
+    }
+
+    const consignmentId: string | null = body?.consignment_id ?? null;
+    const courierStatus: string | null = EVENT_TO_STATUS[event] ?? null;
 
     if (consignmentId && courierStatus) {
       await supabase
         .from("order_courier_info")
         .update({
-          courier_status: String(courierStatus),
+          courier_status: courierStatus,
           courier_status_updated_at: new Date().toISOString(),
         })
-        .eq("consignment_id", String(consignmentId));
+        .eq("consignment_id", consignmentId);
     }
 
     return new Response(
-      JSON.stringify({ received: true }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ status: 202, message: "Event received", data: null }),
+      { status: 202, headers: responseHeaders }
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error";
     return new Response(
       JSON.stringify({ error: message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 500, headers: corsHeaders }
     );
   }
 });

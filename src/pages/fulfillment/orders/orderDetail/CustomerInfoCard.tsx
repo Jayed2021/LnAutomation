@@ -5,6 +5,22 @@ import { OrderDetail } from './types';
 
 const PAYMENT_METHODS = ['COD', 'SSL Commerz', 'bKash', 'Nagad', 'Bank Transfer', 'bKash+COD', 'SSL+COD', 'Nagad+COD'];
 
+function normalizePaymentMethod(raw: string | null | undefined): string {
+  if (!raw) return 'COD';
+  const lower = raw.toLowerCase().trim();
+  if (lower === 'cod' || lower === 'cash on delivery' || lower === 'cash_on_delivery') return 'COD';
+  if (lower.includes('bkash') && lower.includes('cod')) return 'bKash+COD';
+  if (lower.includes('ssl') && lower.includes('cod')) return 'SSL+COD';
+  if (lower.includes('nagad') && lower.includes('cod')) return 'Nagad+COD';
+  if (lower.includes('bkash')) return 'bKash';
+  if (lower.includes('nagad')) return 'Nagad';
+  if (lower.includes('ssl') || lower.includes('pay online')) return 'SSL Commerz';
+  if (lower.includes('bank')) return 'Bank Transfer';
+  const match = PAYMENT_METHODS.find(m => m.toLowerCase() === lower);
+  if (match) return match;
+  return raw;
+}
+
 const inputCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 const selectCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500";
 
@@ -54,7 +70,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
     address_line1: order.customer?.address_line1 ?? '',
     district: order.customer?.district ?? '',
     email: order.customer?.email ?? '',
-    payment_method: order.payment_method ?? 'COD',
+    payment_method: normalizePaymentMethod(order.payment_method),
     payment_status: order.payment_status ?? 'unpaid',
     payment_reference: order.payment_reference ?? '',
   });
@@ -66,7 +82,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
       address_line1: order.customer?.address_line1 ?? '',
       district: order.customer?.district ?? '',
       email: order.customer?.email ?? '',
-      payment_method: order.payment_method ?? 'COD',
+      payment_method: normalizePaymentMethod(order.payment_method),
       payment_status: order.payment_status ?? 'unpaid',
       payment_reference: order.payment_reference ?? '',
     });

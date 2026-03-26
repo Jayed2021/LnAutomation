@@ -1,13 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Phone, Save, X, CreditCard as Edit2, MessageSquare } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail } from './types';
 
 const PAYMENT_METHODS = ['COD', 'SSL Commerz', 'bKash', 'Nagad', 'Bank Transfer', 'bKash+COD', 'SSL+COD', 'Nagad+COD'];
-const DISTRICTS = [
-  'Dhaka', 'Chattogram', 'Rajshahi', 'Khulna', 'Barishal', 'Sylhet',
-  'Rangpur', 'Mymensingh', 'Comilla', 'Narayanganj', 'Gazipur', 'Other'
-];
 
 interface Props {
   order: OrderDetail;
@@ -28,6 +24,18 @@ interface EditState {
 export function CustomerInfoCard({ order, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [districts, setDistricts] = useState<string[]>([]);
+
+  useEffect(() => {
+    supabase
+      .from('bd_districts')
+      .select('name')
+      .order('sort_order', { ascending: true })
+      .then(({ data }) => {
+        if (data) setDistricts(data.map(d => d.name));
+      });
+  }, []);
+
   const [edit, setEdit] = useState<EditState>({
     full_name: order.customer?.full_name ?? '',
     phone_primary: order.customer?.phone_primary ?? '',
@@ -148,7 +156,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
             ? (
               <select value={edit.district} onChange={e => setEdit(p => ({ ...p, district: e.target.value }))} className={selectCls}>
                 <option value="">Select district</option>
-                {DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
+                {districts.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             )
             : <div className="text-sm text-gray-900">{order.customer?.district || '—'}</div>}

@@ -7,7 +7,7 @@ import { Badge } from '../../components/ui/Badge';
 import {
   ArrowLeft, Eye, EyeOff, CheckCircle2, XCircle, RefreshCw,
   ToggleLeft, ToggleRight, Truck, AlertCircle, ChevronDown, ChevronUp,
-  Save
+  Save, Copy, Check, Link
 } from 'lucide-react';
 
 interface CourierConfig {
@@ -73,6 +73,20 @@ export default function CourierSettings() {
   const [savingSteadfast, setSavingSteadfast] = useState(false);
   const [pathaoNotice, setPathaoNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [steadfastNotice, setSteadfastNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [webhookCopied, setWebhookCopied] = useState(false);
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const pathaoWebhookUrl = supabaseUrl
+    ? `${supabaseUrl}/functions/v1/pathao-webhook`
+    : null;
+
+  const copyWebhookUrl = () => {
+    if (!pathaoWebhookUrl) return;
+    navigator.clipboard.writeText(pathaoWebhookUrl).then(() => {
+      setWebhookCopied(true);
+      setTimeout(() => setWebhookCopied(false), 2000);
+    });
+  };
 
   useEffect(() => {
     loadConfigs();
@@ -288,6 +302,37 @@ export default function CourierSettings() {
                       </div>
                     </div>
                   )}
+
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <Link className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                      <span className="text-xs font-semibold text-gray-700">Webhook Callback URL</span>
+                    </div>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      Register this URL in your Pathao merchant dashboard under webhook settings so Pathao can push order status updates to your system.
+                    </p>
+                    {pathaoWebhookUrl ? (
+                      <div className="flex items-center gap-2 mt-1">
+                        <code className="flex-1 text-xs font-mono bg-white border border-gray-200 rounded-md px-3 py-2 text-gray-800 truncate select-all">
+                          {pathaoWebhookUrl}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={copyWebhookUrl}
+                          title="Copy URL"
+                          className="flex-shrink-0 p-2 rounded-md border border-gray-200 bg-white text-gray-500 hover:text-gray-800 hover:border-gray-300 transition-colors"
+                        >
+                          {webhookCopied
+                            ? <Check className="w-3.5 h-3.5 text-emerald-500" />
+                            : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+                        VITE_SUPABASE_URL is not set — cannot generate the callback URL.
+                      </div>
+                    )}
+                  </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>

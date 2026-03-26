@@ -69,7 +69,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
 export function DialogContent({ className, children }: DialogContentProps) {
   return (
     <div className={cn(
-      'bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto',
+      'bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto',
       'p-6 relative',
       className
     )}>

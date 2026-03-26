@@ -504,24 +504,25 @@ export default function Operations() {
       <div className="flex justify-between items-center gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Fulfillment Operations</h1>
-          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Warehouse: Print, Pick, Pack, Ship & Receive Returns</p>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5 hidden sm:block">Warehouse: Print, Pick, Pack, Ship & Receive Returns</p>
         </div>
         <Button
           variant="primary"
           onClick={() => setShowScanner(true)}
           className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
         >
-          <Camera className="h-4 w-4 sm:mr-2" />
+          <Camera className="h-4 w-4 mr-1.5 sm:mr-2" />
+          <span className="sm:hidden">Scan</span>
           <span className="hidden sm:inline">Open Barcode Scanner</span>
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+      <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 lg:grid-cols-5 sm:overflow-visible sm:pb-0">
         {TABS.map(tab => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`bg-white rounded-xl border-2 p-3 sm:p-4 text-left transition-all hover:shadow-md ${
+            className={`flex-shrink-0 w-[calc(50vw-20px)] sm:w-auto bg-white rounded-xl border-2 p-3 sm:p-4 text-left transition-all hover:shadow-md ${
               activeTab === tab.key
                 ? 'border-blue-500 shadow-md'
                 : 'border-gray-200 hover:border-gray-300'
@@ -540,17 +541,39 @@ export default function Operations() {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-100 flex items-center gap-2 sm:gap-3 flex-wrap">
-          <div className="relative flex-1 min-w-0 sm:min-w-48">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search order ID or customer..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="pl-10 text-sm"
-            />
+        <div className="px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-100 space-y-2 sm:space-y-0 sm:flex sm:items-center sm:gap-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                placeholder="Search order or customer..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="pl-10 text-sm"
+              />
+            </div>
+            {activeTab === 'packed' && (
+              <Button
+                size="sm"
+                onClick={() => setShowExportModal(true)}
+                className="sm:hidden shrink-0 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+            )}
+            {activeTab === 'shipped' && (
+              <Select
+                value={shippedRange}
+                onChange={e => setShippedRange(e.target.value)}
+                className="sm:hidden text-sm h-9 w-28 shrink-0"
+              >
+                {DATE_RANGES.map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </Select>
+            )}
           </div>
-          <div className="hidden sm:flex items-center gap-1.5 text-sm text-gray-500">
+          <div className="hidden sm:flex items-center gap-1.5 text-sm text-gray-500 flex-1">
             <ScanLine className="h-4 w-4" />
             <span>Barcode scanner ready — Scan order barcode to start picking</span>
           </div>
@@ -558,19 +581,19 @@ export default function Operations() {
             <Button
               size="sm"
               onClick={() => setShowExportModal(true)}
-              className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-gray-900"
+              className="hidden sm:flex bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-gray-900"
             >
-              <Download className="h-4 w-4 sm:mr-1.5" />
-              <span className="hidden sm:inline">Export Packed</span>
+              <Download className="h-4 w-4 mr-1.5" />
+              Export Packed
             </Button>
           )}
           {activeTab === 'shipped' && (
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-gray-400 hidden sm:block" />
+            <div className="hidden sm:flex items-center gap-2">
+              <Clock className="h-4 w-4 text-gray-400" />
               <Select
                 value={shippedRange}
                 onChange={e => setShippedRange(e.target.value)}
-                className="text-sm h-9 w-32 sm:w-40"
+                className="text-sm h-9 w-40"
               >
                 {DATE_RANGES.map(r => (
                   <option key={r.value} value={r.value}>{r.label}</option>
@@ -784,80 +807,118 @@ function NotPrintedTable({
   onNavigate: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm min-w-[600px]">
-        <thead>
-          <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Order ID</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Customer</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden sm:table-cell">Items</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden md:table-cell">Total</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden lg:table-cell">Address</th>
-            <th className="px-3 sm:px-5 py-3 text-right font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order, idx) => (
-            <tr
-              key={order.id}
-              onClick={() => onNavigate(order.id)}
-              className={`border-b border-gray-50 hover:bg-orange-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
-            >
-              <td className="px-3 sm:px-5 py-3">
-                <span className="font-semibold text-blue-600">{displayId(order)}</span>
-                {order.has_prescription && (
-                  <span className="ml-1.5 text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full">Rx</span>
-                )}
-              </td>
-              <td className="px-3 sm:px-5 py-3">
-                <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
-                <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
-              </td>
-              <td className="px-3 sm:px-5 py-3 text-gray-600 hidden sm:table-cell">
-                {(order.items?.length || 0)} items
-              </td>
-              <td className="px-3 sm:px-5 py-3 font-semibold text-gray-900 hidden md:table-cell">৳{order.total_amount}</td>
-              <td className="px-3 sm:px-5 py-3 text-gray-500 text-xs max-w-40 hidden lg:table-cell">{getAddress(order)}</td>
-              <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-end gap-1.5 sm:gap-2">
-                  <button
-                    onClick={() => onPrintInvoice(order)}
-                    title="Print Invoice"
-                    className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-                  >
-                    <FileText className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => onPrintPackingSlip(order)}
-                    title="Print Packing Slip"
-                    className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-                  >
-                    <Printer className="h-4 w-4" />
-                  </button>
-                  {isWarehouseRole && (
-                    <button
-                      onClick={() => onMarkProcessing(order.id)}
-                      title="Mark as Processing (return to CS queue)"
-                      className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                    </button>
+    <>
+      <div className="sm:hidden divide-y divide-gray-100">
+        {orders.map(order => (
+          <div
+            key={order.id}
+            className="p-4 hover:bg-orange-50 transition-colors"
+          >
+            <button className="w-full text-left" onClick={() => onNavigate(order.id)}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-blue-600 text-base">{displayId(order)}</span>
+                  {order.has_prescription && (
+                    <span className="text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full">Rx</span>
                   )}
-                  <Button
-                    size="sm"
-                    className="bg-green-600 hover:bg-green-700 text-white border-0 px-2 sm:px-3"
-                    onClick={() => onMarkPrinted(order.id)}
-                  >
-                    <CheckCheck className="h-3.5 w-3.5 sm:mr-1" />
-                    <span className="hidden sm:inline">Mark as Printed</span>
-                  </Button>
                 </div>
-              </td>
+                <span className="text-sm font-semibold text-gray-900">৳{order.total_amount}</span>
+              </div>
+              <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+              <div className="text-sm text-gray-500">{order.customer?.phone_primary}</div>
+              <div className="text-xs text-gray-400 mt-0.5">{getAddress(order)} · {order.items?.length || 0} items</div>
+            </button>
+            <div className="flex items-center gap-2 mt-3" onClick={e => e.stopPropagation()}>
+              <button
+                onClick={() => onPrintInvoice(order)}
+                title="Print Invoice"
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600 text-sm transition-colors"
+              >
+                <FileText className="h-4 w-4" /> Invoice
+              </button>
+              <button
+                onClick={() => onPrintPackingSlip(order)}
+                title="Print Packing Slip"
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600 text-sm transition-colors"
+              >
+                <Printer className="h-4 w-4" /> Slip
+              </button>
+              {isWarehouseRole && (
+                <button
+                  onClick={() => onMarkProcessing(order.id)}
+                  title="Return to CS"
+                  className="py-2.5 px-3 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 transition-colors"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </button>
+              )}
+              <Button
+                size="sm"
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white border-0 py-2.5 h-auto"
+                onClick={() => onMarkPrinted(order.id)}
+              >
+                <CheckCheck className="h-3.5 w-3.5 mr-1" /> Printed
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-sm min-w-[600px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
+              <th className="px-5 py-3 text-left font-semibold">Order ID</th>
+              <th className="px-5 py-3 text-left font-semibold">Customer</th>
+              <th className="px-5 py-3 text-left font-semibold">Items</th>
+              <th className="px-5 py-3 text-left font-semibold hidden md:table-cell">Total</th>
+              <th className="px-5 py-3 text-left font-semibold hidden lg:table-cell">Address</th>
+              <th className="px-5 py-3 text-right font-semibold">Actions</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {orders.map((order, idx) => (
+              <tr
+                key={order.id}
+                onClick={() => onNavigate(order.id)}
+                className={`border-b border-gray-50 hover:bg-orange-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+              >
+                <td className="px-5 py-3">
+                  <span className="font-semibold text-blue-600">{displayId(order)}</span>
+                  {order.has_prescription && (
+                    <span className="ml-1.5 text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full">Rx</span>
+                  )}
+                </td>
+                <td className="px-5 py-3">
+                  <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+                  <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
+                </td>
+                <td className="px-5 py-3 text-gray-600">{(order.items?.length || 0)} items</td>
+                <td className="px-5 py-3 font-semibold text-gray-900 hidden md:table-cell">৳{order.total_amount}</td>
+                <td className="px-5 py-3 text-gray-500 text-xs max-w-40 hidden lg:table-cell">{getAddress(order)}</td>
+                <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button onClick={() => onPrintInvoice(order)} title="Print Invoice" className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
+                      <FileText className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => onPrintPackingSlip(order)} title="Print Packing Slip" className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
+                      <Printer className="h-4 w-4" />
+                    </button>
+                    {isWarehouseRole && (
+                      <button onClick={() => onMarkProcessing(order.id)} title="Return to CS" className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors">
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    )}
+                    <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-0 px-3" onClick={() => onMarkPrinted(order.id)}>
+                      <CheckCheck className="h-3.5 w-3.5 mr-1" /> Mark as Printed
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -887,128 +948,148 @@ function PrintedTable({
   onNavigate: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm min-w-[500px]">
-        <thead>
-          <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Order ID</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Customer</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden sm:table-cell">Items</th>
-            <th className="px-3 sm:px-5 py-3 text-right font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order, idx) => {
-            const partial = isPartiallyPicked(order);
-            const fullyPicked = isFullyPicked(order);
-            return (
-              <tr
-                key={order.id}
-                onClick={() => onNavigate(order.id)}
-                className={`border-b border-gray-50 hover:bg-blue-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
-              >
-                <td className="px-3 sm:px-5 py-3">
+    <>
+      <div className="sm:hidden divide-y divide-gray-100">
+        {orders.map(order => {
+          const partial = isPartiallyPicked(order);
+          const fullyPicked = isFullyPicked(order);
+          return (
+            <div key={order.id} className="p-4 hover:bg-blue-50 transition-colors">
+              <button className="w-full text-left" onClick={() => onNavigate(order.id)}>
+                <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-blue-600">{displayId(order)}</span>
-                    {fullyPicked && (
-                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium border border-green-200">
-                        Picked
-                      </span>
-                    )}
-                    {partial && !fullyPicked && (
-                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium border border-amber-200">
-                        Partially Picked
-                      </span>
-                    )}
+                    <span className="font-bold text-blue-600 text-base">{displayId(order)}</span>
+                    {fullyPicked && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium border border-green-200">Picked</span>}
+                    {partial && !fullyPicked && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium border border-amber-200">Partial</span>}
                   </div>
-                </td>
-                <td className="px-3 sm:px-5 py-3">
-                  <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
-                  <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
-                </td>
-                <td className="px-3 sm:px-5 py-3 hidden sm:table-cell">
-                  <div className="space-y-0.5">
-                    {order.items?.map(item => (
-                      <div key={item.id} className="text-xs text-gray-600">
-                        {item.quantity}x {item.product_name}
-                        {item.picked_quantity > 0 && item.picked_quantity >= item.quantity && (
-                          <span className="ml-1.5 bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full text-xs">Picked</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => onPrintInvoice(order)}
-                      title="Print Invoice"
-                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-                    >
-                      <FileText className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => onPrintPackingSlip(order)}
-                      title="Print Packing Slip"
-                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-                    >
-                      <Printer className="h-4 w-4" />
-                    </button>
-                    {isWarehouseRole && (
-                      <button
-                        onClick={() => onMarkProcessing(order.id)}
-                        title="Mark as Processing (return to CS queue)"
-                        className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors"
-                      >
-                        <RotateCcw className="h-4 w-4" />
+                </div>
+                <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+                <div className="text-sm text-gray-500">{order.customer?.phone_primary}</div>
+                <div className="mt-1.5 space-y-0.5">
+                  {order.items?.map(item => (
+                    <div key={item.id} className="text-xs text-gray-600 flex items-center gap-1.5">
+                      <span>{item.quantity}x {item.product_name}</span>
+                      {item.picked_quantity >= item.quantity && <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">Picked</span>}
+                    </div>
+                  ))}
+                </div>
+              </button>
+              <div className="flex items-center gap-2 mt-3" onClick={e => e.stopPropagation()}>
+                <button onClick={() => onPrintInvoice(order)} className="py-2.5 px-3 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600 transition-colors">
+                  <FileText className="h-4 w-4" />
+                </button>
+                <button onClick={() => onPrintPackingSlip(order)} className="py-2.5 px-3 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600 transition-colors">
+                  <Printer className="h-4 w-4" />
+                </button>
+                {isWarehouseRole && (
+                  <button onClick={() => onMarkProcessing(order.id)} className="py-2.5 px-3 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 transition-colors">
+                    <RotateCcw className="h-4 w-4" />
+                  </button>
+                )}
+                {fullyPicked ? (
+                  <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700 text-white border-0 py-2.5 h-auto" onClick={() => onForcePack(order)}>
+                    <Package className="h-3.5 w-3.5 mr-1" /> Pack
+                  </Button>
+                ) : partial ? (
+                  <>
+                    <Button size="sm" onClick={() => onStartPick(order)} className="flex-1 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 py-2.5 h-auto">
+                      <ScanLine className="h-3.5 w-3.5 mr-1" /> Continue
+                    </Button>
+                    <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700 text-white border-0 py-2.5 h-auto" onClick={() => onForcePack(order)}>
+                      <Package className="h-3.5 w-3.5 mr-1" /> Pack
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white border-0 py-2.5 h-auto" onClick={() => onStartPick(order)}>
+                    <ScanLine className="h-3.5 w-3.5 mr-1" /> Start Pick
+                  </Button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-sm min-w-[500px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
+              <th className="px-5 py-3 text-left font-semibold">Order ID</th>
+              <th className="px-5 py-3 text-left font-semibold">Customer</th>
+              <th className="px-5 py-3 text-left font-semibold">Items</th>
+              <th className="px-5 py-3 text-right font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order, idx) => {
+              const partial = isPartiallyPicked(order);
+              const fullyPicked = isFullyPicked(order);
+              return (
+                <tr
+                  key={order.id}
+                  onClick={() => onNavigate(order.id)}
+                  className={`border-b border-gray-50 hover:bg-blue-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+                >
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-blue-600">{displayId(order)}</span>
+                      {fullyPicked && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium border border-green-200">Picked</span>}
+                      {partial && !fullyPicked && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium border border-amber-200">Partially Picked</span>}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+                    <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="space-y-0.5">
+                      {order.items?.map(item => (
+                        <div key={item.id} className="text-xs text-gray-600">
+                          {item.quantity}x {item.product_name}
+                          {item.picked_quantity >= item.quantity && <span className="ml-1.5 bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full text-xs">Picked</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => onPrintInvoice(order)} title="Print Invoice" className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
+                        <FileText className="h-4 w-4" />
                       </button>
-                    )}
-                    {fullyPicked ? (
-                      <Button
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700 text-white border-0 px-2 sm:px-3"
-                        onClick={() => onForcePack(order)}
-                      >
-                        <Package className="h-3.5 w-3.5 sm:mr-1" />
-                        <span className="hidden sm:inline">Pack</span>
-                      </Button>
-                    ) : partial ? (
-                      <>
-                        <Button
-                          size="sm"
-                          onClick={() => onStartPick(order)}
-                          className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-2 sm:px-3"
-                        >
-                          <ScanLine className="h-3.5 w-3.5 sm:mr-1" />
-                          <span className="hidden sm:inline">Continue Pick</span>
+                      <button onClick={() => onPrintPackingSlip(order)} title="Print Packing Slip" className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
+                        <Printer className="h-4 w-4" />
+                      </button>
+                      {isWarehouseRole && (
+                        <button onClick={() => onMarkProcessing(order.id)} className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors">
+                          <RotateCcw className="h-4 w-4" />
+                        </button>
+                      )}
+                      {fullyPicked ? (
+                        <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-0 px-3" onClick={() => onForcePack(order)}>
+                          <Package className="h-3.5 w-3.5 mr-1" /> Pack
                         </Button>
-                        <Button
-                          size="sm"
-                          className="bg-green-600 hover:bg-green-700 text-white border-0 px-2 sm:px-3"
-                          onClick={() => onForcePack(order)}
-                        >
-                          <Package className="h-3.5 w-3.5 sm:mr-1" />
-                          <span className="hidden sm:inline">Pack</span>
+                      ) : partial ? (
+                        <>
+                          <Button size="sm" onClick={() => onStartPick(order)} className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-3">
+                            <ScanLine className="h-3.5 w-3.5 mr-1" /> Continue Pick
+                          </Button>
+                          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-0 px-3" onClick={() => onForcePack(order)}>
+                            <Package className="h-3.5 w-3.5 mr-1" /> Pack
+                          </Button>
+                        </>
+                      ) : (
+                        <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white border-0 px-4" onClick={() => onStartPick(order)}>
+                          <ScanLine className="h-3.5 w-3.5 mr-1.5" /> Start Pick
                         </Button>
-                      </>
-                    ) : (
-                      <Button
-                        size="sm"
-                        className="bg-blue-600 hover:bg-blue-700 text-white border-0 px-3 sm:px-4 py-2 sm:py-2.5 min-h-[44px] sm:min-h-0"
-                        onClick={() => onStartPick(order)}
-                      >
-                        <ScanLine className="h-3.5 w-3.5 mr-1.5" />
-                        Start Pick
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -1028,76 +1109,99 @@ function PackedTable({
   onNavigate: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm min-w-[500px]">
-        <thead>
-          <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Order ID</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Customer</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden sm:table-cell">Items</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden md:table-cell">Total</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden lg:table-cell">Courier</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden lg:table-cell">Packed At</th>
-            <th className="px-3 sm:px-5 py-3 text-right font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order, idx) => (
-            <tr
-              key={order.id}
-              onClick={() => onNavigate(order.id)}
-              className={`border-b border-gray-50 hover:bg-green-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
-            >
-              <td className="px-3 sm:px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
-              <td className="px-3 sm:px-5 py-3">
-                <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
-                <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
-              </td>
-              <td className="px-3 sm:px-5 py-3 text-gray-600 text-xs hidden sm:table-cell">
-                {order.items?.map(i => `${i.quantity}x ${i.product_name}`).join(', ')}
-              </td>
-              <td className="px-3 sm:px-5 py-3 font-semibold text-gray-900 hidden md:table-cell">৳{order.total_amount}</td>
-              <td className="px-3 sm:px-5 py-3 hidden lg:table-cell">
-                {order.courier_info?.courier_company ? (
-                  <span className="capitalize text-gray-700">{order.courier_info.courier_company}</span>
-                ) : (
-                  <span className="text-gray-400">—</span>
-                )}
-                {order.courier_info?.tracking_number && (
-                  <div className="text-xs text-gray-400 font-mono">{order.courier_info.tracking_number}</div>
-                )}
-              </td>
-              <td className="px-3 sm:px-5 py-3 text-gray-500 text-xs hidden lg:table-cell">
-                {order.packed_at
-                  ? new Date(order.packed_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
-                  : '—'}
-              </td>
-              <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-end gap-2">
-                  {isWarehouseRole && (
-                    <button
-                      onClick={() => onMarkProcessing(order.id)}
-                      title="Mark as Processing (return to CS queue)"
-                      className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                    </button>
-                  )}
-                  <Button
-                    size="sm"
-                    className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-2 sm:px-3 min-h-[44px] sm:min-h-0"
-                    onClick={() => onMarkShipped(order.id)}
-                  >
-                    <Truck className="h-3.5 w-3.5 sm:mr-1" />
-                    <span className="hidden sm:inline">Mark Shipped</span>
-                  </Button>
+    <>
+      <div className="sm:hidden divide-y divide-gray-100">
+        {orders.map(order => (
+          <div key={order.id} className="p-4 hover:bg-green-50 transition-colors">
+            <button className="w-full text-left" onClick={() => onNavigate(order.id)}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold text-blue-600 text-base">{displayId(order)}</span>
+                <span className="text-sm font-semibold text-gray-900">৳{order.total_amount}</span>
+              </div>
+              <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+              <div className="text-sm text-gray-500">{order.customer?.phone_primary}</div>
+              {order.courier_info?.courier_company && (
+                <div className="text-xs text-gray-400 mt-0.5 capitalize">{order.courier_info.courier_company}
+                  {order.courier_info.tracking_number && <span className="font-mono ml-1">· {order.courier_info.tracking_number}</span>}
                 </div>
-              </td>
+              )}
+              {order.packed_at && (
+                <div className="text-xs text-gray-400 mt-0.5">
+                  Packed: {new Date(order.packed_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}
+                </div>
+              )}
+            </button>
+            <div className="flex items-center gap-2 mt-3" onClick={e => e.stopPropagation()}>
+              {isWarehouseRole && (
+                <button onClick={() => onMarkProcessing(order.id)} className="py-2.5 px-3 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 transition-colors">
+                  <RotateCcw className="h-4 w-4" />
+                </button>
+              )}
+              <Button size="sm" className="flex-1 bg-slate-700 hover:bg-slate-800 text-white border-0 py-2.5 h-auto" onClick={() => onMarkShipped(order.id)}>
+                <Truck className="h-3.5 w-3.5 mr-1.5" /> Mark as Shipped
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-sm min-w-[500px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
+              <th className="px-5 py-3 text-left font-semibold">Order ID</th>
+              <th className="px-5 py-3 text-left font-semibold">Customer</th>
+              <th className="px-5 py-3 text-left font-semibold">Items</th>
+              <th className="px-5 py-3 text-left font-semibold hidden md:table-cell">Total</th>
+              <th className="px-5 py-3 text-left font-semibold hidden lg:table-cell">Courier</th>
+              <th className="px-5 py-3 text-left font-semibold hidden lg:table-cell">Packed At</th>
+              <th className="px-5 py-3 text-right font-semibold">Actions</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {orders.map((order, idx) => (
+              <tr
+                key={order.id}
+                onClick={() => onNavigate(order.id)}
+                className={`border-b border-gray-50 hover:bg-green-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+              >
+                <td className="px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
+                <td className="px-5 py-3">
+                  <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+                  <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
+                </td>
+                <td className="px-5 py-3 text-gray-600 text-xs">
+                  {order.items?.map(i => `${i.quantity}x ${i.product_name}`).join(', ')}
+                </td>
+                <td className="px-5 py-3 font-semibold text-gray-900 hidden md:table-cell">৳{order.total_amount}</td>
+                <td className="px-5 py-3 hidden lg:table-cell">
+                  {order.courier_info?.courier_company ? (
+                    <span className="capitalize text-gray-700">{order.courier_info.courier_company}</span>
+                  ) : <span className="text-gray-400">—</span>}
+                  {order.courier_info?.tracking_number && (
+                    <div className="text-xs text-gray-400 font-mono">{order.courier_info.tracking_number}</div>
+                  )}
+                </td>
+                <td className="px-5 py-3 text-gray-500 text-xs hidden lg:table-cell">
+                  {order.packed_at ? new Date(order.packed_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                </td>
+                <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-end gap-2">
+                    {isWarehouseRole && (
+                      <button onClick={() => onMarkProcessing(order.id)} className="p-2 rounded-lg border border-amber-200 hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors">
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    )}
+                    <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-3" onClick={() => onMarkShipped(order.id)}>
+                      <Truck className="h-3.5 w-3.5 mr-1" /> Mark Shipped
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -1115,69 +1219,85 @@ function SendToLabTable({
   onNavigate: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm min-w-[460px]">
-        <thead>
-          <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Order ID</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Customer</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden sm:table-cell">Items</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Status</th>
-            <th className="px-3 sm:px-5 py-3 text-right font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order, idx) => (
-            <tr
-              key={order.id}
-              onClick={() => onNavigate(order.id)}
-              className={`border-b border-gray-50 hover:bg-teal-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
-            >
-              <td className="px-3 sm:px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
-              <td className="px-3 sm:px-5 py-3">
-                <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
-                <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
-              </td>
-              <td className="px-3 sm:px-5 py-3 text-xs text-gray-600 hidden sm:table-cell">
-                {order.items?.map(i => `${i.quantity}x ${i.product_name}`).join(', ')}
-              </td>
-              <td className="px-3 sm:px-5 py-3">
-                <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                  order.fulfillment_status === 'in_lab'
-                    ? 'bg-teal-100 text-teal-700'
-                    : 'bg-amber-100 text-amber-700'
-                }`}>
+    <>
+      <div className="sm:hidden divide-y divide-gray-100">
+        {orders.map(order => (
+          <div key={order.id} className="p-4 hover:bg-teal-50 transition-colors">
+            <button className="w-full text-left" onClick={() => onNavigate(order.id)}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold text-blue-600 text-base">{displayId(order)}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${order.fulfillment_status === 'in_lab' ? 'bg-teal-100 text-teal-700' : 'bg-amber-100 text-amber-700'}`}>
                   {order.fulfillment_status === 'in_lab' ? 'In Lab' : 'Send to Lab'}
                 </span>
-              </td>
-              <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-end gap-1.5 sm:gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onPrintLabInvoice(order)}
-                    className="px-2 sm:px-3 min-h-[44px] sm:min-h-0"
-                  >
-                    <FileText className="h-3.5 w-3.5 sm:mr-1" />
-                    <span className="hidden sm:inline">Lab Invoice</span>
-                  </Button>
-                  {order.fulfillment_status !== 'in_lab' && (
-                    <Button
-                      size="sm"
-                      className="bg-teal-600 hover:bg-teal-700 text-white border-0 px-2 sm:px-3 min-h-[44px] sm:min-h-0"
-                      onClick={() => onPickForLab(order)}
-                    >
-                      <Send className="h-3.5 w-3.5 sm:mr-1" />
-                      <span className="hidden sm:inline">Pick for Lab</span>
-                    </Button>
-                  )}
-                </div>
-              </td>
+              </div>
+              <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+              <div className="text-sm text-gray-500">{order.customer?.phone_primary}</div>
+              <div className="text-xs text-gray-400 mt-1">
+                {order.items?.map(i => `${i.quantity}x ${i.product_name}`).join(', ')}
+              </div>
+            </button>
+            <div className="flex items-center gap-2 mt-3" onClick={e => e.stopPropagation()}>
+              <Button size="sm" variant="outline" onClick={() => onPrintLabInvoice(order)} className="flex-1 py-2.5 h-auto">
+                <FileText className="h-3.5 w-3.5 mr-1.5" /> Lab Invoice
+              </Button>
+              {order.fulfillment_status !== 'in_lab' && (
+                <Button size="sm" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white border-0 py-2.5 h-auto" onClick={() => onPickForLab(order)}>
+                  <Send className="h-3.5 w-3.5 mr-1.5" /> Pick for Lab
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-sm min-w-[460px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
+              <th className="px-5 py-3 text-left font-semibold">Order ID</th>
+              <th className="px-5 py-3 text-left font-semibold">Customer</th>
+              <th className="px-5 py-3 text-left font-semibold">Items</th>
+              <th className="px-5 py-3 text-left font-semibold">Status</th>
+              <th className="px-5 py-3 text-right font-semibold">Actions</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {orders.map((order, idx) => (
+              <tr
+                key={order.id}
+                onClick={() => onNavigate(order.id)}
+                className={`border-b border-gray-50 hover:bg-teal-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+              >
+                <td className="px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
+                <td className="px-5 py-3">
+                  <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+                  <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
+                </td>
+                <td className="px-5 py-3 text-xs text-gray-600">
+                  {order.items?.map(i => `${i.quantity}x ${i.product_name}`).join(', ')}
+                </td>
+                <td className="px-5 py-3">
+                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${order.fulfillment_status === 'in_lab' ? 'bg-teal-100 text-teal-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {order.fulfillment_status === 'in_lab' ? 'In Lab' : 'Send to Lab'}
+                  </span>
+                </td>
+                <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-end gap-2">
+                    <Button size="sm" variant="outline" onClick={() => onPrintLabInvoice(order)} className="px-3">
+                      <FileText className="h-3.5 w-3.5 mr-1" /> Lab Invoice
+                    </Button>
+                    {order.fulfillment_status !== 'in_lab' && (
+                      <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white border-0 px-3" onClick={() => onPickForLab(order)}>
+                        <Send className="h-3.5 w-3.5 mr-1" /> Pick for Lab
+                      </Button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -1191,68 +1311,100 @@ function ShippedTable({
   onNavigate: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm min-w-[500px]">
-        <thead>
-          <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Order ID</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Customer</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden sm:table-cell">Items</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden md:table-cell">Total</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden lg:table-cell">Courier</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold hidden lg:table-cell">Shipped At</th>
-            <th className="px-3 sm:px-5 py-3 text-left font-semibold">Order Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order, idx) => {
-            const statusCfg = STATUS_CONFIG[order.cs_status];
-            return (
-              <tr
-                key={order.id}
-                onClick={() => onNavigate(order.id)}
-                className={`border-b border-gray-50 hover:bg-slate-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
-              >
-                <td className="px-3 sm:px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
-                <td className="px-3 sm:px-5 py-3">
-                  <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
-                  <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
-                </td>
-                <td className="px-3 sm:px-5 py-3 text-xs text-gray-600 hidden sm:table-cell">
-                  {order.items?.length || 0} item(s)
-                </td>
-                <td className="px-3 sm:px-5 py-3 font-semibold text-gray-900 hidden md:table-cell">৳{order.total_amount}</td>
-                <td className="px-3 sm:px-5 py-3 hidden lg:table-cell">
-                  {order.courier_info?.courier_company ? (
-                    <div>
-                      <span className="capitalize text-gray-700">{order.courier_info.courier_company}</span>
-                      {order.courier_info.tracking_number && (
-                        <div className="text-xs text-gray-400 font-mono">{order.courier_info.tracking_number}</div>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-gray-400">—</span>
-                  )}
-                </td>
-                <td className="px-3 sm:px-5 py-3 text-gray-500 text-xs hidden lg:table-cell">
-                  {order.shipped_at
-                    ? new Date(order.shipped_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
-                    : '—'}
-                </td>
-                <td className="px-3 sm:px-5 py-3">
-                  {statusCfg ? (
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium border ${statusCfg.color} ${statusCfg.bg} ${statusCfg.border}`}>
-                      {statusCfg.label}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-400 capitalize">{order.cs_status}</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="sm:hidden divide-y divide-gray-100">
+        {orders.map(order => {
+          const statusCfg = STATUS_CONFIG[order.cs_status];
+          return (
+            <button
+              key={order.id}
+              className="w-full text-left p-4 hover:bg-slate-50 transition-colors"
+              onClick={() => onNavigate(order.id)}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold text-blue-600 text-base">{displayId(order)}</span>
+                <span className="text-sm font-semibold text-gray-900">৳{order.total_amount}</span>
+              </div>
+              <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+              <div className="text-sm text-gray-500">{order.customer?.phone_primary}</div>
+              <div className="flex items-center gap-2 mt-1.5">
+                {statusCfg ? (
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${statusCfg.color} ${statusCfg.bg} ${statusCfg.border}`}>
+                    {statusCfg.label}
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-400 capitalize">{order.cs_status}</span>
+                )}
+                {order.courier_info?.courier_company && (
+                  <span className="text-xs text-gray-400 capitalize">{order.courier_info.courier_company}</span>
+                )}
+                {order.shipped_at && (
+                  <span className="text-xs text-gray-400">
+                    {new Date(order.shipped_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-sm min-w-[500px]">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase">
+              <th className="px-5 py-3 text-left font-semibold">Order ID</th>
+              <th className="px-5 py-3 text-left font-semibold">Customer</th>
+              <th className="px-5 py-3 text-left font-semibold">Items</th>
+              <th className="px-5 py-3 text-left font-semibold hidden md:table-cell">Total</th>
+              <th className="px-5 py-3 text-left font-semibold hidden lg:table-cell">Courier</th>
+              <th className="px-5 py-3 text-left font-semibold hidden lg:table-cell">Shipped At</th>
+              <th className="px-5 py-3 text-left font-semibold">Order Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order, idx) => {
+              const statusCfg = STATUS_CONFIG[order.cs_status];
+              return (
+                <tr
+                  key={order.id}
+                  onClick={() => onNavigate(order.id)}
+                  className={`border-b border-gray-50 hover:bg-slate-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+                >
+                  <td className="px-5 py-3 font-semibold text-blue-600">{displayId(order)}</td>
+                  <td className="px-5 py-3">
+                    <div className="font-medium text-gray-900">{order.customer?.full_name}</div>
+                    <div className="text-xs text-gray-500">{order.customer?.phone_primary}</div>
+                  </td>
+                  <td className="px-5 py-3 text-xs text-gray-600">{order.items?.length || 0} item(s)</td>
+                  <td className="px-5 py-3 font-semibold text-gray-900 hidden md:table-cell">৳{order.total_amount}</td>
+                  <td className="px-5 py-3 hidden lg:table-cell">
+                    {order.courier_info?.courier_company ? (
+                      <div>
+                        <span className="capitalize text-gray-700">{order.courier_info.courier_company}</span>
+                        {order.courier_info.tracking_number && (
+                          <div className="text-xs text-gray-400 font-mono">{order.courier_info.tracking_number}</div>
+                        )}
+                      </div>
+                    ) : <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-5 py-3 text-gray-500 text-xs hidden lg:table-cell">
+                    {order.shipped_at ? new Date(order.shipped_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                  </td>
+                  <td className="px-5 py-3">
+                    {statusCfg ? (
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium border ${statusCfg.color} ${statusCfg.bg} ${statusCfg.border}`}>
+                        {statusCfg.label}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400 capitalize">{order.cs_status}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

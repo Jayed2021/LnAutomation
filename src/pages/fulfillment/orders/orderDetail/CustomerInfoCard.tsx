@@ -48,6 +48,7 @@ interface EditState {
   payment_method: string;
   payment_status: string;
   payment_reference: string;
+  customer_note: string;
 }
 
 export function CustomerInfoCard({ order, onUpdated }: Props) {
@@ -75,6 +76,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
     payment_method: normalizePaymentMethod(order.payment_method),
     payment_status: order.payment_status ?? 'unpaid',
     payment_reference: order.payment_reference ?? '',
+    customer_note: order.customer_note ?? '',
   });
 
   const startEdit = () => {
@@ -113,6 +115,7 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
         payment_method: edit.payment_method,
         payment_status: edit.payment_status,
         payment_reference: edit.payment_reference,
+        customer_note: edit.customer_note || null,
         updated_at: new Date().toISOString(),
       }).eq('id', order.id);
 
@@ -270,14 +273,27 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
           </div>
         )}
 
-        {order.customer_note && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
-            <div className="flex items-center gap-1.5 mb-1">
-              <MessageSquare className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-              <span className="text-xs font-semibold text-amber-700">Customer Note / Courier Instruction</span>
-            </div>
-            <p className="text-xs text-amber-900 leading-relaxed whitespace-pre-wrap">{order.customer_note}</p>
+        {editing ? (
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Customer Note / Courier Instruction</label>
+            <textarea
+              value={edit.customer_note}
+              onChange={e => setEdit(p => ({ ...p, customer_note: e.target.value }))}
+              rows={3}
+              placeholder="Add a note or courier instruction..."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            />
           </div>
+        ) : (
+          (order.customer_note && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <MessageSquare className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="text-xs font-semibold text-amber-700">Customer Note / Courier Instruction</span>
+              </div>
+              <p className="text-xs text-amber-900 leading-relaxed whitespace-pre-wrap">{order.customer_note}</p>
+            </div>
+          ))
         )}
       </div>
     </div>

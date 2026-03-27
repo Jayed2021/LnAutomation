@@ -143,10 +143,13 @@ export default function CsAssignment() {
     setPreviewLoading(true);
     setDistributeResult(null);
 
+    const NEW_STATUSES = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery', 'send_to_lab', 'in_lab', 'not_printed'];
+
     const { data } = await supabase
       .from('orders')
       .select('id, order_number, order_date')
       .is('assigned_to', null)
+      .in('cs_status', NEW_STATUSES)
       .gte('order_date', fromDate + 'T00:00:00')
       .lte('order_date', toDate + 'T23:59:59')
       .order('order_date', { ascending: true });

@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search, Calendar, Users, TrendingUp, Package, Truck, Download,
   ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
-  ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle
+  ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle, Lock
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -365,6 +365,7 @@ export default function Orders() {
   const [deleting, setDeleting] = useState(false);
   const [showBulkStatusDropdown, setShowBulkStatusDropdown] = useState(false);
   const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
+  const [lockedOrderIds, setLockedOrderIds] = useState<Set<string>>(new Set());
 
   const { startIso, endIso } = useMemo(() => {
     if (dateRange === 'custom') {
@@ -442,6 +443,42 @@ export default function Orders() {
     if (showDateDropdown) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showDateDropdown]);
+
+  useEffect(() => {
+    const STALE_MS = 30000;
+    const isActive = (heartbeat: string) => Date.now() - new Date(heartbeat).getTime() < STALE_MS;
+
+    supabase
+      .from('order_locks')
+      .select('order_id, heartbeat_at')
+      .then(({ data }) => {
+        const active = new Set((data ?? []).filter(r => isActive(r.heartbeat_at)).map(r => r.order_id as string));
+        setLockedOrderIds(active);
+      });
+
+    const channel = supabase
+      .channel('order_locks_list')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_locks' }, (payload) => {
+        setLockedOrderIds(prev => {
+          const next = new Set(prev);
+          if (payload.eventType === 'DELETE') {
+            const old = payload.old as { order_id?: string };
+            if (old.order_id) next.delete(old.order_id);
+          } else {
+            const row = payload.new as { order_id: string; heartbeat_at: string };
+            if (isActive(row.heartbeat_at)) {
+              next.add(row.order_id);
+            } else {
+              next.delete(row.order_id);
+            }
+          }
+          return next;
+        });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   const handleOrderImported = useCallback((orderId?: string) => {
     setDateRange('all_time');
@@ -904,6 +941,11 @@ export default function Orders() {
                               <span className="text-xs font-semibold text-gray-900">
                                 #{order.woo_order_id ?? order.order_number}
                               </span>
+                              {lockedOrderIds.has(order.id) && (
+                                <div title="Someone is currently viewing this order" className="shrink-0 text-amber-500">
+                                  <Lock className="w-3 h-3" />
+                                </div>
+                              )}
                               {order.has_prescription && (
                                 <div
                                   title="This order has prescription / lens options attached"

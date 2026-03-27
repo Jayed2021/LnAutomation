@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Trash2, AlertTriangle, X } from 'lucide-react';
+import { Trash2, AlertTriangle, X, Lock } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { useAuth } from '../../../../contexts/AuthContext';
 import {
@@ -47,6 +47,9 @@ export default function OrderDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [activeLock, setActiveLock] = useState<{ user_name: string } | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lockAcquiredRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -84,6 +87,68 @@ export default function OrderDetail() {
     });
     fetchStoreProfile().then(sp => setStoreProfile(sp));
   }, [load]);
+
+  useEffect(() => {
+    if (!id || !user) return;
+
+    const acquireLock = async () => {
+      await supabase.from('order_locks').upsert(
+        { order_id: id, user_id: user.id, user_name: user.full_name, locked_at: new Date().toISOString(), heartbeat_at: new Date().toISOString() },
+        { onConflict: 'order_id' }
+      );
+      lockAcquiredRef.current = true;
+    };
+
+    const releaseLock = async () => {
+      if (!lockAcquiredRef.current) return;
+      await supabase.from('order_locks').delete().eq('order_id', id).eq('user_id', user.id);
+      lockAcquiredRef.current = false;
+    };
+
+    const sendHeartbeat = async () => {
+      if (!lockAcquiredRef.current) return;
+      await supabase.from('order_locks').update({ heartbeat_at: new Date().toISOString() }).eq('order_id', id).eq('user_id', user.id);
+    };
+
+    acquireLock();
+    heartbeatRef.current = setInterval(sendHeartbeat, 15000);
+
+    const handleUnload = () => {
+      if (lockAcquiredRef.current) {
+        navigator.sendBeacon(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/order_locks?order_id=eq.${id}&user_id=eq.${user.id}`, '');
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+
+    const channel = supabase
+      .channel(`order_lock_${id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_locks', filter: `order_id=eq.${id}` }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          setActiveLock(null);
+        } else {
+          const row = payload.new as { user_id: string; user_name: string; heartbeat_at: string };
+          if (row.user_id !== user.id) {
+            const age = Date.now() - new Date(row.heartbeat_at).getTime();
+            setActiveLock(age < 30000 ? { user_name: row.user_name } : null);
+          }
+        }
+      })
+      .subscribe();
+
+    supabase.from('order_locks').select('user_id, user_name, heartbeat_at').eq('order_id', id).maybeSingle().then(({ data }) => {
+      if (data && data.user_id !== user.id) {
+        const age = Date.now() - new Date(data.heartbeat_at).getTime();
+        setActiveLock(age < 30000 ? { user_name: data.user_name } : null);
+      }
+    });
+
+    return () => {
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+      window.removeEventListener('beforeunload', handleUnload);
+      supabase.removeChannel(channel);
+      releaseLock();
+    };
+  }, [id, user]);
 
   const openPrintTab = (html: string) => {
     const blob = new Blob([html], { type: 'text/html' });
@@ -145,6 +210,12 @@ export default function OrderDetail() {
 
   return (
     <div className="space-y-5 pb-10">
+      {activeLock && (
+        <div className="flex items-center gap-2.5 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
+          <Lock className="w-4 h-4 shrink-0 text-amber-600" />
+          <span><span className="font-semibold">{activeLock.user_name}</span> is currently viewing this order.</span>
+        </div>
+      )}
       <OrderHeader
         order={order}
         items={items}

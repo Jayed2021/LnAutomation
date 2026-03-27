@@ -42,6 +42,11 @@ export interface OrderListItem {
     id: string;
     full_name: string;
   } | null;
+  courier_info: {
+    courier_status: string | null;
+    courier_company: string | null;
+    tracking_number: string | null;
+  } | null;
 }
 
 export interface StatusConfig {

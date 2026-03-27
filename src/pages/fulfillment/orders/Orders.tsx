@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Search, Calendar, Eye, Users, TrendingUp, Package, Truck, Download,
+  Search, Calendar, Users, TrendingUp, Package, Truck, Download,
   ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -138,6 +138,53 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
+const DELIVERY_STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; border: string; icon: React.ReactNode }> = {
+  'Pending':                   { label: 'Pending',              color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-200',  icon: <Clock className="w-3 h-3" /> },
+  'Order Created':             { label: 'Created',              color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-200',  icon: <Clock className="w-3 h-3" /> },
+  'Order Updated':             { label: 'Updated',              color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200',   icon: <Clock className="w-3 h-3" /> },
+  'Pickup Requested':          { label: 'Pickup Req.',          color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200',   icon: <Truck className="w-3 h-3" /> },
+  'Assigned For Pickup':       { label: 'Pickup Assigned',      color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200',   icon: <Truck className="w-3 h-3" /> },
+  'Pickup':                    { label: 'Picked Up',            color: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-300',   icon: <Truck className="w-3 h-3" /> },
+  'Pickup Failed':             { label: 'Pickup Failed',        color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-200',    icon: <AlertCircle className="w-3 h-3" /> },
+  'Pickup Cancelled':          { label: 'Pickup Cancelled',     color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-200',    icon: <AlertCircle className="w-3 h-3" /> },
+  'At the Sorting Hub':        { label: 'At Hub',               color: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-300',   icon: <Truck className="w-3 h-3" /> },
+  'In Transit':                { label: 'In Transit',           color: 'text-blue-700',   bg: 'bg-blue-100',  border: 'border-blue-300',   icon: <Truck className="w-3 h-3" /> },
+  'Received at Last Mile Hub': { label: 'Last Mile Hub',        color: 'text-blue-800',   bg: 'bg-blue-100',  border: 'border-blue-400',   icon: <Truck className="w-3 h-3" /> },
+  'Assigned for Delivery':     { label: 'Out for Delivery',     color: 'text-teal-700',   bg: 'bg-teal-50',   border: 'border-teal-200',   icon: <Truck className="w-3 h-3" /> },
+  'Delivered':                 { label: 'Delivered',            color: 'text-green-700',  bg: 'bg-green-100', border: 'border-green-300',  icon: <CheckCircle2 className="w-3 h-3" /> },
+  'Partial Delivery':          { label: 'Partial Delivery',     color: 'text-orange-700', bg: 'bg-orange-50', border: 'border-orange-200', icon: <CheckCircle2 className="w-3 h-3" /> },
+  'Return':                    { label: 'Returned',             color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-200',    icon: <Package className="w-3 h-3" /> },
+  'Delivery Failed':           { label: 'Delivery Failed',      color: 'text-red-700',    bg: 'bg-red-100',   border: 'border-red-300',    icon: <AlertCircle className="w-3 h-3" /> },
+  'On Hold':                   { label: 'On Hold',              color: 'text-amber-800',  bg: 'bg-amber-100', border: 'border-amber-300',  icon: <AlertCircle className="w-3 h-3" /> },
+  'Payment Invoice':           { label: 'Paid',                 color: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-200',  icon: <CheckCircle2 className="w-3 h-3" /> },
+  'Paid Return':               { label: 'Paid Return',          color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-200',    icon: <Package className="w-3 h-3" /> },
+  'Exchange':                  { label: 'Exchange',             color: 'text-blue-800',   bg: 'bg-blue-100',  border: 'border-blue-300',   icon: <Package className="w-3 h-3" /> },
+};
+
+function DeliveryStatusBadge({ order }: { order: OrderListItem }) {
+  const rawStatus = order.courier_info?.courier_status ?? null;
+  const isShipped = !!order.shipped_at;
+
+  if (!isShipped) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border text-gray-500 bg-gray-50 border-gray-200">
+        Not Shipped
+      </span>
+    );
+  }
+
+  const cfg = rawStatus
+    ? (DELIVERY_STATUS_CONFIG[rawStatus] ?? { label: rawStatus, color: 'text-gray-700', bg: 'bg-gray-50', border: 'border-gray-200', icon: null })
+    : { label: 'Shipped', color: 'text-green-700', bg: 'bg-green-50', border: 'border-green-200', icon: <Truck className="w-3 h-3" /> };
+
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+      {cfg.icon}
+      {cfg.label}
+    </span>
+  );
+}
+
 async function deleteOrder(id: string) {
   await supabase.from('order_activity_log').delete().eq('order_id', id);
   await supabase.from('order_call_log').delete().eq('order_id', id);
@@ -209,13 +256,35 @@ function DeleteConfirmModal({ count, orderNumbers, onConfirm, onCancel, loading 
   );
 }
 
+interface CustomerGroup {
+  phone: string;
+  customerName: string;
+  orders: OrderListItem[];
+}
+
+function groupOrdersByPhone(orders: OrderListItem[]): CustomerGroup[] {
+  const map = new Map<string, CustomerGroup>();
+  for (const order of orders) {
+    const phone = order.customer?.phone_primary ?? '';
+    if (!map.has(phone)) {
+      map.set(phone, {
+        phone,
+        customerName: order.customer?.full_name ?? '—',
+        orders: [],
+      });
+    }
+    map.get(phone)!.orders.push(order);
+  }
+  return Array.from(map.values());
+}
+
 const VALID_TABS: Tab[] = ['all', 'needs_action', 'scheduled', 'in_progress', 'lab_orders', 'shipped', 'cancelled'];
 const VALID_DATE_RANGES: DateRange[] = ['today', 'yesterday', 'this_week', 'this_month', 'last_month', 'this_quarter', 'all_time', 'custom'];
 
 export default function Orders() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, canDeleteOrders } = useAuth();
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -242,6 +311,7 @@ export default function Orders() {
   const [showPullModal, setShowPullModal] = useState(false);
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const updateParams = useCallback((updates: Record<string, string | null>) => {
     setSearchParams(prev => {
@@ -329,7 +399,8 @@ export default function Orders() {
           has_prescription, shipped_at,
           customer:customers(full_name, phone_primary),
           assigned_user:users!orders_assigned_to_fkey(id, full_name),
-          confirmed_user:users!orders_confirmed_by_fkey(id, full_name)
+          confirmed_user:users!orders_confirmed_by_fkey(id, full_name),
+          courier_info:order_courier_info(courier_status, courier_company, tracking_number)
         `)
         .order('order_date', { ascending: false });
 
@@ -342,7 +413,11 @@ export default function Orders() {
 
       const { data, error } = await query;
       if (error) throw error;
-      setOrders((data as any[]) || []);
+      const normalized = ((data as any[]) || []).map((o: any) => ({
+        ...o,
+        courier_info: Array.isArray(o.courier_info) ? (o.courier_info[0] ?? null) : o.courier_info,
+      }));
+      setOrders(normalized);
     } catch (err) {
       console.error('Error fetching orders:', err);
     } finally {
@@ -407,6 +482,8 @@ export default function Orders() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginatedOrders = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
+  const groups = useMemo(() => groupOrdersByPhone(paginatedOrders), [paginatedOrders]);
+
   const totalValue = filtered.reduce((s, o) => s + (o.total_amount ?? 0), 0);
   const avgValue = filtered.length > 0 ? totalValue / filtered.length : 0;
   const shippedCount = orders.filter(o => !!o.shipped_at).length;
@@ -437,11 +514,11 @@ export default function Orders() {
     });
   };
 
-  const openDeleteSingle = (e: React.MouseEvent, order: OrderListItem) => {
-    e.stopPropagation();
-    setDeleteTarget({
-      ids: [order.id],
-      numbers: [`#${order.woo_order_id ?? order.order_number} (${order.order_number})`],
+  const toggleGroup = (phone: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      next.has(phone) ? next.delete(phone) : next.add(phone);
+      return next;
     });
   };
 
@@ -488,6 +565,8 @@ export default function Orders() {
       setBulkStatusChanging(false);
     }
   };
+
+  const COLS = 7;
 
   return (
     <div className="space-y-5">
@@ -626,7 +705,6 @@ export default function Orders() {
             />
           </div>
 
-          {/* Status Filter */}
           <div className="relative">
             <button
               onClick={() => setShowStatusDropdown(!showStatusDropdown)}
@@ -656,7 +734,6 @@ export default function Orders() {
             )}
           </div>
 
-          {/* Assigned to Me */}
           <button
             onClick={() => setAssignedToMe(!assignedToMe)}
             className={`flex items-center gap-2 px-4 py-2.5 border rounded-lg text-sm font-medium transition-colors ${
@@ -669,7 +746,6 @@ export default function Orders() {
             Assigned to Me
           </button>
 
-          {/* Pull Order */}
           <button
             onClick={() => setShowPullModal(true)}
             className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
@@ -687,7 +763,6 @@ export default function Orders() {
               {selectedIds.size} order{selectedIds.size > 1 ? 's' : ''} selected
             </div>
             <div className="flex items-center gap-2 ml-auto">
-              {/* Bulk Status Change */}
               <div className="relative">
                 <button
                   onClick={() => setShowBulkStatusDropdown(!showBulkStatusDropdown)}
@@ -712,16 +787,16 @@ export default function Orders() {
                 )}
               </div>
 
-              {/* Bulk Delete */}
-              <button
-                onClick={openDeleteBulk}
-                className="flex items-center gap-2 px-3 py-2 border border-red-200 rounded-lg text-sm text-red-700 bg-white hover:bg-red-50 transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete Selected
-              </button>
+              {canDeleteOrders && (
+                <button
+                  onClick={openDeleteBulk}
+                  className="flex items-center gap-2 px-3 py-2 border border-red-200 rounded-lg text-sm text-red-700 bg-white hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Selected
+                </button>
+              )}
 
-              {/* Clear Selection */}
               <button
                 onClick={() => setSelectedIds(new Set())}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
@@ -737,136 +812,164 @@ export default function Orders() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/50">
-                <th className="px-4 py-3 w-10">
+                <th className="px-3 py-2.5 w-8">
                   <input
                     type="checkbox"
                     checked={allFilteredSelected}
                     onChange={toggleSelectAll}
-                    className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer"
+                    className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
                   />
                 </th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Order Date</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Order ID</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Customer</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Total</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Status</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Assigned Person</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Actions</th>
+                <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Order Date</th>
+                <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Order ID</th>
+                <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Total</th>
+                <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Status</th>
+                <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Delivery</th>
+                <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Assigned</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-b border-gray-100">
-                    {Array.from({ length: 8 }).map((_, j) => (
-                      <td key={j} className="px-4 py-4">
-                        <div className="h-4 bg-gray-100 rounded animate-pulse" />
+                    {Array.from({ length: COLS }).map((_, j) => (
+                      <td key={j} className="px-3 py-3">
+                        <div className="h-3.5 bg-gray-100 rounded animate-pulse" />
                       </td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-16 text-center text-gray-500">
+                  <td colSpan={COLS} className="px-5 py-16 text-center text-gray-500">
                     <Package className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                     <p className="font-medium text-gray-400">No orders found</p>
                     <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or date range</p>
                   </td>
                 </tr>
               ) : (
-                paginatedOrders.map(order => (
-                  <tr
-                    key={order.id}
-                    onClick={() => { setHighlightedOrderId(null); navigate(`/fulfillment/orders/${order.id}`); }}
-                    className={`border-b border-gray-100 cursor-pointer transition-colors ${
-                      selectedIds.has(order.id)
-                        ? 'bg-blue-50/60'
-                        : highlightedOrderId === order.id
-                        ? 'bg-green-50 hover:bg-green-50/80'
-                        : 'hover:bg-blue-50/30'
-                    }`}
-                  >
-                    <td className="px-4 py-4" onClick={e => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(order.id)}
-                        onChange={() => toggleSelect(order.id)}
-                        className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer"
-                      />
-                    </td>
-                    <td className="px-4 py-4 text-sm text-gray-600">
-                      {formatDate(order.order_date)}
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-2">
-                        <div>
-                          <div className="text-sm font-semibold text-gray-900">
-                            #{order.woo_order_id ?? order.order_number}
-                          </div>
-                        </div>
-                        {order.has_prescription && (
-                          <div
-                            title="This order has prescription / lens options attached"
-                            className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 border border-amber-300 rounded-full text-amber-700 shrink-0"
-                          >
-                            <FlaskConical className="w-3 h-3" />
-                            <span className="text-xs font-semibold">Rx</span>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-sm font-medium text-gray-900">{order.customer?.full_name ?? '—'}</div>
-                      <div className="text-xs text-gray-500">{order.customer?.phone_primary ?? '—'}</div>
-                    </td>
-                    <td className="px-4 py-4 text-sm font-medium text-gray-900">
-                      ৳{(order.total_amount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-4 py-4">
-                      <StatusBadge status={order.cs_status} />
-                      {order.cs_status === 'late_delivery' && order.expected_delivery_date && (
-                        <div className="text-xs text-amber-600 mt-1">
-                          Due: {formatDate(order.expected_delivery_date)}
-                        </div>
+                groups.map(group => {
+                  const isGrouped = group.orders.length > 1;
+                  const isCollapsed = collapsedGroups.has(group.phone);
+                  const groupTotal = group.orders.reduce((s, o) => s + (o.total_amount ?? 0), 0);
+
+                  return (
+                    <React.Fragment key={group.phone}>
+                      {isGrouped && (
+                        <tr
+                          className="bg-gray-50 border-b border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => toggleGroup(group.phone)}
+                        >
+                          <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={group.orders.every(o => selectedIds.has(o.id))}
+                              onChange={() => {
+                                const allSelected = group.orders.every(o => selectedIds.has(o.id));
+                                setSelectedIds(prev => {
+                                  const next = new Set(prev);
+                                  group.orders.forEach(o => allSelected ? next.delete(o.id) : next.add(o.id));
+                                  return next;
+                                });
+                              }}
+                              className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
+                            />
+                          </td>
+                          <td colSpan={COLS - 1} className="px-3 py-2">
+                            <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-1.5 text-gray-500">
+                                {isCollapsed
+                                  ? <ChevronDown className="w-3.5 h-3.5" />
+                                  : <ChevronUp className="w-3.5 h-3.5" />
+                                }
+                              </div>
+                              <span className="text-xs font-semibold text-gray-800">{group.customerName}</span>
+                              <span className="text-xs text-gray-500">{group.phone}</span>
+                              <span className="text-xs text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded-full font-medium">
+                                {group.orders.length} orders
+                              </span>
+                              <span className="text-xs font-semibold text-gray-700 ml-auto">
+                                ৳{groupTotal.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                    <td className="px-4 py-4">
-                      {order.assigned_user ? (
-                        <div className="flex items-center gap-2">
-                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${avatarColor(order.assigned_user.full_name)}`}>
-                            {getInitials(order.assigned_user.full_name)}
-                          </div>
-                          <div>
-                            <div className="text-sm text-gray-800">{order.assigned_user.full_name}</div>
-                            {order.confirmed_user && order.confirmed_user.id !== order.assigned_user.id && (
-                              <div className="text-xs text-amber-600">Confirmed by: {order.confirmed_user.full_name}</div>
+                      {!isCollapsed && group.orders.map(order => (
+                        <tr
+                          key={order.id}
+                          onClick={() => { setHighlightedOrderId(null); navigate(`/fulfillment/orders/${order.id}`); }}
+                          className={`border-b border-gray-100 cursor-pointer transition-colors ${
+                            isGrouped ? 'bg-white' : ''
+                          } ${
+                            selectedIds.has(order.id)
+                              ? 'bg-blue-50/60'
+                              : highlightedOrderId === order.id
+                              ? 'bg-green-50 hover:bg-green-50/80'
+                              : 'hover:bg-blue-50/30'
+                          }`}
+                        >
+                          <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(order.id)}
+                              onChange={() => toggleSelect(order.id)}
+                              className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
+                            />
+                          </td>
+                          <td className={`px-3 py-2.5 text-xs text-gray-500 ${isGrouped ? 'pl-8' : ''}`}>
+                            {formatDate(order.order_date)}
+                          </td>
+                          <td className={`px-3 py-2.5 ${isGrouped ? '' : ''}`}>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-semibold text-gray-900">
+                                #{order.woo_order_id ?? order.order_number}
+                              </span>
+                              {order.has_prescription && (
+                                <div
+                                  title="This order has prescription / lens options attached"
+                                  className="flex items-center gap-0.5 px-1 py-0.5 bg-amber-100 border border-amber-300 rounded-full text-amber-700 shrink-0"
+                                >
+                                  <FlaskConical className="w-2.5 h-2.5" />
+                                  <span className="text-[10px] font-semibold">Rx</span>
+                                </div>
+                              )}
+                            </div>
+                            {!isGrouped && (
+                              <div className="text-[11px] text-gray-500 mt-0.5">{order.customer?.phone_primary ?? '—'}</div>
                             )}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">Unassigned</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={e => { e.stopPropagation(); navigate(`/fulfillment/orders/${order.id}`); }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          View
-                        </button>
-                        <button
-                          onClick={e => openDeleteSingle(e, order)}
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 border border-red-200 rounded-lg text-sm text-red-500 hover:bg-red-50 transition-colors"
-                          title="Delete order"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          </td>
+                          <td className="px-3 py-2.5 text-xs font-medium text-gray-900">
+                            ৳{(order.total_amount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <StatusBadge status={order.cs_status} className="text-[11px] px-1.5 py-0.5" />
+                            {order.cs_status === 'late_delivery' && order.expected_delivery_date && (
+                              <div className="text-[10px] text-amber-600 mt-0.5">
+                                Due: {formatDate(order.expected_delivery_date)}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <DeliveryStatusBadge order={order} />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {order.assigned_user ? (
+                              <div className="flex items-center gap-1.5">
+                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold ${avatarColor(order.assigned_user.full_name)}`}>
+                                  {getInitials(order.assigned_user.full_name)}
+                                </div>
+                                <span className="text-xs text-gray-800">{order.assigned_user.full_name}</span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -875,25 +978,25 @@ export default function Orders() {
         {/* Pagination */}
         {!loading && filtered.length > 0 && (
           <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between">
-            <span className="text-sm text-gray-500">
+            <span className="text-xs text-gray-500">
               Showing {Math.min((currentPage - 1) * PAGE_SIZE + 1, filtered.length)}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length} orders
             </span>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
-                className="flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ChevronLeft className="w-4 h-4" />
                 Prev
               </button>
-              <span className="px-3 py-1.5 text-sm text-gray-700 font-medium">
+              <span className="px-3 py-1.5 text-xs text-gray-700 font-medium">
                 {currentPage} / {totalPages}
               </span>
               <button
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages}
-                className="flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Next
                 <ChevronRight className="w-4 h-4" />

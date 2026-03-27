@@ -72,11 +72,13 @@ export default function ExpenseModal({
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (open) {
       setForm(buildDefaultForm(expense));
       setErrors({});
+      submittingRef.current = false;
     }
   }, [open, expense]);
 
@@ -133,7 +135,9 @@ export default function ExpenseModal({
   };
 
   const handleSubmit = async () => {
+    if (submittingRef.current) return;
     if (!validate()) return;
+    submittingRef.current = true;
     setSaving(true);
     try {
       if (isEdit && expense) {
@@ -167,6 +171,7 @@ export default function ExpenseModal({
       console.error('Failed to save expense:', err);
       alert('Failed to save expense. Please try again.');
     } finally {
+      submittingRef.current = false;
       setSaving(false);
     }
   };

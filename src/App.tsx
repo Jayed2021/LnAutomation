@@ -25,6 +25,7 @@ import OrderDetail from './pages/fulfillment/orders/orderDetail/OrderDetail';
 import Operations from './pages/fulfillment/Operations';
 import Returns from './pages/fulfillment/Returns';
 import ReturnDetail from './pages/fulfillment/ReturnDetail';
+import BulkUpdateOrders from './pages/fulfillment/orders/bulkUpdate/BulkUpdateOrders';
 import Collection from './pages/finance/Collection';
 import Expenses from './pages/finance/Expenses';
 import Reports from './pages/Reports';
@@ -80,6 +81,7 @@ function App() {
             <Route path="inventory/warehouse" element={<WarehouseLocations />} />
 
             <Route path="fulfillment/orders" element={<Orders />} />
+            <Route path="fulfillment/orders/bulk-update" element={<BulkUpdateOrders />} />
             <Route path="fulfillment/orders/:id" element={<OrderDetail />} />
             <Route path="fulfillment/operations" element={<Operations />} />
             <Route path="fulfillment/returns" element={<Returns />} />

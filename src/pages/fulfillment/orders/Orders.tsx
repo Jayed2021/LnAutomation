@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Search, Calendar, Users, TrendingUp, Package, Truck, Download,
+  Search, Calendar, Users, TrendingUp, Package, Truck, Download, UploadCloud,
   ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
   ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle, Lock
 } from 'lucide-react';
@@ -764,6 +764,14 @@ export default function Orders() {
           >
             <Download className="w-4 h-4" />
             Pull by WC ID
+          </button>
+
+          <button
+            onClick={() => navigate('/fulfillment/orders/bulk-update')}
+            className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            <UploadCloud className="w-4 h-4" />
+            Bulk Update
           </button>
         </div>
 

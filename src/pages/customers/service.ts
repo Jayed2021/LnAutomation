@@ -7,13 +7,24 @@ import type {
   UpdateCustomerPayload,
 } from './types';
 
-export async function fetchCustomers(search = ''): Promise<Customer[]> {
+const CUSTOMERS_SELECT =
+  'id, woo_customer_id, full_name, email, phone_primary, phone_secondary, address_line1, city, district, notes, created_at, updated_at, total_orders, successful_deliveries, failed_deliveries, cancelled_orders, total_spent, avg_order_value, delivery_success_rate, first_order_date, last_order_date, has_delivered_order';
+
+export const CUSTOMERS_PAGE_SIZE = 20;
+
+export async function fetchCustomers(
+  search = '',
+  typeFilter: 'all' | 'new' | 'returning' = 'all',
+  page = 0
+): Promise<{ data: Customer[]; count: number }> {
+  const from = page * CUSTOMERS_PAGE_SIZE;
+  const to = from + CUSTOMERS_PAGE_SIZE - 1;
+
   let query = supabase
     .from('customers')
-    .select(
-      'id, woo_customer_id, full_name, email, phone_primary, phone_secondary, address_line1, city, district, notes, created_at, updated_at, total_orders, successful_deliveries, failed_deliveries, cancelled_orders, total_spent, avg_order_value, delivery_success_rate, first_order_date, last_order_date'
-    )
-    .order('last_order_date', { ascending: false, nullsFirst: false });
+    .select(CUSTOMERS_SELECT, { count: 'exact' })
+    .order('last_order_date', { ascending: false, nullsFirst: false })
+    .range(from, to);
 
   if (search.trim()) {
     const q = search.trim();
@@ -22,9 +33,15 @@ export async function fetchCustomers(search = ''): Promise<Customer[]> {
     );
   }
 
-  const { data, error } = await query;
+  if (typeFilter === 'returning') {
+    query = query.eq('has_delivered_order', true);
+  } else if (typeFilter === 'new') {
+    query = query.eq('has_delivered_order', false);
+  }
+
+  const { data, error, count } = await query;
   if (error) throw error;
-  return (data || []) as Customer[];
+  return { data: (data || []) as Customer[], count: count ?? 0 };
 }
 
 export async function fetchCustomerById(id: string): Promise<Customer | null> {

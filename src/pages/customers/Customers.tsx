@@ -15,11 +15,11 @@ import {
   Mail,
   MapPin,
   ChevronRight,
+  ChevronLeft,
   X,
 } from 'lucide-react';
-import { fetchCustomers, createCustomer } from './service';
+import { fetchCustomers, createCustomer, CUSTOMERS_PAGE_SIZE } from './service';
 import type { Customer, CreateCustomerPayload } from './types';
-import { STATUS_CONFIG } from '../fulfillment/orders/types';
 
 function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
@@ -37,17 +37,16 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
   );
 }
 
-function CustomerTypeBadge({ totalOrders }: { totalOrders: number }) {
-  const isNew = totalOrders <= 1;
+function CustomerTypeBadge({ hasDeliveredOrder }: { hasDeliveredOrder: boolean }) {
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-        isNew
-          ? 'bg-sky-50 text-sky-700 border border-sky-200'
-          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+        hasDeliveredOrder
+          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+          : 'bg-sky-50 text-sky-700 border border-sky-200'
       }`}
     >
-      {isNew ? 'New' : 'Returning'}
+      {hasDeliveredOrder ? 'Returning' : 'New'}
     </span>
   );
 }
@@ -67,19 +66,22 @@ export default function Customers() {
   const navigate = useNavigate();
   const { lastRefreshed, setRefreshing } = useRefresh();
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'new' | 'returning'>('all');
+  const [page, setPage] = useState(0);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<CreateCustomerPayload>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
-  const load = async () => {
+  const load = async (currentPage = page) => {
     setLoading(true);
     try {
-      const data = await fetchCustomers(search);
-      setCustomers(data);
+      const result = await fetchCustomers(search, typeFilter, currentPage);
+      setCustomers(result.data);
+      setTotalCount(result.count);
     } catch (err) {
       console.error('Load customers error:', err);
     } finally {
@@ -88,32 +90,23 @@ export default function Customers() {
     }
   };
 
-  useEffect(() => { load(); }, [lastRefreshed]);
+  useEffect(() => { load(page); }, [lastRefreshed]);
 
   useEffect(() => {
-    const timer = setTimeout(() => load(), 300);
+    const timer = setTimeout(() => {
+      setPage(0);
+      load(0);
+    }, 300);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, typeFilter]);
 
-  const filtered = customers.filter(c => {
-    if (typeFilter === 'new') return c.total_orders <= 1;
-    if (typeFilter === 'returning') return c.total_orders > 1;
-    return true;
-  });
+  useEffect(() => {
+    load(page);
+  }, [page]);
 
-  const totalCustomers = customers.length;
-  const avgSuccessRate =
-    customers.length > 0
-      ? (
-          customers.reduce((sum, c) => sum + (c.delivery_success_rate ?? 0), 0) /
-          customers.length
-        ).toFixed(1)
-      : '0.0';
-  const withPrescriptions = customers.filter(c => c.total_orders > 0).length;
-  const avgLifetimeValue =
-    customers.length > 0
-      ? Math.round(customers.reduce((sum, c) => sum + c.total_spent, 0) / customers.length)
-      : 0;
+  const totalPages = Math.ceil(totalCount / CUSTOMERS_PAGE_SIZE);
+  const startIndex = page * CUSTOMERS_PAGE_SIZE + 1;
+  const endIndex = Math.min((page + 1) * CUSTOMERS_PAGE_SIZE, totalCount);
 
   const handleOpenModal = () => {
     setForm(EMPTY_FORM);
@@ -161,10 +154,10 @@ export default function Customers() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={<Users className="w-5 h-5" />} label="Total Customers" value={totalCustomers.toString()} />
-        <StatCard icon={<TrendingUp className="w-5 h-5" />} label="Avg Delivery Success" value={`${avgSuccessRate}%`} />
-        <StatCard icon={<ShoppingBag className="w-5 h-5" />} label="Customers with Orders" value={withPrescriptions.toString()} />
-        <StatCard icon={<Star className="w-5 h-5" />} label="Avg Lifetime Value" value={`৳${avgLifetimeValue.toLocaleString()}`} />
+        <StatCard icon={<Users className="w-5 h-5" />} label="Total Customers" value={totalCount.toString()} />
+        <StatCard icon={<TrendingUp className="w-5 h-5" />} label="Returning Customers" value={loading ? '—' : customers.filter(c => c.has_delivered_order).length.toString()} />
+        <StatCard icon={<ShoppingBag className="w-5 h-5" />} label="Showing" value={loading ? '—' : `${startIndex}–${endIndex}`} />
+        <StatCard icon={<Star className="w-5 h-5" />} label="Page" value={loading ? '—' : `${page + 1} of ${totalPages || 1}`} />
       </div>
 
       <Card>
@@ -194,7 +187,7 @@ export default function Customers() {
           <div className="flex justify-center items-center py-16">
             <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
           </div>
-        ) : filtered.length === 0 ? (
+        ) : customers.length === 0 ? (
           <div className="text-center py-16 text-gray-400">
             <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
             <p className="text-sm">No customers found</p>
@@ -215,7 +208,7 @@ export default function Customers() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filtered.map(c => (
+                {customers.map(c => (
                   <tr
                     key={c.id}
                     onClick={() => navigate(`/customers/${c.id}`)}
@@ -254,7 +247,7 @@ export default function Customers() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <CustomerTypeBadge totalOrders={c.total_orders} />
+                      <CustomerTypeBadge hasDeliveredOrder={c.has_delivered_order} />
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-gray-900">{c.total_orders}</td>
                     <td className="px-4 py-3 text-right text-gray-700">৳{c.total_spent.toLocaleString()}</td>
@@ -285,11 +278,58 @@ export default function Customers() {
           </div>
         )}
 
-        {!loading && (
-          <div className="px-4 py-3 border-t border-gray-100 text-xs text-gray-400">
-            {filtered.length} customer{filtered.length !== 1 ? 's' : ''}
-          </div>
-        )}
+        <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
+          <span className="text-xs text-gray-400">
+            {totalCount > 0
+              ? `Showing ${startIndex}–${endIndex} of ${totalCount} customer${totalCount !== 1 ? 's' : ''}`
+              : 'No customers'}
+          </span>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0 || loading}
+                className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4 text-gray-600" />
+              </button>
+
+              {Array.from({ length: totalPages }, (_, i) => i)
+                .filter(i => i === 0 || i === totalPages - 1 || Math.abs(i - page) <= 1)
+                .reduce<(number | 'ellipsis')[]>((acc, i, idx, arr) => {
+                  if (idx > 0 && (i as number) - (arr[idx - 1] as number) > 1) acc.push('ellipsis');
+                  acc.push(i);
+                  return acc;
+                }, [])
+                .map((item, idx) =>
+                  item === 'ellipsis' ? (
+                    <span key={`ellipsis-${idx}`} className="px-1 text-gray-400 text-sm">…</span>
+                  ) : (
+                    <button
+                      key={item}
+                      onClick={() => setPage(item as number)}
+                      disabled={loading}
+                      className={`min-w-[32px] h-8 px-2 rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed ${
+                        page === item
+                          ? 'bg-gray-900 text-white'
+                          : 'hover:bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {(item as number) + 1}
+                    </button>
+                  )
+                )}
+
+              <button
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1 || loading}
+                className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronRight className="w-4 h-4 text-gray-600" />
+              </button>
+            </div>
+          )}
+        </div>
       </Card>
 
       {showModal && (

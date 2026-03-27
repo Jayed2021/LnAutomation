@@ -22,6 +22,7 @@ export interface Customer {
   delivery_success_rate: number | null;
   first_order_date: string | null;
   last_order_date: string | null;
+  has_delivered_order: boolean;
 }
 
 export interface CustomerOrder {

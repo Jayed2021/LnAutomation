@@ -224,8 +224,6 @@ export default function CustomerDetail() {
     );
   }
 
-  const isNew = customer.total_orders <= 1;
-
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="flex items-center gap-4">
@@ -240,12 +238,12 @@ export default function CustomerDetail() {
         <span className="text-sm font-medium text-gray-900">{customer.full_name}</span>
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-            isNew
-              ? 'bg-sky-50 text-sky-700 border border-sky-200'
-              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+            customer.has_delivered_order
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              : 'bg-sky-50 text-sky-700 border border-sky-200'
           }`}
         >
-          {isNew ? 'New' : 'Returning'}
+          {customer.has_delivered_order ? 'Returning' : 'New'}
         </span>
       </div>
 

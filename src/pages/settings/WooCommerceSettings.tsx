@@ -63,7 +63,7 @@ export default function WooCommerceSettings() {
   const [syncing, setSyncing] = useState<'products' | 'orders' | null>(null);
 
   const [showOrderFilter, setShowOrderFilter] = useState(false);
-  const [orderFilter, setOrderFilter] = useState({ type: 'id' as 'date' | 'id', from_date: '', min_order_id: '' });
+  const [orderFilter, setOrderFilter] = useState({ type: 'id' as 'date' | 'id', from_date: '', to_date: '', min_order_id: '' });
   const [orderSyncProgress, setOrderSyncProgress] = useState<{ imported: number; skipped: number; total: number } | null>(null);
 
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -331,7 +331,8 @@ export default function WooCommerceSettings() {
   };
 
   const syncOrders = async () => {
-    if (!orderFilter.from_date && !orderFilter.min_order_id) return;
+    if (orderFilter.type === 'date' && (!orderFilter.from_date || !orderFilter.to_date)) return;
+    if (orderFilter.type === 'id' && !orderFilter.min_order_id) return;
 
     setSyncing('orders');
     setSyncNotice(null);
@@ -354,8 +355,9 @@ export default function WooCommerceSettings() {
         consumer_secret: form.consumer_secret,
       };
 
-      if (orderFilter.type === 'date' && orderFilter.from_date) {
+      if (orderFilter.type === 'date' && orderFilter.from_date && orderFilter.to_date) {
         body.from_date = new Date(orderFilter.from_date).toISOString();
+        body.to_date = new Date(orderFilter.to_date + 'T23:59:59').toISOString();
       } else if (orderFilter.type === 'id' && orderFilter.min_order_id) {
         body.min_order_id = parseInt(orderFilter.min_order_id);
       }
@@ -420,7 +422,7 @@ export default function WooCommerceSettings() {
       await refreshLogs();
     } finally {
       setSyncing(null);
-      setOrderFilter({ type: 'id', from_date: '', min_order_id: '' });
+      setOrderFilter({ type: 'id', from_date: '', to_date: '', min_order_id: '' });
       await refreshLogs();
     }
   };
@@ -909,7 +911,7 @@ export default function WooCommerceSettings() {
                 <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 text-blue-600" />
-                    <p className="text-sm font-medium text-blue-800">Set a starting point for order sync</p>
+                    <p className="text-sm font-medium text-blue-800">Set a date range or starting order ID for sync</p>
                   </div>
                   <div className="flex gap-4">
                     <label className="flex items-center gap-2 text-sm">
@@ -918,16 +920,42 @@ export default function WooCommerceSettings() {
                     </label>
                     <label className="flex items-center gap-2 text-sm">
                       <input type="radio" checked={orderFilter.type === 'date'} onChange={() => setOrderFilter(f => ({ ...f, type: 'date' }))} />
-                      From Date
+                      Date Range
                     </label>
                   </div>
                   {orderFilter.type === 'date' ? (
-                    <input
-                      type="date"
-                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                      value={orderFilter.from_date}
-                      onChange={e => setOrderFilter(f => ({ ...f, from_date: e.target.value }))}
-                    />
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">From Date</label>
+                          <input
+                            type="date"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                            value={orderFilter.from_date}
+                            onChange={e => setOrderFilter(f => ({ ...f, from_date: e.target.value }))}
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">To Date <span className="text-red-500">*</span></label>
+                          <input
+                            type="date"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                            value={orderFilter.to_date}
+                            min={orderFilter.from_date || undefined}
+                            onChange={e => setOrderFilter(f => ({ ...f, to_date: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                      {orderFilter.from_date && orderFilter.to_date && (
+                        <p className="text-xs text-blue-700">
+                          Importing orders from{' '}
+                          <strong>{new Date(orderFilter.from_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</strong>
+                          {' '}to{' '}
+                          <strong>{new Date(orderFilter.to_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</strong>
+                          . Already-imported orders will be skipped.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <input
                       type="number"
@@ -940,7 +968,11 @@ export default function WooCommerceSettings() {
                   <div className="flex gap-2">
                     <Button
                       onClick={syncOrders}
-                      disabled={!((orderFilter.type === 'date' && orderFilter.from_date) || (orderFilter.type === 'id' && orderFilter.min_order_id))}
+                      disabled={
+                        orderFilter.type === 'date'
+                          ? !orderFilter.from_date || !orderFilter.to_date
+                          : !orderFilter.min_order_id
+                      }
                       className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-700"
                       size="sm"
                     >

@@ -13,6 +13,7 @@ interface WooRequestBody {
   consumer_key: string;
   consumer_secret: string;
   from_date?: string;
+  to_date?: string;
   min_order_id?: number;
   per_page?: number;
   page?: number;
@@ -555,12 +556,13 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "fetch-orders") {
-      const { from_date, min_order_id, per_page = 100 } = body;
+      const { from_date, to_date, min_order_id, per_page = 100 } = body;
       const params: Record<string, string | number> = {
         per_page,
         status: "any",
       };
       if (from_date) params["after"] = from_date;
+      if (to_date) params["before"] = to_date;
       if (min_order_id) params["offset"] = 0;
 
       const allOrders: any[] = [];

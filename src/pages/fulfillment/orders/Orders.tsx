@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search, Calendar, Users, TrendingUp, Package, Truck, Download, UploadCloud,
   ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
-  ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle, Lock
+  ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle, Lock, Info
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -26,6 +26,8 @@ const DATE_RANGE_LABELS: Record<DateRange, string> = {
 };
 
 const PAGE_SIZE = 50;
+
+const ALL_TIME_TABS: Tab[] = ['needs_action', 'scheduled', 'in_progress', 'lab_orders'];
 
 function getDateRange(range: DateRange): { start: Date | null; end: Date | null } {
   if (range === 'all_time' || range === 'custom') return { start: null, end: null };
@@ -282,13 +284,49 @@ function groupOrdersByPhone(orders: OrderListItem[]): CustomerGroup[] {
 const VALID_TABS: Tab[] = ['all', 'needs_action', 'scheduled', 'in_progress', 'lab_orders', 'shipped', 'cancelled'];
 const VALID_DATE_RANGES: DateRange[] = ['today', 'yesterday', 'this_week', 'this_month', 'last_month', 'this_quarter', 'all_time', 'custom'];
 
+const ORDER_SELECT = `
+  id, order_number, woo_order_id, woo_order_number,
+  order_date, cs_status, total_amount, expected_delivery_date,
+  has_prescription, shipped_at,
+  customer:customers(full_name, phone_primary),
+  assigned_user:users!orders_assigned_to_fkey(id, full_name),
+  confirmed_user:users!orders_confirmed_by_fkey(id, full_name),
+  courier_info:order_courier_info(courier_status, courier_company, tracking_number)
+`;
+
+function normalizeOrders(data: any[]): OrderListItem[] {
+  return (data || []).map((o: any) => ({
+    ...o,
+    courier_info: Array.isArray(o.courier_info) ? (o.courier_info[0] ?? null) : o.courier_info,
+  }));
+}
+
+function buildPageNumbers(currentPage: number, totalPages: number): (number | '...')[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const pages: (number | '...')[] = [];
+  pages.push(1);
+  if (currentPage > 3) pages.push('...');
+  for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+    pages.push(i);
+  }
+  if (currentPage < totalPages - 2) pages.push('...');
+  pages.push(totalPages);
+  return pages;
+}
+
 export default function Orders() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, canDeleteOrders } = useAuth();
   const { lastRefreshed, setRefreshing } = useRefresh();
+
   const [orders, setOrders] = useState<OrderListItem[]>([]);
+  const [searchOrders, setSearchOrders] = useState<OrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
 
   const paramTab = searchParams.get('tab') as Tab | null;
   const paramDateRange = searchParams.get('dateRange') as DateRange | null;
@@ -299,14 +337,17 @@ export default function Orders() {
   const paramCustomStart = searchParams.get('customStart') ?? toLocalDateInput(new Date());
   const paramCustomEnd = searchParams.get('customEnd') ?? toLocalDateInput(new Date());
 
-  const activeTab: Tab = paramTab && VALID_TABS.includes(paramTab) ? paramTab : 'all';
-  const dateRange: DateRange = paramDateRange && VALID_DATE_RANGES.includes(paramDateRange) ? paramDateRange : 'all_time';
+  const activeTab: Tab = paramTab && VALID_TABS.includes(paramTab) ? paramTab : 'needs_action';
+  const dateRange: DateRange = paramDateRange && VALID_DATE_RANGES.includes(paramDateRange) ? paramDateRange : 'this_week';
   const searchQuery = paramSearch;
   const statusFilter = paramStatus;
   const assignedToMe = paramAssigned;
   const currentPage = isNaN(paramPage) || paramPage < 1 ? 1 : paramPage;
   const customStart = paramCustomStart;
   const customEnd = paramCustomEnd;
+
+  const isAllTimeTab = ALL_TIME_TABS.includes(activeTab);
+  const isSearchMode = searchQuery.trim().length > 0;
 
   const [showDateDropdown, setShowDateDropdown] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
@@ -330,11 +371,11 @@ export default function Orders() {
   }, [setSearchParams]);
 
   const setActiveTab = useCallback((tab: Tab) => {
-    updateParams({ tab: tab === 'all' ? null : tab, page: null });
+    updateParams({ tab: tab === 'needs_action' ? null : tab, page: null });
   }, [updateParams]);
 
   const setDateRange = useCallback((range: DateRange) => {
-    updateParams({ dateRange: range === 'all_time' ? null : range });
+    updateParams({ dateRange: range === 'this_week' ? null : range });
   }, [updateParams]);
 
   const setSearchQuery = useCallback((q: string) => {
@@ -370,6 +411,7 @@ export default function Orders() {
   const [lockedOrderIds, setLockedOrderIds] = useState<Set<string>>(new Set());
 
   const { startIso, endIso } = useMemo(() => {
+    if (isAllTimeTab) return { startIso: null, endIso: null };
     if (dateRange === 'custom') {
       const start = customStart ? new Date(customStart + 'T00:00:00') : null;
       const end = customEnd ? new Date(customEnd + 'T23:59:59') : null;
@@ -379,9 +421,10 @@ export default function Orders() {
       };
     }
     return getStableDateStrings(dateRange);
-  }, [dateRange, customStart, customEnd]);
+  }, [dateRange, customStart, customEnd, isAllTimeTab]);
 
   const { start, end } = useMemo(() => {
+    if (isAllTimeTab) return { start: null, end: null };
     if (dateRange === 'custom') {
       return {
         start: customStart ? new Date(customStart + 'T00:00:00') : null,
@@ -389,23 +432,16 @@ export default function Orders() {
       };
     }
     return getDateRange(dateRange);
-  }, [dateRange, customStart, customEnd]);
+  }, [dateRange, customStart, customEnd, isAllTimeTab]);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
       let query = supabase
         .from('orders')
-        .select(`
-          id, order_number, woo_order_id, woo_order_number,
-          order_date, cs_status, total_amount, expected_delivery_date,
-          has_prescription, shipped_at,
-          customer:customers(full_name, phone_primary),
-          assigned_user:users!orders_assigned_to_fkey(id, full_name),
-          confirmed_user:users!orders_confirmed_by_fkey(id, full_name),
-          courier_info:order_courier_info(courier_status, courier_company, tracking_number)
-        `)
-        .order('order_date', { ascending: false });
+        .select(ORDER_SELECT, { count: 'exact' })
+        .order('order_date', { ascending: false })
+        .limit(5000);
 
       if (startIso) query = query.gte('order_date', startIso);
       if (endIso) query = query.lte('order_date', endIso);
@@ -414,13 +450,10 @@ export default function Orders() {
         query = query.eq('assigned_to', user.id);
       }
 
-      const { data, error } = await query;
+      const { data, error, count } = await query;
       if (error) throw error;
-      const normalized = ((data as any[]) || []).map((o: any) => ({
-        ...o,
-        courier_info: Array.isArray(o.courier_info) ? (o.courier_info[0] ?? null) : o.courier_info,
-      }));
-      setOrders(normalized);
+      setOrders(normalizeOrders(data as any[]));
+      setTotalCount(count ?? 0);
     } catch (err) {
       console.error('Error fetching orders:', err);
     } finally {
@@ -429,9 +462,89 @@ export default function Orders() {
     }
   }, [startIso, endIso, assignedToMe, user?.id]);
 
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchSearchOrders = useCallback(async (q: string) => {
+    if (!q.trim()) {
+      setSearchOrders([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    try {
+      const term = `%${q.trim()}%`;
+      const { data, error } = await supabase
+        .from('orders')
+        .select(ORDER_SELECT)
+        .or(`order_number.ilike.${term},woo_order_number.ilike.${term}`)
+        .order('order_date', { ascending: false })
+        .limit(200);
+
+      if (error) throw error;
+
+      let results = normalizeOrders(data as any[]);
+
+      if (results.length < 200) {
+        const { data: customerData, error: customerError } = await supabase
+          .from('orders')
+          .select(`${ORDER_SELECT}, customer_id`)
+          .order('order_date', { ascending: false })
+          .limit(200);
+
+        if (!customerError && customerData) {
+          const customerMatches = normalizeOrders(customerData as any[]).filter(o => {
+            const name = o.customer?.full_name?.toLowerCase() ?? '';
+            const phone = o.customer?.phone_primary?.toLowerCase() ?? '';
+            const lq = q.trim().toLowerCase();
+            return name.includes(lq) || phone.includes(lq);
+          });
+          const existingIds = new Set(results.map(r => r.id));
+          for (const o of customerMatches) {
+            if (!existingIds.has(o.id)) {
+              results.push(o);
+              existingIds.add(o.id);
+            }
+          }
+        }
+      }
+
+      const lq = q.trim().toLowerCase();
+      results = results.filter(o => {
+        const name = o.customer?.full_name?.toLowerCase() ?? '';
+        const phone = o.customer?.phone_primary?.toLowerCase() ?? '';
+        const num = o.order_number?.toLowerCase() ?? '';
+        const wooNum = String(o.woo_order_id ?? '').toLowerCase();
+        const wooOrderNum = (o.woo_order_number ?? '').toLowerCase();
+        return name.includes(lq) || phone.includes(lq) || num.includes(lq) || wooNum.includes(lq) || wooOrderNum.includes(lq);
+      });
+
+      setSearchOrders(results);
+    } catch (err) {
+      console.error('Error searching orders:', err);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders, lastRefreshed]);
+    if (!isSearchMode) {
+      fetchOrders();
+    }
+  }, [fetchOrders, lastRefreshed, isSearchMode]);
+
+  useEffect(() => {
+    if (!isSearchMode) {
+      setSearchOrders([]);
+      return;
+    }
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      fetchSearchOrders(searchQuery);
+    }, 350);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery, isSearchMode, fetchSearchOrders]);
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -489,38 +602,36 @@ export default function Orders() {
     fetchOrders();
   }, [fetchOrders]);
 
-  const filtered = orders.filter(order => {
-    if (activeTab === 'shipped') {
-      if (!order.shipped_at) return false;
-    } else if (activeTab !== 'all' && TAB_STATUSES[activeTab].length > 0) {
-      if (!TAB_STATUSES[activeTab].includes(order.cs_status)) return false;
-    }
-    if (statusFilter && order.cs_status !== statusFilter) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const name = order.customer?.full_name?.toLowerCase() ?? '';
-      const phone = order.customer?.phone_primary?.toLowerCase() ?? '';
-      const num = order.order_number?.toLowerCase() ?? '';
-      const wooNum = String(order.woo_order_id ?? '').toLowerCase();
-      const wooOrderNum = (order.woo_order_number ?? '').toLowerCase();
-      if (!name.includes(q) && !phone.includes(q) && !num.includes(q) && !wooNum.includes(q) && !wooOrderNum.includes(q)) {
-        return false;
-      }
-    }
-    return true;
-  });
+  const sourceOrders = isSearchMode ? searchOrders : orders;
 
-  const tabCounts = Object.fromEntries(
+  const filtered = useMemo(() => {
+    return sourceOrders.filter(order => {
+      if (isSearchMode) {
+        if (statusFilter && order.cs_status !== statusFilter) return false;
+        return true;
+      }
+      if (activeTab === 'shipped') {
+        if (!order.shipped_at) return false;
+      } else if (activeTab !== 'all' && TAB_STATUSES[activeTab].length > 0) {
+        if (!TAB_STATUSES[activeTab].includes(order.cs_status)) return false;
+      }
+      if (statusFilter && order.cs_status !== statusFilter) return false;
+      return true;
+    });
+  }, [sourceOrders, activeTab, statusFilter, isSearchMode]);
+
+  const tabCounts = useMemo(() => Object.fromEntries(
     TABS.map(tab => {
       if (tab.key === 'all') return [tab.key, orders.length];
       if (tab.key === 'shipped') return [tab.key, orders.filter(o => !!o.shipped_at).length];
       const statuses = TAB_STATUSES[tab.key];
       return [tab.key, orders.filter(o => statuses.includes(o.cs_status)).length];
     })
-  );
+  ), [orders]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginatedOrders = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageNumbers = buildPageNumbers(currentPage, totalPages);
 
   const groups = useMemo(() => groupOrdersByPhone(paginatedOrders), [paginatedOrders]);
 
@@ -608,6 +719,7 @@ export default function Orders() {
 
   const isAdmin = user?.role === 'admin';
   const COLS = isAdmin ? 8 : 7;
+  const isListLoading = isSearchMode ? searchLoading : loading;
 
   return (
     <div className="space-y-5">
@@ -617,18 +729,19 @@ export default function Orders() {
       </div>
 
       {/* Date Range Bar */}
-      <div className="bg-white border border-gray-200 rounded-xl px-5 py-3.5 flex items-center gap-4">
+      <div className={`bg-white border border-gray-200 rounded-xl px-5 py-3.5 flex items-center gap-4 transition-opacity ${isAllTimeTab ? 'opacity-60' : ''}`}>
         <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
         <div className="relative" ref={dateDropdownRef}>
           <button
-            onClick={() => setShowDateDropdown(!showDateDropdown)}
-            className="flex items-center gap-2 text-sm font-medium text-gray-800 hover:text-gray-900"
+            onClick={() => !isAllTimeTab && setShowDateDropdown(!showDateDropdown)}
+            disabled={isAllTimeTab}
+            className={`flex items-center gap-2 text-sm font-medium text-gray-800 ${isAllTimeTab ? 'cursor-not-allowed' : 'hover:text-gray-900'}`}
           >
             <span className="text-gray-500">Date Range:</span>
-            <span>{DATE_RANGE_LABELS[dateRange]}</span>
-            <ChevronDown className="w-4 h-4" />
+            <span>{isAllTimeTab ? 'All Time' : DATE_RANGE_LABELS[dateRange]}</span>
+            {!isAllTimeTab && <ChevronDown className="w-4 h-4" />}
           </button>
-          {showDateDropdown && (
+          {showDateDropdown && !isAllTimeTab && (
             <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1" style={{ minWidth: '180px' }}>
               {(Object.keys(DATE_RANGE_LABELS) as DateRange[]).filter(k => k !== 'custom').map(key => (
                 <button
@@ -677,20 +790,27 @@ export default function Orders() {
             </div>
           )}
         </div>
-        <span className="text-sm text-gray-500">
-          {dateRange === 'custom'
-            ? (customStart && customEnd
-                ? formatDateLabel(new Date(customStart + 'T00:00:00'), new Date(customEnd + 'T23:59:59'))
-                : 'Select date range')
-            : (start && end ? formatDateLabel(start, end) : 'Showing all orders')}
-        </span>
+        {isAllTimeTab ? (
+          <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
+            <Info className="w-3 h-3 shrink-0" />
+            This tab always shows all-time orders
+          </span>
+        ) : (
+          <span className="text-sm text-gray-500">
+            {dateRange === 'custom'
+              ? (customStart && customEnd
+                  ? formatDateLabel(new Date(customStart + 'T00:00:00'), new Date(customEnd + 'T23:59:59'))
+                  : 'Select date range')
+              : (start && end ? formatDateLabel(start, end) : 'Showing all orders')}
+          </span>
+        )}
       </div>
 
       {/* Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "Orders", sublabel: `${activeTab === 'all' ? 'All' : DATE_RANGE_LABELS[dateRange]} orders`, value: filtered.length, icon: <Package className="w-5 h-5 text-blue-500" />, format: (v: number) => v.toString() },
-          { label: 'Total Value', sublabel: `${DATE_RANGE_LABELS[dateRange]}'s revenue`, value: totalValue, icon: <TrendingUp className="w-5 h-5 text-green-500" />, format: formatAmount },
+          { label: "Orders", sublabel: `${activeTab === 'all' ? 'All' : DATE_RANGE_LABELS[isAllTimeTab ? 'all_time' : dateRange]} orders`, value: filtered.length, icon: <Package className="w-5 h-5 text-blue-500" />, format: (v: number) => v.toString() },
+          { label: 'Total Value', sublabel: `${DATE_RANGE_LABELS[isAllTimeTab ? 'all_time' : dateRange]}'s revenue`, value: totalValue, icon: <TrendingUp className="w-5 h-5 text-green-500" />, format: formatAmount },
           { label: 'Avg Order Value', sublabel: 'Per order in period', value: avgValue, icon: <TrendingUp className="w-5 h-5 text-amber-500" />, format: formatAmount },
           { label: 'Shipped Orders', sublabel: `৳${(shippedCount * avgValue).toLocaleString('en-BD', { maximumFractionDigits: 0 })} total value`, value: shippedCount, icon: <Truck className="w-5 h-5 text-teal-500" />, format: (v: number) => v.toString() },
         ].map(card => (
@@ -741,9 +861,17 @@ export default function Orders() {
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search by Order ID, customer name, or phone..."
+              placeholder="Search across all orders by Order ID, customer name, or phone..."
               className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
+            {isSearchMode && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           <button
@@ -774,6 +902,15 @@ export default function Orders() {
             Bulk Update
           </button>
         </div>
+
+        {isSearchMode && (
+          <div className="px-5 py-2.5 bg-blue-50 border-b border-blue-100 flex items-center gap-2 text-xs text-blue-700">
+            <Search className="w-3.5 h-3.5 shrink-0" />
+            Searching across all orders in the database regardless of date range or tab
+            {searchLoading && <span className="ml-1 text-blue-500">— searching...</span>}
+            {!searchLoading && <span className="ml-1 font-medium">— {filtered.length} result{filtered.length !== 1 ? 's' : ''} found</span>}
+          </div>
+        )}
 
         {/* Bulk Action Bar */}
         {isAdmin && someSelected && (
@@ -852,7 +989,7 @@ export default function Orders() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {isListLoading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="border-b border-gray-100">
                     {Array.from({ length: COLS }).map((_, j) => (
@@ -867,7 +1004,9 @@ export default function Orders() {
                   <td colSpan={COLS} className="px-5 py-16 text-center text-gray-500">
                     <Package className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                     <p className="font-medium text-gray-400">No orders found</p>
-                    <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or date range</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      {isSearchMode ? 'No orders match your search across the entire database' : 'Try adjusting your filters or date range'}
+                    </p>
                   </td>
                 </tr>
               ) : (
@@ -947,7 +1086,7 @@ export default function Orders() {
                           <td className={`px-3 py-2.5 text-xs text-gray-500 ${isGrouped ? 'pl-8' : ''}`}>
                             {formatDate(order.order_date)}
                           </td>
-                          <td className={`px-3 py-2.5 ${isGrouped ? '' : ''}`}>
+                          <td className="px-3 py-2.5">
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-semibold text-gray-900">
                                 #{order.woo_order_id ?? order.order_number}
@@ -1009,9 +1148,9 @@ export default function Orders() {
         </div>
 
         {/* Pagination */}
-        {!loading && filtered.length > 0 && (
-          <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between">
-            <span className="text-xs text-gray-500">
+        {!isListLoading && filtered.length > 0 && totalPages > 1 && (
+          <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between gap-4">
+            <span className="text-xs text-gray-500 shrink-0">
               Showing {Math.min((currentPage - 1) * PAGE_SIZE + 1, filtered.length)}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length} orders
             </span>
             <div className="flex items-center gap-1">
@@ -1023,9 +1162,25 @@ export default function Orders() {
                 <ChevronLeft className="w-4 h-4" />
                 Prev
               </button>
-              <span className="px-3 py-1.5 text-xs text-gray-700 font-medium">
-                {currentPage} / {totalPages}
-              </span>
+
+              {pageNumbers.map((p, idx) =>
+                p === '...' ? (
+                  <span key={`ellipsis-${idx}`} className="px-2 py-1.5 text-xs text-gray-400">...</span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => setCurrentPage(p as number)}
+                    className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-medium transition-colors ${
+                      currentPage === p
+                        ? 'bg-blue-600 text-white'
+                        : 'border border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                )
+              )}
+
               <button
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages}
@@ -1035,6 +1190,13 @@ export default function Orders() {
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
+          </div>
+        )}
+        {!isListLoading && filtered.length > 0 && totalPages === 1 && (
+          <div className="px-5 py-3.5 border-t border-gray-100">
+            <span className="text-xs text-gray-500">
+              Showing all {filtered.length} order{filtered.length !== 1 ? 's' : ''}
+            </span>
           </div>
         )}
       </div>

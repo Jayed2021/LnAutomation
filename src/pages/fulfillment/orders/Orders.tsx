@@ -298,7 +298,7 @@ export default function Orders() {
   const paramCustomEnd = searchParams.get('customEnd') ?? toLocalDateInput(new Date());
 
   const activeTab: Tab = paramTab && VALID_TABS.includes(paramTab) ? paramTab : 'all';
-  const dateRange: DateRange = paramDateRange && VALID_DATE_RANGES.includes(paramDateRange) ? paramDateRange : 'today';
+  const dateRange: DateRange = paramDateRange && VALID_DATE_RANGES.includes(paramDateRange) ? paramDateRange : 'all_time';
   const searchQuery = paramSearch;
   const statusFilter = paramStatus;
   const assignedToMe = paramAssigned;
@@ -332,7 +332,7 @@ export default function Orders() {
   }, [updateParams]);
 
   const setDateRange = useCallback((range: DateRange) => {
-    updateParams({ dateRange: range === 'today' ? null : range });
+    updateParams({ dateRange: range === 'all_time' ? null : range });
   }, [updateParams]);
 
   const setSearchQuery = useCallback((q: string) => {
@@ -566,7 +566,8 @@ export default function Orders() {
     }
   };
 
-  const COLS = 7;
+  const isAdmin = user?.role === 'admin';
+  const COLS = isAdmin ? 8 : 7;
 
   return (
     <div className="space-y-5">
@@ -648,7 +649,7 @@ export default function Orders() {
       {/* Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "Today's Orders", sublabel: `${activeTab === 'all' ? 'All' : DATE_RANGE_LABELS[dateRange]} orders`, value: filtered.length, icon: <Package className="w-5 h-5 text-blue-500" />, format: (v: number) => v.toString() },
+          { label: "Orders", sublabel: `${activeTab === 'all' ? 'All' : DATE_RANGE_LABELS[dateRange]} orders`, value: filtered.length, icon: <Package className="w-5 h-5 text-blue-500" />, format: (v: number) => v.toString() },
           { label: 'Total Value', sublabel: `${DATE_RANGE_LABELS[dateRange]}'s revenue`, value: totalValue, icon: <TrendingUp className="w-5 h-5 text-green-500" />, format: formatAmount },
           { label: 'Avg Order Value', sublabel: 'Per order in period', value: avgValue, icon: <TrendingUp className="w-5 h-5 text-amber-500" />, format: formatAmount },
           { label: 'Shipped Orders', sublabel: `৳${(shippedCount * avgValue).toLocaleString('en-BD', { maximumFractionDigits: 0 })} total value`, value: shippedCount, icon: <Truck className="w-5 h-5 text-teal-500" />, format: (v: number) => v.toString() },
@@ -705,35 +706,6 @@ export default function Orders() {
             />
           </div>
 
-          <div className="relative">
-            <button
-              onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-              className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors min-w-[140px] justify-between"
-            >
-              <span>{statusFilter ? (STATUS_CONFIG[statusFilter]?.label ?? statusFilter) : 'All Statuses'}</span>
-              <ChevronDown className="w-4 h-4 text-gray-400" />
-            </button>
-            {showStatusDropdown && (
-              <div className="absolute top-full right-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 max-h-64 overflow-y-auto">
-                <button
-                  onClick={() => { setStatusFilter(''); setShowStatusDropdown(false); }}
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 text-gray-700"
-                >
-                  All Statuses
-                </button>
-                {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
-                  <button
-                    key={key}
-                    onClick={() => { setStatusFilter(key); setShowStatusDropdown(false); }}
-                    className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${statusFilter === key ? 'text-blue-600 font-medium' : 'text-gray-700'}`}
-                  >
-                    {cfg.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
           <button
             onClick={() => setAssignedToMe(!assignedToMe)}
             className={`flex items-center gap-2 px-4 py-2.5 border rounded-lg text-sm font-medium transition-colors ${
@@ -756,7 +728,7 @@ export default function Orders() {
         </div>
 
         {/* Bulk Action Bar */}
-        {someSelected && (
+        {isAdmin && someSelected && (
           <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
               <CheckSquare className="w-4 h-4" />
@@ -812,16 +784,19 @@ export default function Orders() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/50">
-                <th className="px-3 py-2.5 w-8">
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    onChange={toggleSelectAll}
-                    className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
-                  />
-                </th>
+                {isAdmin && (
+                  <th className="px-3 py-2.5 w-8">
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleSelectAll}
+                      className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
+                    />
+                  </th>
+                )}
                 <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Order Date</th>
                 <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Order ID</th>
+                <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Customer Info</th>
                 <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Total</th>
                 <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Status</th>
                 <th className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-3 py-2.5">Delivery</th>
@@ -860,22 +835,24 @@ export default function Orders() {
                           className="bg-gray-50 border-b border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors"
                           onClick={() => toggleGroup(group.phone)}
                         >
-                          <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={group.orders.every(o => selectedIds.has(o.id))}
-                              onChange={() => {
-                                const allSelected = group.orders.every(o => selectedIds.has(o.id));
-                                setSelectedIds(prev => {
-                                  const next = new Set(prev);
-                                  group.orders.forEach(o => allSelected ? next.delete(o.id) : next.add(o.id));
-                                  return next;
-                                });
-                              }}
-                              className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
-                            />
-                          </td>
-                          <td colSpan={COLS - 1} className="px-3 py-2">
+                          {isAdmin && (
+                            <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={group.orders.every(o => selectedIds.has(o.id))}
+                                onChange={() => {
+                                  const allSelected = group.orders.every(o => selectedIds.has(o.id));
+                                  setSelectedIds(prev => {
+                                    const next = new Set(prev);
+                                    group.orders.forEach(o => allSelected ? next.delete(o.id) : next.add(o.id));
+                                    return next;
+                                  });
+                                }}
+                                className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
+                              />
+                            </td>
+                          )}
+                          <td colSpan={COLS - (isAdmin ? 1 : 0)} className="px-3 py-2">
                             <div className="flex items-center gap-3">
                               <div className="flex items-center gap-1.5 text-gray-500">
                                 {isCollapsed
@@ -909,14 +886,16 @@ export default function Orders() {
                               : 'hover:bg-blue-50/30'
                           }`}
                         >
-                          <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(order.id)}
-                              onChange={() => toggleSelect(order.id)}
-                              className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
-                            />
-                          </td>
+                          {isAdmin && (
+                            <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(order.id)}
+                                onChange={() => toggleSelect(order.id)}
+                                className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
+                              />
+                            </td>
+                          )}
                           <td className={`px-3 py-2.5 text-xs text-gray-500 ${isGrouped ? 'pl-8' : ''}`}>
                             {formatDate(order.order_date)}
                           </td>
@@ -935,9 +914,10 @@ export default function Orders() {
                                 </div>
                               )}
                             </div>
-                            {!isGrouped && (
-                              <div className="text-[11px] text-gray-500 mt-0.5">{order.customer?.phone_primary ?? '—'}</div>
-                            )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="text-xs font-medium text-gray-900">{order.customer?.full_name ?? '—'}</div>
+                            <div className="text-[11px] text-gray-500 mt-0.5">{order.customer?.phone_primary ?? '—'}</div>
                           </td>
                           <td className="px-3 py-2.5 text-xs font-medium text-gray-900">
                             ৳{(order.total_amount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}

@@ -25,9 +25,11 @@ interface CsvRow {
   barcode?: string;
   low_stock_threshold?: string;
   product_type?: string;
+  lot_number?: string;
   total_stock?: string;
   landed_cost_per_unit?: string;
   stock_location?: string;
+  location_barcode?: string;
   supplier_name?: string;
   supplier_sku?: string;
   unit_cost?: string;
@@ -182,7 +184,14 @@ function buildReviewRows(
     if (row.total_stock !== undefined && row.total_stock !== '') {
       const newStock = parseInt(row.total_stock);
       if (!isNaN(newStock)) {
-        if (initialSetupMode) {
+        if (row.lot_number) {
+          changes.push({
+            field: 'total_stock',
+            label: 'Lot Stock',
+            old: '?',
+            new: `${newStock} (lot: ${row.lot_number})`
+          });
+        } else if (initialSetupMode) {
           if (newStock === 0) {
             changes.push({
               field: 'total_stock',
@@ -366,17 +375,33 @@ export default function CsvBulkUpdateModal({ products, onClose, onUpdated }: Pro
 
     const locationCache = new Map<string, string>();
 
-    const resolveLocationId = async (code: string): Promise<string | null> => {
-      if (locationCache.has(code)) return locationCache.get(code)!;
-      const { data } = await supabase
-        .from('warehouse_locations')
-        .select('id')
-        .ilike('code', code)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (data) { locationCache.set(code, data.id); return data.id; }
+    const resolveLocationId = async (row: { stock_location?: string; location_barcode?: string }): Promise<string | null> => {
+      if (row.location_barcode) {
+        const key = `barcode:${row.location_barcode}`;
+        if (locationCache.has(key)) return locationCache.get(key)!;
+        const { data } = await supabase
+          .from('warehouse_locations')
+          .select('id')
+          .eq('barcode', row.location_barcode)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (data) { locationCache.set(key, data.id); return data.id; }
+      }
+      if (row.stock_location) {
+        const key = `code:${row.stock_location}`;
+        if (locationCache.has(key)) return locationCache.get(key)!;
+        const { data } = await supabase
+          .from('warehouse_locations')
+          .select('id')
+          .ilike('code', row.stock_location)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (data) { locationCache.set(key, data.id); return data.id; }
+      }
       return null;
     };
+
+    const productFieldsWritten = new Set<string>();
 
     try {
       for (let i = 0; i < toUpdate.length; i++) {
@@ -393,7 +418,9 @@ export default function CsvBulkUpdateModal({ products, onClose, onUpdated }: Pro
 
         let rowFailed = false;
 
-        if (hasProductChanges && row.product) {
+        const isFirstRowForSku = !productFieldsWritten.has(row.csvRow.sku);
+
+        if (hasProductChanges && row.product && isFirstRowForSku) {
           const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
           for (const change of row.changes.filter(c => productFields.includes(c.field))) {
             if (change.field === 'selling_price') payload[change.field] = parseFloat(row.csvRow.selling_price!);
@@ -410,9 +437,10 @@ export default function CsvBulkUpdateModal({ products, onClose, onUpdated }: Pro
             .update(payload)
             .eq('sku', row.csvRow.sku);
           if (error) rowFailed = true;
+          else productFieldsWritten.add(row.csvRow.sku);
         }
 
-        if (hasSupplierChanges && row.csvRow.supplier_name && row.product) {
+        if (hasSupplierChanges && row.csvRow.supplier_name && row.product && isFirstRowForSku) {
           const resolved = resolveSupplierFromList(row.csvRow.supplier_name, allSuppliers);
           if (resolved) {
             const upsertPayload: Record<string, unknown> = {
@@ -437,52 +465,164 @@ export default function CsvBulkUpdateModal({ products, onClose, onUpdated }: Pro
           }
         }
 
+        const hasLotNumber = row.csvRow.lot_number !== undefined && row.csvRow.lot_number !== '';
         const hasLotCostData = row.csvRow.landed_cost_per_unit !== undefined && row.csvRow.landed_cost_per_unit !== '';
-        const shouldProcessLot = initialSetupMode ? hasLotCostData : (hasStockChanges && hasLotCostData);
+        const hasStockQty = row.csvRow.total_stock !== undefined && row.csvRow.total_stock !== '';
 
-        if (shouldProcessLot && row.product) {
-          const landedCost = parseFloat(row.csvRow.landed_cost_per_unit!);
-          const rawStock = row.csvRow.total_stock;
-          const newStock = rawStock !== undefined && rawStock !== '' ? parseInt(rawStock) : 0;
+        if (hasLotNumber && row.product && (hasLotCostData || hasStockQty)) {
+          const lotNumber = row.csvRow.lot_number!;
+          const landedCost = hasLotCostData ? parseFloat(row.csvRow.landed_cost_per_unit!) : null;
+          const newStock = hasStockQty ? parseInt(row.csvRow.total_stock!) : null;
 
-          if (!isNaN(landedCost) && landedCost >= 0 && !isNaN(newStock)) {
-            let locationId: string | null = null;
-            if (row.csvRow.stock_location) {
-              locationId = await resolveLocationId(row.csvRow.stock_location);
+          const { data: existingLot } = await supabase
+            .from('inventory_lots')
+            .select('id, remaining_quantity, location_id')
+            .eq('lot_number', lotNumber)
+            .eq('product_id', row.product.id)
+            .maybeSingle();
+
+          if (existingLot) {
+            const lotUpdate: Record<string, unknown> = {};
+            if (landedCost !== null && !isNaN(landedCost)) lotUpdate.landed_cost_per_unit = landedCost;
+            if (newStock !== null && !isNaN(newStock) && newStock !== existingLot.remaining_quantity) {
+              lotUpdate.remaining_quantity = newStock;
             }
-            if (!locationId) {
-              const { data: defaultLoc } = await supabase
-                .from('warehouse_locations')
-                .select('id')
-                .eq('is_active', true)
-                .limit(1)
-                .maybeSingle();
-              locationId = defaultLoc?.id || null;
+            if (Object.keys(lotUpdate).length > 0) {
+              const { error: updErr } = await supabase
+                .from('inventory_lots')
+                .update(lotUpdate)
+                .eq('id', existingLot.id);
+              if (updErr) rowFailed = true;
             }
-
-            if (locationId) {
-              if (initialSetupMode) {
-                const lotNumber = row.product.sku;
-                const { data: existingLot } = await supabase
-                  .from('inventory_lots')
+          } else {
+            if (newStock !== null && !isNaN(newStock) && newStock > 0) {
+              let locationId: string | null = await resolveLocationId(row.csvRow);
+              if (!locationId) {
+                const { data: defaultLoc } = await supabase
+                  .from('warehouse_locations')
                   .select('id')
-                  .eq('lot_number', lotNumber)
-                  .eq('product_id', row.product.id)
+                  .eq('is_active', true)
+                  .limit(1)
                   .maybeSingle();
+                locationId = defaultLoc?.id || null;
+              }
+              if (locationId) {
+                const { data: lotData, error: lotError } = await supabase
+                  .from('inventory_lots')
+                  .insert({
+                    lot_number: lotNumber,
+                    product_id: row.product.id,
+                    location_id: locationId,
+                    received_date: new Date().toISOString().split('T')[0],
+                    received_quantity: newStock,
+                    remaining_quantity: newStock,
+                    landed_cost_per_unit: landedCost ?? 0,
+                    barcode: `${row.product.sku}-CSV`,
+                  })
+                  .select('id')
+                  .single();
+                if (!lotError && lotData) {
+                  await supabase.from('stock_movements').insert({
+                    movement_type: 'receipt',
+                    product_id: row.product.id,
+                    lot_id: lotData.id,
+                    to_location_id: locationId,
+                    quantity: newStock,
+                    reference_type: 'audit',
+                    notes: 'CSV bulk upload',
+                  });
+                } else if (lotError) {
+                  rowFailed = true;
+                }
+              } else {
+                rowFailed = true;
+              }
+            }
+          }
+        } else {
+          const shouldProcessLot = initialSetupMode ? hasLotCostData : (hasStockChanges && hasLotCostData);
 
-                if (!existingLot) {
-                  const { data: otherLots } = await supabase
+          if (shouldProcessLot && row.product) {
+            const landedCost = parseFloat(row.csvRow.landed_cost_per_unit!);
+            const rawStock = row.csvRow.total_stock;
+            const newStock = rawStock !== undefined && rawStock !== '' ? parseInt(rawStock) : 0;
+
+            if (!isNaN(landedCost) && landedCost >= 0 && !isNaN(newStock)) {
+              let locationId: string | null = await resolveLocationId(row.csvRow);
+              if (!locationId) {
+                const { data: defaultLoc } = await supabase
+                  .from('warehouse_locations')
+                  .select('id')
+                  .eq('is_active', true)
+                  .limit(1)
+                  .maybeSingle();
+                locationId = defaultLoc?.id || null;
+              }
+
+              if (locationId) {
+                if (initialSetupMode) {
+                  const lotNumber = row.product.sku;
+                  const { data: existingLot } = await supabase
                     .from('inventory_lots')
-                    .select('id, remaining_quantity')
-                    .eq('product_id', row.product.id);
+                    .select('id')
+                    .eq('lot_number', lotNumber)
+                    .eq('product_id', row.product.id)
+                    .maybeSingle();
 
-                  if (otherLots && otherLots.length > 0) {
+                  if (!existingLot) {
+                    const { data: otherLots } = await supabase
+                      .from('inventory_lots')
+                      .select('id, remaining_quantity')
+                      .eq('product_id', row.product.id);
+
+                    if (otherLots && otherLots.length > 0) {
+                      const { error: updateError } = await supabase
+                        .from('inventory_lots')
+                        .update({ landed_cost_per_unit: landedCost })
+                        .eq('product_id', row.product.id);
+                      if (updateError) rowFailed = true;
+                    } else {
+                      const { data: lotData, error: lotError } = await supabase
+                        .from('inventory_lots')
+                        .insert({
+                          lot_number: lotNumber,
+                          product_id: row.product.id,
+                          location_id: locationId,
+                          received_date: new Date().toISOString().split('T')[0],
+                          received_quantity: newStock,
+                          remaining_quantity: newStock,
+                          landed_cost_per_unit: landedCost,
+                          barcode: row.product.sku,
+                        })
+                        .select('id')
+                        .single();
+
+                      if (!lotError && lotData && newStock > 0) {
+                        await supabase.from('stock_movements').insert({
+                          movement_type: 'receipt',
+                          product_id: row.product.id,
+                          lot_id: lotData.id,
+                          to_location_id: locationId,
+                          quantity: newStock,
+                          reference_type: 'audit',
+                          notes: 'Initial setup — CSV bulk load',
+                        });
+                      } else if (lotError) {
+                        rowFailed = true;
+                      }
+                    }
+                  } else {
                     const { error: updateError } = await supabase
                       .from('inventory_lots')
                       .update({ landed_cost_per_unit: landedCost })
+                      .eq('lot_number', lotNumber)
                       .eq('product_id', row.product.id);
                     if (updateError) rowFailed = true;
-                  } else {
+                  }
+                } else {
+                  if (newStock > 0) {
+                    const delta = newStock - row.product.total_quantity;
+                    const lotNumber = `LOT-${row.product.sku}-CSV-${Date.now()}`;
                     const { data: lotData, error: lotError } = await supabase
                       .from('inventory_lots')
                       .insert({
@@ -493,69 +633,29 @@ export default function CsvBulkUpdateModal({ products, onClose, onUpdated }: Pro
                         received_quantity: newStock,
                         remaining_quantity: newStock,
                         landed_cost_per_unit: landedCost,
-                        barcode: row.product.sku,
+                        barcode: `${row.product.sku}-CSV`,
                       })
                       .select('id')
                       .single();
 
-                    if (!lotError && lotData && newStock > 0) {
+                    if (!lotError && lotData) {
                       await supabase.from('stock_movements').insert({
-                        movement_type: 'receipt',
+                        movement_type: delta === 0 ? 'adjustment' : delta > 0 ? 'receipt' : 'adjustment',
                         product_id: row.product.id,
                         lot_id: lotData.id,
                         to_location_id: locationId,
                         quantity: newStock,
                         reference_type: 'audit',
-                        notes: 'Initial setup — CSV bulk load',
+                        notes: 'CSV bulk upload',
                       });
                     } else if (lotError) {
                       rowFailed = true;
                     }
                   }
-                } else {
-                  const { error: updateError } = await supabase
-                    .from('inventory_lots')
-                    .update({ landed_cost_per_unit: landedCost })
-                    .eq('lot_number', lotNumber)
-                    .eq('product_id', row.product.id);
-                  if (updateError) rowFailed = true;
                 }
               } else {
-                if (newStock > 0) {
-                  const delta = newStock - row.product.total_quantity;
-                  const lotNumber = `LOT-${row.product.sku}-CSV-${Date.now()}`;
-                  const { data: lotData, error: lotError } = await supabase
-                    .from('inventory_lots')
-                    .insert({
-                      lot_number: lotNumber,
-                      product_id: row.product.id,
-                      location_id: locationId,
-                      received_date: new Date().toISOString().split('T')[0],
-                      received_quantity: newStock,
-                      remaining_quantity: newStock,
-                      landed_cost_per_unit: landedCost,
-                      barcode: `${row.product.sku}-CSV`,
-                    })
-                    .select('id')
-                    .single();
-
-                  if (!lotError && lotData) {
-                    await supabase.from('stock_movements').insert({
-                      movement_type: delta === 0 ? 'adjustment' : delta > 0 ? 'receipt' : 'adjustment',
-                      product_id: row.product.id,
-                      lot_id: lotData.id,
-                      to_location_id: locationId,
-                      quantity: newStock,
-                      reference_type: 'audit',
-                      notes: 'CSV bulk upload',
-                    });
-                  } else if (lotError) {
-                    rowFailed = true;
-                  }
-                }
+                rowFailed = true;
               }
-            } else {
-              rowFailed = true;
             }
           }
         }
@@ -676,15 +776,16 @@ export default function CsvBulkUpdateModal({ products, onClose, onUpdated }: Pro
                 Expected CSV format
               </div>
               <p className="text-xs text-gray-500 font-mono bg-white border border-gray-200 rounded px-3 py-2 break-all">
-                sku, name, product_type, category, selling_price, barcode, low_stock_threshold, total_stock, landed_cost_per_unit, stock_location, supplier_name, supplier_sku, unit_cost, currency
+                sku, name, product_type, category, selling_price, barcode, low_stock_threshold, lot_number, total_stock, landed_cost_per_unit, stock_location, location_barcode, supplier_name, supplier_sku, unit_cost, currency
               </p>
               <ul className="text-xs text-gray-500 space-y-1 mt-2">
                 <li>• <strong>sku</strong> is required — used to match products</li>
                 <li>• Leave any field blank to skip updating it</li>
-                <li>• <strong>total_stock</strong> + <strong>landed_cost_per_unit</strong> together create a new inventory lot</li>
-                <li>• <strong>stock_location</strong> must match a warehouse location code (e.g. A-01)</li>
+                <li>• <strong>lot_number</strong> — if present, updates that specific lot's quantity and/or cost in-place; if absent, falls back to legacy lot creation</li>
+                <li>• <strong>total_stock</strong> + <strong>landed_cost_per_unit</strong> together update or create an inventory lot</li>
+                <li>• <strong>location_barcode</strong> (preferred) or <strong>stock_location</strong> code — used to resolve the warehouse location</li>
+                <li>• Multiple rows for the same SKU are supported — product fields are applied once, each lot row is processed independently</li>
                 <li>• <strong>supplier_name</strong> accepts the supplier's full name or short code (e.g. QC, ZHJ, PG, MQ)</li>
-                <li>• Supplier fields will create or update the preferred supplier link</li>
               </ul>
             </div>
           </div>

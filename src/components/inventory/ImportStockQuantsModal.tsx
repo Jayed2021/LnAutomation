@@ -18,6 +18,8 @@ interface ParsedRow {
   locationBarcode: string;
   productSku: string;
   quantity: number;
+  lotNumber?: string;
+  landedCost?: number;
   status: 'valid' | 'skip_location' | 'skip_product' | 'skip_quantity';
   skipReason?: string;
   resolvedLocationId?: string;
@@ -104,6 +106,8 @@ export default function ImportStockQuantsModal({ onClose, onImported }: ImportSt
     const locIdx = headers.findIndex(h => h.includes('location') || h.includes('loc/barcode') || h === 'location/barcode');
     const prodIdx = headers.findIndex(h => h.includes('product') || h.includes('prod/barcode') || h === 'product/barcode');
     const qtyIdx = headers.findIndex(h => h.includes('quantity') || h.includes('qty') || h.includes('inventoried'));
+    const lotIdx = headers.findIndex(h => h === 'lot_number' || h === 'lot number' || h === 'lot');
+    const costIdx = headers.findIndex(h => h === 'landed_cost_per_unit' || h === 'landed cost' || h === 'cost');
 
     if (locIdx === -1 || prodIdx === -1 || qtyIdx === -1) {
       setParseError('Could not detect required columns. Expected: Location/Barcode, Product/Barcode, Inventoried Quantity');
@@ -123,6 +127,9 @@ export default function ImportStockQuantsModal({ onClose, onImported }: ImportSt
       const productSku = r[prodIdx]?.trim() ?? '';
       const rawQty = r[qtyIdx]?.trim() ?? '';
       const quantity = parseInt(rawQty, 10);
+      const lotNumber = lotIdx !== -1 ? (r[lotIdx]?.trim() || undefined) : undefined;
+      const rawCost = costIdx !== -1 ? r[costIdx]?.trim() : undefined;
+      const landedCost = rawCost ? parseFloat(rawCost) : undefined;
 
       if (!locationBarcode || !productSku) {
         return { rowIndex: idx + 2, locationBarcode, productSku, quantity: 0, status: 'skip_quantity', skipReason: 'Missing barcode or SKU' };
@@ -142,7 +149,7 @@ export default function ImportStockQuantsModal({ onClose, onImported }: ImportSt
         return { rowIndex: idx + 2, locationBarcode, productSku, quantity, status: 'skip_product', skipReason: `Product SKU "${productSku}" not found in system` };
       }
 
-      return { rowIndex: idx + 2, locationBarcode, productSku, quantity, status: 'valid', resolvedLocationId, resolvedProductId };
+      return { rowIndex: idx + 2, locationBarcode, productSku, quantity, lotNumber, landedCost, status: 'valid', resolvedLocationId, resolvedProductId };
     });
 
     setParsedRows(parsed);
@@ -180,13 +187,13 @@ export default function ImportStockQuantsModal({ onClose, onImported }: ImportSt
         const chunk = validRows.slice(i, i + CHUNK);
 
         const lotsToInsert = chunk.map((row, j) => ({
-          lot_number: `LOT-${row.productSku}-ODO-${ts}-${i + j}`,
+          lot_number: row.lotNumber || `LOT-${row.productSku}-ODO-${ts}-${i + j}`,
           product_id: row.resolvedProductId!,
           location_id: row.resolvedLocationId!,
           received_date: today,
           received_quantity: row.quantity,
           remaining_quantity: row.quantity,
-          landed_cost_per_unit: 0,
+          landed_cost_per_unit: (row.landedCost != null && !isNaN(row.landedCost)) ? row.landedCost : 0,
           barcode: `${row.productSku}-ODO`,
         }));
 
@@ -298,7 +305,8 @@ export default function ImportStockQuantsModal({ onClose, onImported }: ImportSt
                 <div className="text-sm text-blue-800">
                   <p className="font-semibold mb-1">Expected CSV format (Odoo stock quants export)</p>
                   <p className="text-blue-700">Required columns: <span className="font-mono text-xs bg-blue-100 px-1 rounded">Location/Barcode</span>, <span className="font-mono text-xs bg-blue-100 px-1 rounded">Product/Barcode</span>, <span className="font-mono text-xs bg-blue-100 px-1 rounded">Inventoried Quantity</span></p>
-                  <p className="text-blue-600 mt-1.5 text-xs">Each row creates one inventory lot. Location and product barcodes must match existing records. Rows with negative or zero quantities are skipped.</p>
+                  <p className="text-blue-700 mt-1">Optional columns: <span className="font-mono text-xs bg-blue-100 px-1 rounded">lot_number</span>, <span className="font-mono text-xs bg-blue-100 px-1 rounded">landed_cost_per_unit</span></p>
+                  <p className="text-blue-600 mt-1.5 text-xs">Each row creates one inventory lot. If <strong>lot_number</strong> is provided it will be used as the lot number; otherwise one is auto-generated. If <strong>landed_cost_per_unit</strong> is provided it will be stored on the lot; otherwise defaults to 0. Rows with negative or zero quantities are skipped.</p>
                 </div>
               </div>
             </div>

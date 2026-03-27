@@ -86,17 +86,17 @@ export default function ExportProductsModal({ products, selectedProductIds, onCl
           .in('product_id', productIds),
         supabase
           .from('inventory_lots')
-          .select('product_id, remaining_quantity, landed_cost_per_unit, warehouse_locations(code, name)')
+          .select('id, product_id, lot_number, remaining_quantity, landed_cost_per_unit, warehouse_locations(code, barcode)')
           .in('product_id', productIds)
           .gt('remaining_quantity', 0)
-          .order('remaining_quantity', { ascending: false }),
+          .order('received_date', { ascending: true }),
       ]);
 
-      const preferredSupplierMap = new Map<string, { name: string; sku: string; price: number | null; currency: string }>();
+      const supplierMap = new Map<string, { name: string; sku: string; price: number | null; currency: string }>();
       (psRes.data || []).forEach((ps: any) => {
-        const existing = preferredSupplierMap.get(ps.product_id);
+        const existing = supplierMap.get(ps.product_id);
         if (!existing || ps.is_preferred) {
-          preferredSupplierMap.set(ps.product_id, {
+          supplierMap.set(ps.product_id, {
             name: ps.suppliers?.name || '',
             sku: ps.supplier_sku || '',
             price: ps.unit_price,
@@ -105,41 +105,68 @@ export default function ExportProductsModal({ products, selectedProductIds, onCl
         }
       });
 
-      const primaryLocationMap = new Map<string, string>();
+      const lotsByProduct = new Map<string, any[]>();
       (lotsRes.data || []).forEach((lot: any) => {
-        if (!primaryLocationMap.has(lot.product_id) && lot.warehouse_locations) {
-          primaryLocationMap.set(lot.product_id, lot.warehouse_locations.code);
-        }
+        const arr = lotsByProduct.get(lot.product_id) || [];
+        arr.push(lot);
+        lotsByProduct.set(lot.product_id, arr);
       });
 
       const headers = [
         'sku', 'name', 'product_type', 'category', 'selling_price', 'barcode',
-        'low_stock_threshold', 'total_stock', 'landed_cost_per_unit',
-        'stock_location', 'supplier_name', 'supplier_sku', 'unit_cost', 'currency'
+        'low_stock_threshold', 'lot_number', 'total_stock', 'landed_cost_per_unit',
+        'stock_location', 'location_barcode', 'supplier_name', 'supplier_sku', 'unit_cost', 'currency'
       ];
 
-      const rows = productIds
-        .map(id => productMap.get(id))
-        .filter(Boolean)
-        .map(p => {
-          const sup = preferredSupplierMap.get(p!.id);
-          return [
-            escapeCsvValue(p!.sku),
-            escapeCsvValue(p!.name),
-            escapeCsvValue(p!.product_type),
-            escapeCsvValue(p!.category),
-            escapeCsvValue(p!.selling_price),
-            escapeCsvValue(p!.barcode),
-            escapeCsvValue(p!.low_stock_threshold),
-            escapeCsvValue(p!.total_quantity),
-            escapeCsvValue(p!.avg_cost > 0 ? p!.avg_cost.toFixed(2) : ''),
-            escapeCsvValue(primaryLocationMap.get(p!.id) || ''),
+      const rows: string[] = [];
+      productIds.forEach(id => {
+        const p = productMap.get(id);
+        if (!p) return;
+        const sup = supplierMap.get(p.id);
+        const lots = lotsByProduct.get(p.id);
+
+        if (!lots || lots.length === 0) {
+          rows.push([
+            escapeCsvValue(p.sku),
+            escapeCsvValue(p.name),
+            escapeCsvValue(p.product_type),
+            escapeCsvValue(p.category),
+            escapeCsvValue(p.selling_price),
+            escapeCsvValue(p.barcode),
+            escapeCsvValue(p.low_stock_threshold),
+            '',
+            '',
+            '',
+            '',
+            '',
             escapeCsvValue(sup?.name || ''),
             escapeCsvValue(sup?.sku || ''),
             escapeCsvValue(sup?.price ?? ''),
             escapeCsvValue(sup?.currency || '')
-          ].join(',');
-        });
+          ].join(','));
+        } else {
+          lots.forEach(lot => {
+            rows.push([
+              escapeCsvValue(p.sku),
+              escapeCsvValue(p.name),
+              escapeCsvValue(p.product_type),
+              escapeCsvValue(p.category),
+              escapeCsvValue(p.selling_price),
+              escapeCsvValue(p.barcode),
+              escapeCsvValue(p.low_stock_threshold),
+              escapeCsvValue(lot.lot_number),
+              escapeCsvValue(lot.remaining_quantity),
+              escapeCsvValue(lot.landed_cost_per_unit != null ? Number(lot.landed_cost_per_unit).toFixed(2) : ''),
+              escapeCsvValue(lot.warehouse_locations?.code || ''),
+              escapeCsvValue(lot.warehouse_locations?.barcode || ''),
+              escapeCsvValue(sup?.name || ''),
+              escapeCsvValue(sup?.sku || ''),
+              escapeCsvValue(sup?.price ?? ''),
+              escapeCsvValue(sup?.currency || '')
+            ].join(','));
+          });
+        }
+      });
 
       const csvContent = [headers.join(','), ...rows].join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -251,8 +278,8 @@ export default function ExportProductsModal({ products, selectedProductIds, onCl
 
           <div className="bg-gray-50 rounded-lg p-3 mt-1">
             <p className="text-xs text-gray-500">
-              The exported CSV will include: SKU, Name, Product Type, Category, Selling Price, Barcode, Low Stock Alert, <strong>Total Stock, Landed Cost/Unit, Stock Location</strong>, Supplier Name, Supplier SKU, Unit Cost, and Currency.
-              The new stock columns can be edited and re-imported via "Update via CSV\" to do a bulk stock update.
+              The exported CSV includes one row per active inventory lot. Columns: SKU, Name, Product Type, Category, Selling Price, Barcode, Low Stock Alert, <strong>Lot Number, Stock Qty, Landed Cost/Unit, Stock Location, Location Barcode</strong>, Supplier Name, Supplier SKU, Unit Cost, Currency.
+              Products with no active stock get one row with blank lot/stock fields. The file can be re-imported via "Update via CSV" for bulk updates.
             </p>
           </div>
         </div>

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, Calendar, Eye, Users, TrendingUp, Package, Truck, Download,
-  ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X
+  ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -10,7 +11,7 @@ import { OrderListItem, STATUS_CONFIG, CsStatus } from './types';
 import { StatusBadge } from './StatusBadge';
 import { PullOrderModal } from './PullOrderModal';
 
-type DateRange = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'last_month' | 'this_quarter' | 'all_time';
+type DateRange = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'last_month' | 'this_quarter' | 'all_time' | 'custom';
 
 const DATE_RANGE_LABELS: Record<DateRange, string> = {
   today: 'Today',
@@ -20,10 +21,13 @@ const DATE_RANGE_LABELS: Record<DateRange, string> = {
   last_month: 'Last Month',
   this_quarter: 'This Quarter',
   all_time: 'All Time',
+  custom: 'Custom Range',
 };
 
+const PAGE_SIZE = 50;
+
 function getDateRange(range: DateRange): { start: Date | null; end: Date | null } {
-  if (range === 'all_time') return { start: null, end: null };
+  if (range === 'all_time' || range === 'custom') return { start: null, end: null };
 
   const now = new Date();
   const start = new Date(now);
@@ -77,6 +81,13 @@ function getStableDateStrings(range: DateRange): { startIso: string | null; endI
   };
 }
 
+function toLocalDateInput(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function formatDateLabel(start: Date | null, end: Date | null): string {
   if (!start || !end) return 'All Time';
   const fmt = (d: Date) =>
@@ -93,7 +104,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'in_progress', label: 'In Progress' },
   { key: 'lab_orders', label: 'Lab Orders' },
   { key: 'shipped', label: 'Shipped' },
-  { key: 'cancelled', label: 'CBD' },
+  { key: 'cancelled', label: 'Cancelled' },
 ];
 
 const TAB_STATUSES: Record<Tab, string[]> = {
@@ -103,7 +114,7 @@ const TAB_STATUSES: Record<Tab, string[]> = {
   in_progress: ['exchange', 'not_printed', 'printed', 'packed'],
   lab_orders: ['send_to_lab', 'in_lab'],
   shipped: [],
-  cancelled: ['cancelled', 'refund'],
+  cancelled: ['cancelled_cbd', 'cancelled_cad', 'refund', 'exchange_returnable'],
 };
 
 const BULK_STATUSES: CsStatus[] = [
@@ -205,13 +216,17 @@ export default function Orders() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('all');
-  const [dateRange, setDateRange] = useState<DateRange>('this_month');
+  const [dateRange, setDateRange] = useState<DateRange>('today');
   const [showDateDropdown, setShowDateDropdown] = useState(false);
+  const [customStart, setCustomStart] = useState<string>(() => toLocalDateInput(new Date()));
+  const [customEnd, setCustomEnd] = useState<string>(() => toLocalDateInput(new Date()));
   const [statusFilter, setStatusFilter] = useState('');
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [assignedToMe, setAssignedToMe] = useState(false);
   const [showPullModal, setShowPullModal] = useState(false);
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const dateDropdownRef = useRef<HTMLDivElement>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{ ids: string[]; numbers: string[] } | null>(null);
@@ -219,8 +234,27 @@ export default function Orders() {
   const [showBulkStatusDropdown, setShowBulkStatusDropdown] = useState(false);
   const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
 
-  const { startIso, endIso } = useMemo(() => getStableDateStrings(dateRange), [dateRange]);
-  const { start, end } = useMemo(() => getDateRange(dateRange), [dateRange]);
+  const { startIso, endIso } = useMemo(() => {
+    if (dateRange === 'custom') {
+      const start = customStart ? new Date(customStart + 'T00:00:00') : null;
+      const end = customEnd ? new Date(customEnd + 'T23:59:59') : null;
+      return {
+        startIso: start ? start.toISOString() : null,
+        endIso: end ? end.toISOString() : null,
+      };
+    }
+    return getStableDateStrings(dateRange);
+  }, [dateRange, customStart, customEnd]);
+
+  const { start, end } = useMemo(() => {
+    if (dateRange === 'custom') {
+      return {
+        start: customStart ? new Date(customStart + 'T00:00:00') : null,
+        end: customEnd ? new Date(customEnd + 'T23:59:59') : null,
+      };
+    }
+    return getDateRange(dateRange);
+  }, [dateRange, customStart, customEnd]);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -260,7 +294,18 @@ export default function Orders() {
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [activeTab, dateRange, searchQuery, statusFilter]);
+    setCurrentPage(1);
+  }, [activeTab, dateRange, searchQuery, statusFilter, assignedToMe, customStart, customEnd]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dateDropdownRef.current && !dateDropdownRef.current.contains(e.target as Node)) {
+        setShowDateDropdown(false);
+      }
+    }
+    if (showDateDropdown) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showDateDropdown]);
 
   const handleOrderImported = useCallback((orderId?: string) => {
     setDateRange('all_time');
@@ -298,6 +343,9 @@ export default function Orders() {
     })
   );
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginatedOrders = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
   const totalValue = filtered.reduce((s, o) => s + (o.total_amount ?? 0), 0);
   const avgValue = filtered.length > 0 ? totalValue / filtered.length : 0;
   const shippedCount = orders.filter(o => !!o.shipped_at).length;
@@ -309,14 +357,14 @@ export default function Orders() {
     return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
   };
 
-  const allFilteredSelected = filtered.length > 0 && filtered.every(o => selectedIds.has(o.id));
+  const allFilteredSelected = paginatedOrders.length > 0 && paginatedOrders.every(o => selectedIds.has(o.id));
   const someSelected = selectedIds.size > 0;
 
   const toggleSelectAll = () => {
     if (allFilteredSelected) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filtered.map(o => o.id)));
+      setSelectedIds(new Set(paginatedOrders.map(o => o.id)));
     }
   };
 
@@ -390,7 +438,7 @@ export default function Orders() {
       {/* Date Range Bar */}
       <div className="bg-white border border-gray-200 rounded-xl px-5 py-3.5 flex items-center gap-4">
         <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
-        <div className="relative">
+        <div className="relative" ref={dateDropdownRef}>
           <button
             onClick={() => setShowDateDropdown(!showDateDropdown)}
             className="flex items-center gap-2 text-sm font-medium text-gray-800 hover:text-gray-900"
@@ -400,20 +448,61 @@ export default function Orders() {
             <ChevronDown className="w-4 h-4" />
           </button>
           {showDateDropdown && (
-            <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
-              {(Object.keys(DATE_RANGE_LABELS) as DateRange[]).map(key => (
+            <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1" style={{ minWidth: '180px' }}>
+              {(Object.keys(DATE_RANGE_LABELS) as DateRange[]).filter(k => k !== 'custom').map(key => (
                 <button
                   key={key}
-                  onClick={() => { setDateRange(key); setShowDateDropdown(false); }}
+                  onClick={() => { setDateRange(key); if (key !== 'custom') setShowDateDropdown(false); }}
                   className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 transition-colors ${dateRange === key ? 'text-blue-600 font-medium' : 'text-gray-700'}`}
                 >
                   {DATE_RANGE_LABELS[key]}
                 </button>
               ))}
+              <button
+                onClick={() => setDateRange('custom')}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 transition-colors ${dateRange === 'custom' ? 'text-blue-600 font-medium' : 'text-gray-700'}`}
+              >
+                Custom Range
+              </button>
+              {dateRange === 'custom' && (
+                <div className="px-4 pt-1 pb-3 border-t border-gray-100 mt-1 space-y-2" style={{ minWidth: '220px' }}>
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium block mb-1">From</label>
+                    <input
+                      type="date"
+                      value={customStart}
+                      onChange={e => setCustomStart(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium block mb-1">To</label>
+                    <input
+                      type="date"
+                      value={customEnd}
+                      min={customStart}
+                      onChange={e => setCustomEnd(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <button
+                    onClick={() => setShowDateDropdown(false)}
+                    className="w-full px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
-        <span className="text-sm text-gray-500">{start && end ? formatDateLabel(start, end) : 'Showing all orders'}</span>
+        <span className="text-sm text-gray-500">
+          {dateRange === 'custom'
+            ? (customStart && customEnd
+                ? formatDateLabel(new Date(customStart + 'T00:00:00'), new Date(customEnd + 'T23:59:59'))
+                : 'Select date range')
+            : (start && end ? formatDateLabel(start, end) : 'Showing all orders')}
+        </span>
       </div>
 
       {/* Metric Cards */}
@@ -624,7 +713,7 @@ export default function Orders() {
                   </td>
                 </tr>
               ) : (
-                filtered.map(order => (
+                paginatedOrders.map(order => (
                   <tr
                     key={order.id}
                     onClick={() => { setHighlightedOrderId(null); navigate(`/fulfillment/orders/${order.id}`); }}
@@ -721,6 +810,36 @@ export default function Orders() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        {!loading && filtered.length > 0 && (
+          <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between">
+            <span className="text-sm text-gray-500">
+              Showing {Math.min((currentPage - 1) * PAGE_SIZE + 1, filtered.length)}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length} orders
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Prev
+              </button>
+              <span className="px-3 py-1.5 text-sm text-gray-700 font-medium">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {showPullModal && (

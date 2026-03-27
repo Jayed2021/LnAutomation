@@ -157,6 +157,10 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     availableActions = availableActions.filter(a => a !== 'not_printed');
   }
 
+  if (isWarehouseRole && !availableActions.includes('mark_processing')) {
+    availableActions = ['mark_processing', ...availableActions];
+  }
+
   const showLabFlowNotice = hasPrescription && CS_STATUSES_WITH_LAB.includes(order.cs_status);
 
   const getWooConfig = async () => {

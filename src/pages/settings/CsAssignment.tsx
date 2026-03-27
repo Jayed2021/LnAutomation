@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Save, Users, AlertTriangle, CheckCircle2,
-  Calendar, RefreshCw, ChevronRight, UserCheck, ToggleLeft, ToggleRight
+  Calendar, RefreshCw, ChevronRight, UserCheck, ToggleLeft, ToggleRight,
+  Clock, Timer
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -49,6 +50,13 @@ export default function CsAssignment() {
   const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
 
+  // Auto-distribution schedule state
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleInterval, setScheduleInterval] = useState(30);
+  const [scheduleLastRun, setScheduleLastRun] = useState<string | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleSavedOk, setScheduleSavedOk] = useState(false);
+
   const [fromDate, setFromDate] = useState<string>(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
@@ -72,9 +80,14 @@ export default function CsAssignment() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [usersRes, assignmentsRes] = await Promise.all([
+    const [usersRes, assignmentsRes, settingsRes] = await Promise.all([
       supabase.from('users').select('id, full_name').eq('role', 'customer_service').eq('is_active', true).order('full_name'),
       supabase.from('cs_assignments').select('id, user_id, allocation_percentage, is_active'),
+      supabase.from('app_settings').select('key, value').in('key', [
+        'auto_distribution_enabled',
+        'auto_distribution_interval_minutes',
+        'auto_distribution_last_run',
+      ]),
     ]);
 
     const assignmentMap = new Map<string, { id: string; allocation_percentage: number; is_active: boolean }>();
@@ -95,6 +108,16 @@ export default function CsAssignment() {
     });
 
     setAgents(merged);
+
+    const settingsMap = new Map<string, unknown>();
+    for (const row of settingsRes.data ?? []) {
+      settingsMap.set(row.key, row.value);
+    }
+    setScheduleEnabled(settingsMap.get('auto_distribution_enabled') === true);
+    setScheduleInterval(Number(settingsMap.get('auto_distribution_interval_minutes') ?? 30) || 30);
+    const lastRun = settingsMap.get('auto_distribution_last_run');
+    setScheduleLastRun(lastRun && lastRun !== null ? String(lastRun).replace(/^"|"$/g, '') : null);
+
     setLoading(false);
   }, []);
 
@@ -237,6 +260,34 @@ export default function CsAssignment() {
     setUnassignedOrders([]);
   }
 
+  async function handleSaveSchedule() {
+    setScheduleSaving(true);
+    setScheduleSavedOk(false);
+
+    const clampedInterval = Math.min(1440, Math.max(5, scheduleInterval));
+
+    await Promise.all([
+      supabase.from('app_settings').update({ value: scheduleEnabled }).eq('key', 'auto_distribution_enabled'),
+      supabase.from('app_settings').update({ value: clampedInterval }).eq('key', 'auto_distribution_interval_minutes'),
+    ]);
+
+    setScheduleInterval(clampedInterval);
+    setScheduleSaving(false);
+    setScheduleSavedOk(true);
+    setTimeout(() => setScheduleSavedOk(false), 3000);
+  }
+
+  function formatLastRun(ts: string | null): string {
+    if (!ts) return 'Never';
+    try {
+      return new Date(ts).toLocaleString(undefined, {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+    } catch {
+      return 'Never';
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -249,6 +300,97 @@ export default function CsAssignment() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">CS Assignment</h1>
           <p className="text-sm text-gray-500 mt-0.5">Configure order distribution among Customer Service agents</p>
+        </div>
+      </div>
+
+      {/* Automatic Distribution Schedule */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Timer className="w-5 h-5 text-gray-500" />
+            <h2 className="font-semibold text-gray-900">Automatic Distribution Schedule</h2>
+          </div>
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+            scheduleEnabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+          }`}>
+            {scheduleEnabled ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+
+        <div className="p-6 space-y-5">
+          <p className="text-sm text-gray-600">
+            When enabled, unassigned orders from the current day are automatically distributed to CS agents in the background on the configured interval. The same round-robin sequence is used as manual distribution.
+          </p>
+
+          <div className="flex flex-wrap items-start gap-6">
+            {/* Enable toggle */}
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Auto-Distribute</span>
+              <button
+                onClick={() => { setScheduleEnabled(v => !v); setScheduleSavedOk(false); }}
+                className="focus:outline-none self-start"
+                title={scheduleEnabled ? 'Click to disable' : 'Click to enable'}
+              >
+                {scheduleEnabled ? (
+                  <ToggleRight className="w-10 h-10 text-green-500 hover:text-green-600 transition-colors" />
+                ) : (
+                  <ToggleLeft className="w-10 h-10 text-gray-300 hover:text-gray-400 transition-colors" />
+                )}
+              </button>
+            </div>
+
+            {/* Interval input */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Run Every</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={5}
+                  max={1440}
+                  value={scheduleInterval}
+                  onChange={e => { setScheduleInterval(parseInt(e.target.value) || 30); setScheduleSavedOk(false); }}
+                  disabled={!scheduleEnabled}
+                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                />
+                <span className="text-sm text-gray-500 font-medium">minutes</span>
+              </div>
+              <span className="text-xs text-gray-400">Min: 5 &nbsp;·&nbsp; Max: 1440 (24h)</span>
+            </div>
+
+            {/* Last run */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Last Auto-Run</span>
+              <div className="flex items-center gap-1.5 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                <Clock className="w-4 h-4 text-gray-400 shrink-0" />
+                <span>{formatLastRun(scheduleLastRun)}</span>
+              </div>
+            </div>
+          </div>
+
+          {scheduleEnabled && (!isValid || !hasActiveAgents) && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-sm text-amber-800">
+                Auto-distribution is enabled but CS agent allocations are not configured correctly. Save a valid allocation (total 100%) to allow the schedule to run.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 pb-5 flex justify-end">
+          <button
+            onClick={handleSaveSchedule}
+            disabled={scheduleSaving || loading}
+            className="flex items-center gap-2 px-5 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {scheduleSaving ? (
+              <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</>
+            ) : scheduleSavedOk ? (
+              <><CheckCircle2 className="w-4 h-4" /> Saved</>
+            ) : (
+              <><Save className="w-4 h-4" /> Save Schedule</>
+            )}
+          </button>
         </div>
       </div>
 

@@ -36,7 +36,7 @@ export function OrderHeader({ order, items, onPrintInvoice, onPrintPackingSlip, 
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-4 min-w-0">
           <button
-            onClick={() => navigate('/fulfillment/orders')}
+            onClick={() => navigate(-1)}
             className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors shrink-0 pt-0.5"
           >
             <ArrowLeft className="w-4 h-4" />

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search, Calendar, Eye, Users, TrendingUp, Package, Truck, Download,
   ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
@@ -209,24 +209,86 @@ function DeleteConfirmModal({ count, orderNumbers, onConfirm, onCancel, loading 
   );
 }
 
+const VALID_TABS: Tab[] = ['all', 'needs_action', 'scheduled', 'in_progress', 'lab_orders', 'shipped', 'cancelled'];
+const VALID_DATE_RANGES: DateRange[] = ['today', 'yesterday', 'this_week', 'this_month', 'last_month', 'this_quarter', 'all_time', 'custom'];
+
 export default function Orders() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<Tab>('all');
-  const [dateRange, setDateRange] = useState<DateRange>('today');
+
+  const paramTab = searchParams.get('tab') as Tab | null;
+  const paramDateRange = searchParams.get('dateRange') as DateRange | null;
+  const paramSearch = searchParams.get('search') ?? '';
+  const paramStatus = searchParams.get('status') ?? '';
+  const paramAssigned = searchParams.get('assignedToMe') === '1';
+  const paramPage = parseInt(searchParams.get('page') ?? '1', 10);
+  const paramCustomStart = searchParams.get('customStart') ?? toLocalDateInput(new Date());
+  const paramCustomEnd = searchParams.get('customEnd') ?? toLocalDateInput(new Date());
+
+  const activeTab: Tab = paramTab && VALID_TABS.includes(paramTab) ? paramTab : 'all';
+  const dateRange: DateRange = paramDateRange && VALID_DATE_RANGES.includes(paramDateRange) ? paramDateRange : 'today';
+  const searchQuery = paramSearch;
+  const statusFilter = paramStatus;
+  const assignedToMe = paramAssigned;
+  const currentPage = isNaN(paramPage) || paramPage < 1 ? 1 : paramPage;
+  const customStart = paramCustomStart;
+  const customEnd = paramCustomEnd;
+
   const [showDateDropdown, setShowDateDropdown] = useState(false);
-  const [customStart, setCustomStart] = useState<string>(() => toLocalDateInput(new Date()));
-  const [customEnd, setCustomEnd] = useState<string>(() => toLocalDateInput(new Date()));
-  const [statusFilter, setStatusFilter] = useState('');
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
-  const [assignedToMe, setAssignedToMe] = useState(false);
   const [showPullModal, setShowPullModal] = useState(false);
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
+
+  const updateParams = useCallback((updates: Record<string, string | null>) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null || value === '') {
+          next.delete(key);
+        } else {
+          next.set(key, value);
+        }
+      }
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setActiveTab = useCallback((tab: Tab) => {
+    updateParams({ tab: tab === 'all' ? null : tab, page: null });
+  }, [updateParams]);
+
+  const setDateRange = useCallback((range: DateRange) => {
+    updateParams({ dateRange: range === 'today' ? null : range });
+  }, [updateParams]);
+
+  const setSearchQuery = useCallback((q: string) => {
+    updateParams({ search: q || null, page: null });
+  }, [updateParams]);
+
+  const setStatusFilter = useCallback((s: string) => {
+    updateParams({ status: s || null, page: null });
+  }, [updateParams]);
+
+  const setAssignedToMe = useCallback((v: boolean) => {
+    updateParams({ assignedToMe: v ? '1' : null, page: null });
+  }, [updateParams]);
+
+  const setCurrentPage = useCallback((pageOrFn: number | ((p: number) => number)) => {
+    const nextPage = typeof pageOrFn === 'function' ? pageOrFn(currentPage) : pageOrFn;
+    updateParams({ page: nextPage === 1 ? null : String(nextPage) });
+  }, [updateParams, currentPage]);
+
+  const setCustomStart = useCallback((v: string) => {
+    updateParams({ customStart: v });
+  }, [updateParams]);
+
+  const setCustomEnd = useCallback((v: string) => {
+    updateParams({ customEnd: v });
+  }, [updateParams]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{ ids: string[]; numbers: string[] } | null>(null);
@@ -294,7 +356,6 @@ export default function Orders() {
 
   useEffect(() => {
     setSelectedIds(new Set());
-    setCurrentPage(1);
   }, [activeTab, dateRange, searchQuery, statusFilter, assignedToMe, customStart, customEnd]);
 
   useEffect(() => {

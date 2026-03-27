@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useRefresh } from '../../../contexts/RefreshContext';
 import { OrderListItem, STATUS_CONFIG, CsStatus } from './types';
 import { StatusBadge } from './StatusBadge';
 import { PullOrderModal } from './PullOrderModal';
@@ -285,6 +286,7 @@ export default function Orders() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, canDeleteOrders } = useAuth();
+  const { lastRefreshed, setRefreshing } = useRefresh();
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -423,12 +425,13 @@ export default function Orders() {
       console.error('Error fetching orders:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [startIso, endIso, assignedToMe, user?.id]);
 
   useEffect(() => {
     fetchOrders();
-  }, [fetchOrders]);
+  }, [fetchOrders, lastRefreshed]);
 
   useEffect(() => {
     setSelectedIds(new Set());

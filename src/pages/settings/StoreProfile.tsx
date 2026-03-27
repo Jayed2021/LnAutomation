@@ -264,7 +264,7 @@ export default function StoreProfile() {
         </div>
         <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
           <div className="flex justify-between items-start p-5 border-b border-gray-100">
-            <div className="flex items-start gap-3">
+            <div className="flex flex-col items-start gap-1">
               {saved.logo_url
                 ? <img src={saved.logo_url} alt="Logo" className="h-12 max-w-[140px] object-contain" />
                 : (
@@ -276,7 +276,7 @@ export default function StoreProfile() {
                 )
               }
               {saved.tagline && (
-                <p className="text-xs text-gray-400 italic self-end mb-1">{saved.tagline}</p>
+                <p className="text-xs text-gray-400 italic">{saved.tagline}</p>
               )}
             </div>
             <div className="text-right text-xs text-gray-600 space-y-0.5">

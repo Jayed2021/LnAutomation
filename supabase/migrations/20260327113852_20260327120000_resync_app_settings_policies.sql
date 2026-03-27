@@ -1,16 +1,16 @@
 /*
-  # Fix duplicate RLS policies on app_settings
+  # Resync app_settings RLS policies
 
-  ## Problem
-  The original create_core_tables migration used CREATE POLICY without idempotency guards.
-  When re-applied to a database that already has these policies, it throws error 42710.
-  A fourth policy "Anon full access app_settings" was added by a later migration and must
-  also be dropped before recreating all policies cleanly.
+  ## Purpose
+  Drops all existing policies on app_settings and recreates them cleanly.
+  This resolves any duplicate policy conflicts caused by prior migrations
+  that did not use IF EXISTS guards, including the "Anon full access app_settings"
+  policy that was added by the RLS overhaul migration.
 
   ## Changes
-  - Drops ALL four known policies on app_settings before recreating them
-  - Ensures all policies are correctly in place after migration
-  - Safe to run on both fresh and existing databases (uses IF EXISTS guards)
+  - Drops all four known policies on app_settings
+  - Recreates authenticated SELECT, INSERT (admin only), and UPDATE (admin only) policies
+  - Recreates anon full-access policy for the app_settings table
 */
 
 DROP POLICY IF EXISTS "All authenticated users can view settings" ON app_settings;
@@ -51,3 +51,9 @@ CREATE POLICY "Only admins can update settings"
       AND users.role = 'admin'
     )
   );
+
+CREATE POLICY "Anon full access app_settings"
+  ON app_settings FOR ALL
+  TO anon
+  USING (true)
+  WITH CHECK (true);

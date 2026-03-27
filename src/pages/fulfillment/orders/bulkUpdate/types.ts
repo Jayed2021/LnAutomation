@@ -1,4 +1,4 @@
-export type BulkRowStatus = 'valid' | 'not_found' | 'invalid_status' | 'skipped';
+export type BulkRowStatus = 'valid' | 'not_found' | 'skipped';
 
 export interface CsvRow {
   rawOrderId: string;
@@ -7,6 +7,7 @@ export interface CsvRow {
   rawDeliveryMethod: string;
   rawCostOfDelivery: string;
   rawCollectedAmount: string;
+  rawRecipientName: string;
 }
 
 export interface PreviewRow extends CsvRow {
@@ -24,9 +25,12 @@ export interface PreviewRow extends CsvRow {
 }
 
 export const CS_STATUS_MAP: Record<string, { csStatus: string; courierStatus: string }> = {
+  'completed': { csStatus: 'delivered', courierStatus: 'Delivered' },
   'shipped': { csStatus: 'shipped', courierStatus: 'Shipped' },
   'partial delivered': { csStatus: 'partial_delivery', courierStatus: 'Partial Delivered' },
   'late delivery': { csStatus: 'late_delivery', courierStatus: 'Late Delivery' },
+  'cancelled': { csStatus: 'cancelled', courierStatus: 'Cancelled' },
+  'returned': { csStatus: 'returned', courierStatus: 'Returned' },
 };
 
 export const COURIER_COMPANY_MAP: Record<string, string | null> = {

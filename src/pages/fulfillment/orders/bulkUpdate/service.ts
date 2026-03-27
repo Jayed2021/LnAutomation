@@ -28,10 +28,19 @@ export async function applyBulkUpdate(
 
   for (const row of validRows) {
     try {
+      const now = new Date().toISOString();
+
       const orderUpdate: Record<string, unknown> = {
         cs_status: row.mappedCsStatus,
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       };
+
+      if (
+        (row.mappedCsStatus === 'shipped' || row.mappedCsStatus === 'delivered') &&
+        row.rawEcr
+      ) {
+        orderUpdate.shipped_at = orderUpdate.shipped_at ?? now;
+      }
 
       if (row.mappedCsStatus === 'late_delivery') {
         const futureDate = new Date();
@@ -49,7 +58,8 @@ export async function applyBulkUpdate(
       const courierUpsert: Record<string, unknown> = {
         order_id: row.dbOrderId!,
         courier_status: row.mappedCourierStatus,
-        courier_status_updated_at: new Date().toISOString(),
+        courier_status_updated_at: now,
+        updated_at: now,
       };
       if (row.rawEcr) courierUpsert.tracking_number = row.rawEcr;
       if (row.mappedCourierCompany !== undefined) courierUpsert.courier_company = row.mappedCourierCompany;

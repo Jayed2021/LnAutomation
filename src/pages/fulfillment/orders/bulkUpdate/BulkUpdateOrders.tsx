@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Upload, FileText, CheckCircle2, XCircle,
-  AlertTriangle, ChevronDown, ChevronUp, RefreshCw, Info
+  AlertTriangle, ChevronDown, ChevronUp, RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { parseCsvText, buildPreviewRows } from './parser';
@@ -12,9 +12,12 @@ import { PreviewRow } from './types';
 type Step = 'upload' | 'preview' | 'done';
 
 const STATUS_LABELS: Record<string, string> = {
+  delivered: 'Delivered',
   shipped: 'Shipped',
   partial_delivery: 'Partial Delivered',
   late_delivery: 'Late Delivery',
+  cancelled: 'Cancelled',
+  returned: 'Returned',
 };
 
 function StatusPill({ status }: { status: PreviewRow['status'] }) {
@@ -28,14 +31,9 @@ function StatusPill({ status }: { status: PreviewRow['status'] }) {
       <XCircle className="w-3 h-3" /> Not Found
     </span>
   );
-  if (status === 'invalid_status') return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-      <AlertTriangle className="w-3 h-3" /> Invalid Status
-    </span>
-  );
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-      <Info className="w-3 h-3" /> Skipped
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+      <AlertTriangle className="w-3 h-3" /> Skipped
     </span>
   );
 }
@@ -203,33 +201,41 @@ export default function BulkUpdateOrders() {
 
           <div className="mt-6 bg-gray-50 border border-gray-100 rounded-xl p-5">
             <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <FileText className="w-4 h-4" /> Expected CSV Format
+              <FileText className="w-4 h-4" /> CSV Column Reference
             </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Upload your standard order export CSV. The following columns are read automatically by their header names:
+            </p>
             <div className="overflow-x-auto">
               <table className="text-xs text-gray-600 w-full">
                 <thead>
                   <tr className="border-b border-gray-200">
-                    {['ORDER ID', 'ORDER STATUS', 'ECR', 'Delivery Method', 'Cost of delivery', 'Collected amount'].map(h => (
-                      <th key={h} className="text-left py-1.5 pr-4 font-semibold text-gray-700">{h}</th>
+                    {['Column header', 'Example value', 'What gets updated'].map(h => (
+                      <th key={h} className="text-left py-1.5 pr-6 font-semibold text-gray-700">{h}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody>
-                  <tr>
-                    <td className="py-1.5 pr-4">12345</td>
-                    <td className="py-1.5 pr-4">Shipped</td>
-                    <td className="py-1.5 pr-4">ECR123456</td>
-                    <td className="py-1.5 pr-4">Steadfast</td>
-                    <td className="py-1.5 pr-4">80</td>
-                    <td className="py-1.5 pr-4">620</td>
-                  </tr>
+                <tbody className="divide-y divide-gray-100">
+                  {[
+                    ['ORDER ID', '1964786', 'Matches order by WooCommerce ID'],
+                    ['ORDER STATUS', 'Completed', 'Order status in the system'],
+                    ['ECR', 'DL010326YM2BNX', 'Courier tracking number'],
+                    ['Delivery Method', 'Pathao', 'Courier company'],
+                    ['Cost of delivery', '80', 'Delivery charge'],
+                    ['Collected amount', '1250', 'Amount collected from customer'],
+                  ].map(([col, ex, desc]) => (
+                    <tr key={col}>
+                      <td className="py-1.5 pr-6 font-mono font-medium text-gray-800">{col}</td>
+                      <td className="py-1.5 pr-6 text-gray-500">{ex}</td>
+                      <td className="py-1.5 pr-6 text-gray-500">{desc}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-            <div className="mt-3 space-y-1.5 text-xs text-gray-500">
-              <p><span className="font-medium text-gray-700">ORDER STATUS values:</span> Shipped, Partial delivered, Late delivery</p>
-              <p><span className="font-medium text-gray-700">Delivery Method values:</span> Pathao, Steadfast, OFFICE, None</p>
-              <p><span className="font-medium text-gray-700">ECR:</span> Tracking number (leave blank if none)</p>
+            <div className="mt-3 space-y-1 text-xs text-gray-500">
+              <p><span className="font-medium text-gray-700">Updatable ORDER STATUS values:</span> Completed, Shipped, Partial delivered, Late delivery, Cancelled, Returned</p>
+              <p><span className="font-medium text-gray-700">Other status values</span> (e.g. Confirmed, Processing) will be silently skipped — the row won't be updated.</p>
             </div>
           </div>
         </div>
@@ -280,7 +286,7 @@ export default function BulkUpdateOrders() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50">
                     <tr>
-                      {['Order ID', 'Current Status', 'New Status', 'Courier', 'Tracking (ECR)', 'Delivery Cost', 'Collected'].map(h => (
+                      {['Order ID', 'Recipient', 'Current Status', 'New Status', 'Courier', 'Tracking (ECR)', 'Delivery Cost', 'Collected'].map(h => (
                         <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
                           {h}
                         </th>
@@ -291,6 +297,7 @@ export default function BulkUpdateOrders() {
                     {validRows.map(row => (
                       <tr key={row.rowIndex} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 font-mono text-gray-900 font-medium">{row.rawOrderId}</td>
+                        <td className="px-4 py-3 text-gray-700 max-w-[140px] truncate">{row.rawRecipientName || <span className="text-gray-400">—</span>}</td>
                         <td className="px-4 py-3">
                           <CsStatusBadge status={row.currentCsStatus} />
                         </td>

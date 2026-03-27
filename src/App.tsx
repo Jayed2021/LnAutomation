@@ -36,6 +36,7 @@ import StoreProfile from './pages/settings/StoreProfile';
 import CourierSettings from './pages/settings/CourierSettings';
 import SmsSettings from './pages/settings/SmsSettings';
 import UserManagement from './pages/settings/UserManagement';
+import CsAssignment from './pages/settings/CsAssignment';
 import ComingSoon from './pages/ComingSoon';
 import ProfitLoss from './pages/reports/ProfitLoss';
 import Customers from './pages/customers/Customers';
@@ -100,6 +101,7 @@ function App() {
             <Route path="settings/courier" element={<CourierSettings />} />
             <Route path="settings/sms" element={<SmsSettings />} />
             <Route path="settings/users" element={<UserManagement />} />
+            <Route path="settings/cs-assignment" element={<CsAssignment />} />
           </Route>
         </Routes>
         </RefreshProvider>

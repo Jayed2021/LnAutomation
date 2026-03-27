@@ -10,7 +10,8 @@ import {
   ShoppingCart,
   Lock,
   Bell,
-  Package
+  Package,
+  UserCheck
 } from 'lucide-react';
 
 export default function Settings() {
@@ -58,6 +59,13 @@ export default function Settings() {
       icon: Package,
       color: 'teal',
       route: '/settings/packaging'
+    },
+    {
+      title: 'CS Assignment',
+      description: 'Configure order distribution among Customer Service agents',
+      icon: UserCheck,
+      color: 'teal',
+      route: '/settings/cs-assignment'
     },
     {
       title: 'WooCommerce Integration',

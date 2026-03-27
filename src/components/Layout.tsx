@@ -16,8 +16,10 @@ import {
   Menu,
   X,
   ChevronDown,
-  RefreshCw
+  RefreshCw,
+  KeyRound,
 } from 'lucide-react';
+import bcrypt from 'bcryptjs';
 
 interface NavItem {
   name: string;
@@ -33,6 +35,11 @@ export const Layout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [receiveGoodsCount, setReceiveGoodsCount] = useState(0);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
   useEffect(() => {
     const fetchCount = async () => {
@@ -62,6 +69,7 @@ export const Layout: React.FC = () => {
     };
     fetchCount();
   }, [isRefreshing]);
+
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -115,7 +123,6 @@ export const Layout: React.FC = () => {
       module: 'finance',
       children: [
         { name: 'Expenses', path: '/finance/expenses', icon: null, module: 'finance_expenses' },
-        { name: 'Profit Analysis', path: '/finance/profit', icon: null, module: 'finance' },
         { name: 'Collection', path: '/finance/collection', icon: null, module: 'finance_collection' }
       ]
     },
@@ -157,6 +164,47 @@ export const Layout: React.FC = () => {
     localStorage.removeItem('erp_user_id');
     setUser(null);
     navigate('/login');
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError('');
+    if (!user) return;
+    if (passwordForm.next !== passwordForm.confirm) {
+      setPasswordError('New passwords do not match.');
+      return;
+    }
+    if (passwordForm.next.length < 6) {
+      setPasswordError('New password must be at least 6 characters.');
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      const { data: userData } = await supabase
+        .from('users')
+        .select('password_hash')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (!userData) throw new Error('User not found.');
+      const match = await bcrypt.compare(passwordForm.current, userData.password_hash);
+      if (!match) {
+        setPasswordError('Current password is incorrect.');
+        return;
+      }
+      const newHash = await bcrypt.hash(passwordForm.next, 10);
+      await supabase.from('users').update({ password_hash: newHash, password_changed: true, updated_at: new Date().toISOString() }).eq('id', user.id);
+      setPasswordSuccess(true);
+      setPasswordForm({ current: '', next: '', confirm: '' });
+      setUser({ ...user, password_changed: true });
+      setTimeout(() => {
+        setShowPasswordModal(false);
+        setPasswordSuccess(false);
+      }, 1500);
+    } catch (err: any) {
+      setPasswordError(err.message || 'An error occurred.');
+    } finally {
+      setPasswordSaving(false);
+    }
   };
 
   const formatRoleName = (role: string) => {
@@ -242,8 +290,13 @@ export const Layout: React.FC = () => {
         </nav>
 
         <div className="p-4 border-t border-gray-800">
+          {user && !user.password_changed && (
+            <div className="mb-3 px-3 py-2 bg-amber-600/20 border border-amber-500/30 rounded-lg">
+              <p className="text-xs text-amber-300 font-medium">Please change your default password</p>
+            </div>
+          )}
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center font-bold">
+            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center font-bold shrink-0">
               {user?.full_name.charAt(0)}
             </div>
             <div className="flex-1 min-w-0">
@@ -251,6 +304,13 @@ export const Layout: React.FC = () => {
               <p className="text-xs text-gray-400 truncate">{user?.role && formatRoleName(user.role)}</p>
             </div>
           </div>
+          <button
+            onClick={() => { setShowPasswordModal(true); setPasswordError(''); setPasswordSuccess(false); setPasswordForm({ current: '', next: '', confirm: '' }); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors text-sm"
+          >
+            <KeyRound className="w-4 h-4" />
+            <span>Change Password</span>
+          </button>
           <button
             onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
@@ -283,7 +343,7 @@ export const Layout: React.FC = () => {
             <div className="h-6 w-px bg-gray-200" />
             <div className="text-right">
               <p className="text-sm font-medium text-gray-900">{user?.full_name}</p>
-              <p className="text-xs text-gray-500">{user?.email}</p>
+              <p className="text-xs text-gray-500">{user?.username && `@${user.username}`}</p>
             </div>
           </div>
         </header>
@@ -292,6 +352,76 @@ export const Layout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+            <div className="flex items-center justify-between p-5 border-b">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Change Password</h2>
+                <p className="text-sm text-gray-500">Update your account password</p>
+              </div>
+              <button onClick={() => setShowPasswordModal(false)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <form onSubmit={handleChangePassword} className="p-5 space-y-4">
+              {passwordSuccess ? (
+                <div className="px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 text-center font-medium">
+                  Password changed successfully!
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+                    <input
+                      type="password"
+                      value={passwordForm.current}
+                      onChange={e => setPasswordForm(p => ({ ...p, current: e.target.value }))}
+                      required
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                    <input
+                      type="password"
+                      value={passwordForm.next}
+                      onChange={e => setPasswordForm(p => ({ ...p, next: e.target.value }))}
+                      required
+                      minLength={6}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
+                    <input
+                      type="password"
+                      value={passwordForm.confirm}
+                      onChange={e => setPasswordForm(p => ({ ...p, confirm: e.target.value }))}
+                      required
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    />
+                  </div>
+                  {passwordError && (
+                    <div className="px-3 py-2 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700">
+                      {passwordError}
+                    </div>
+                  )}
+                  <div className="flex gap-3 pt-1">
+                    <button type="button" onClick={() => setShowPasswordModal(false)} className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                      Cancel
+                    </button>
+                    <button type="submit" disabled={passwordSaving} className="flex-1 px-4 py-2 bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 text-white rounded-lg text-sm font-semibold transition-colors">
+                      {passwordSaving ? 'Saving...' : 'Change Password'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

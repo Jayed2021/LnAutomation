@@ -31,7 +31,7 @@ import { buildInvoiceHtml, buildPackingSlipHtml } from './InvoiceTemplate';
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, canDeleteOrders, canDoCSActions, canEditOrderSource } = useAuth();
 
   const [order, setOrder] = useState<OrderDetailType | null>(null);
   const [items, setItems] = useState<OrderItem[]>([]);
@@ -151,6 +151,7 @@ export default function OrderDetail() {
         onPrintInvoice={handlePrintInvoice}
         onPrintPackingSlip={handlePrintPackingSlip}
         onDeleteOrder={() => setShowDeleteConfirm(true)}
+        canDelete={canDeleteOrders}
       />
 
       {/* Three-column top section */}
@@ -158,15 +159,23 @@ export default function OrderDetail() {
         <CustomerInfoCard order={order} onUpdated={load} />
         <CourierPaymentCard order={order} courier={courier} userId={user?.id ?? null} onUpdated={load} />
         <div className="space-y-5">
-          <OrderSourceCard order={order} users={users} userId={user?.id ?? null} onUpdated={load} />
-          <CsActionPanel
+          <OrderSourceCard
             order={order}
-            items={items}
+            users={users}
             userId={user?.id ?? null}
-            userRole={user?.role ?? null}
-            hasPrescription={prescriptions.length > 0}
+            canEdit={canEditOrderSource}
             onUpdated={load}
           />
+          {canDoCSActions && (
+            <CsActionPanel
+              order={order}
+              items={items}
+              userId={user?.id ?? null}
+              userRole={user?.role ?? null}
+              hasPrescription={prescriptions.length > 0}
+              onUpdated={load}
+            />
+          )}
           <CourierResponseCard courier={courier} />
         </div>
       </div>

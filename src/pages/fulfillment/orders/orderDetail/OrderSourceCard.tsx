@@ -9,10 +9,11 @@ interface Props {
   order: OrderDetail;
   users: { id: string; full_name: string }[];
   userId: string | null;
+  canEdit: boolean;
   onUpdated: () => void;
 }
 
-export function OrderSourceCard({ order, users, userId, onUpdated }: Props) {
+export function OrderSourceCard({ order, users, userId, canEdit, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [edit, setEdit] = useState({
@@ -49,10 +50,12 @@ export function OrderSourceCard({ order, users, userId, onUpdated }: Props) {
       <div className="flex items-center justify-between mb-5">
         <h3 className="font-semibold text-gray-900">Order Status &amp; Source</h3>
         {!editing ? (
-          <button onClick={() => setEditing(true)} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium">
-            <Edit2 className="w-3.5 h-3.5" />
-            Edit
-          </button>
+          canEdit && (
+            <button onClick={() => setEditing(true)} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium">
+              <Edit2 className="w-3.5 h-3.5" />
+              Edit
+            </button>
+          )
         ) : (
           <div className="flex gap-2">
             <button onClick={() => setEditing(false)} className="p-1.5 hover:bg-gray-100 rounded transition-colors">

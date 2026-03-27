@@ -15,9 +15,12 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
+  username: string;
   role: UserRole;
   is_active: boolean;
   can_see_costs: boolean;
+  password_changed: boolean;
+  module_permissions: Record<string, boolean>;
   last_login?: string;
   created_at: string;
   updated_at: string;

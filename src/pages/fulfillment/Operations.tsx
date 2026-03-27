@@ -105,13 +105,11 @@ const DATE_RANGES = [
   { value: '30days', label: 'Last 30 Days' },
 ];
 
-const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
-
 export default function Operations() {
   const navigate = useNavigate();
   const { lastRefreshed } = useRefresh();
-  const { user } = useAuth();
-  const isWarehouseRole = WAREHOUSE_ROLES.includes(user?.role ?? '');
+  const { user, canDoWarehouseActions } = useAuth();
+  const isWarehouseRole = canDoWarehouseActions;
   const [activeTab, setActiveTab] = useState<TabKey>('not_printed');
   const [orders, setOrders] = useState<Order[]>([]);
   const [shippedOrders, setShippedOrders] = useState<Order[]>([]);

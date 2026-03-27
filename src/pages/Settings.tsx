@@ -28,7 +28,8 @@ export default function Settings() {
       title: 'User Management',
       description: 'Manage users, roles and permissions',
       icon: Users,
-      color: 'green'
+      color: 'green',
+      route: '/settings/users'
     },
     {
       title: 'Courier Settings',

@@ -21,6 +21,7 @@ interface CancellationReason {
 }
 
 const WAREHOUSE_ROLES = ['admin', 'warehouse_manager', 'operations_manager'];
+const CS_ROLES = ['admin', 'operations_manager', 'customer_service'];
 
 const BASE_ACTIONS: Record<string, string[]> = {
   new_not_called:    ['awaiting_payment', 'late_delivery', 'cancel_before_dispatch', 'refund', 'exchange'],
@@ -131,7 +132,9 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   }, [selectedAction]);
 
   const isWarehouseRole = WAREHOUSE_ROLES.includes(userRole ?? '');
+  const isCsRole = CS_ROLES.includes(userRole ?? '');
   const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
+  const isCbdStatus = order.cs_status === 'cancelled_cbd';
 
   const CS_STATUSES_WITH_LAB = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery'];
   const baseActions = BASE_ACTIONS[order.cs_status] ?? [];
@@ -572,7 +575,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
               {showDropdown && (
                 <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 overflow-y-auto">
                   {availableActions.map(action => {
-                    const isLocked = action === 'mark_processing' && !isWarehouseRole;
+                    const isLocked = action === 'mark_processing' && !isWarehouseRole && !(isCsRole && isCbdStatus);
                     return (
                       <button
                         key={action}
@@ -600,7 +603,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
                 </div>
               )}
             </div>
-            {selectedAction === 'mark_processing' && !isWarehouseRole && (
+            {selectedAction === 'mark_processing' && !isWarehouseRole && !(isCsRole && isCbdStatus) && (
               <p className="text-xs text-amber-600 mt-1">Only warehouse staff can mark orders as processing.</p>
             )}
           </div>

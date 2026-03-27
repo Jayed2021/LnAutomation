@@ -1,5 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase, User, UserRole } from '../lib/supabase';
+import {
+  getModuleAccess,
+  canDeleteOrders as _canDeleteOrders,
+  canDoWarehouseActions as _canDoWarehouseActions,
+  canDoCSActions as _canDoCSActions,
+  canEditOrderSource as _canEditOrderSource,
+  canEditCourierPayment as _canEditCourierPayment,
+} from '../lib/permissions';
 
 interface AuthContextType {
   user: User | null;
@@ -7,6 +15,11 @@ interface AuthContextType {
   setUser: (user: User | null) => void;
   canSeeCosts: boolean;
   hasModuleAccess: (module: string) => boolean;
+  canDeleteOrders: boolean;
+  canDoWarehouseActions: boolean;
+  canDoCSActions: boolean;
+  canEditOrderSource: boolean;
+  canEditCourierPayment: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -72,14 +85,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const canSeeCosts = user?.role === 'admin' || user?.can_see_costs === true;
+  const role = user?.role as UserRole | undefined;
+  const modulePerms = user?.module_permissions ?? {};
 
-  const hasModuleAccess = (_module: string): boolean => {
-    return !!user;
+  const canSeeCosts = role === 'admin' || user?.can_see_costs === true;
+
+  const hasModuleAccess = (module: string): boolean => {
+    if (!user || !role) return false;
+    return getModuleAccess(role, modulePerms, module);
   };
 
+  const canDeleteOrders = role ? _canDeleteOrders(role) : false;
+  const canDoWarehouseActions = role ? _canDoWarehouseActions(role, modulePerms) : false;
+  const canDoCSActions = role ? _canDoCSActions(role, modulePerms) : false;
+  const canEditOrderSource = role ? _canEditOrderSource(role, modulePerms) : false;
+  const canEditCourierPayment = role ? _canEditCourierPayment(role, modulePerms) : false;
+
   return (
-    <AuthContext.Provider value={{ user, loading, setUser, canSeeCosts, hasModuleAccess }}>
+    <AuthContext.Provider value={{
+      user, loading, setUser,
+      canSeeCosts,
+      hasModuleAccess,
+      canDeleteOrders,
+      canDoWarehouseActions,
+      canDoCSActions,
+      canEditOrderSource,
+      canEditCourierPayment,
+    }}>
       {children}
     </AuthContext.Provider>
   );

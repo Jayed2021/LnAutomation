@@ -31,6 +31,17 @@ export const CS_STATUS_MAP: Record<string, { csStatus: string; courierStatus: st
   'late delivery': { csStatus: 'late_delivery', courierStatus: 'Late Delivery' },
   'cancelled': { csStatus: 'cancelled', courierStatus: 'Cancelled' },
   'returned': { csStatus: 'returned', courierStatus: 'Returned' },
+  'cbd': { csStatus: 'cancelled_cbd', courierStatus: 'Cancelled' },
+  'cancel before dispatch': { csStatus: 'cancelled_cbd', courierStatus: 'Cancelled' },
+  'cad': { csStatus: 'cancelled_cad', courierStatus: 'Returned' },
+  'cancel after dispatch': { csStatus: 'cancelled_cad', courierStatus: 'Returned' },
+  'exchange': { csStatus: 'exchange', courierStatus: 'Returned' },
+  'exr': { csStatus: 'exchange_returnable', courierStatus: 'Returned' },
+  'exchange returnable exr': { csStatus: 'exchange_returnable', courierStatus: 'Returned' },
+  'exchange returnable': { csStatus: 'exchange_returnable', courierStatus: 'Returned' },
+  'in lab': { csStatus: 'in_lab', courierStatus: '' },
+  'not printed': { csStatus: 'not_printed', courierStatus: '' },
+  'awaiting payment': { csStatus: 'awaiting_payment', courierStatus: '' },
 };
 
 export const COURIER_COMPANY_MAP: Record<string, string | null> = {

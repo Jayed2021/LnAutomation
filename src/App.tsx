@@ -37,6 +37,8 @@ import CourierSettings from './pages/settings/CourierSettings';
 import SmsSettings from './pages/settings/SmsSettings';
 import ComingSoon from './pages/ComingSoon';
 import ProfitLoss from './pages/reports/ProfitLoss';
+import Customers from './pages/customers/Customers';
+import CustomerDetail from './pages/customers/CustomerDetail';
 
 function App() {
   return (
@@ -85,7 +87,8 @@ function App() {
             <Route path="finance/expenses" element={<Expenses />} />
             <Route path="finance/profit" element={<ComingSoon moduleName="Profit Analysis" />} />
 
-            <Route path="customers" element={<ComingSoon moduleName="Customers" />} />
+            <Route path="customers" element={<Customers />} />
+            <Route path="customers/:id" element={<CustomerDetail />} />
             <Route path="reports" element={<Reports />} />
             <Route path="reports/profit-loss" element={<ProfitLoss />} />
             <Route path="settings" element={<Settings />} />

@@ -46,6 +46,7 @@ interface ItemPickState {
   lots: LotRecommendation[];
   picked_this_session: number;
   done: boolean;
+  has_prescription?: boolean;
 }
 
 type ScanScenario =
@@ -93,6 +94,18 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       setLoading(true);
       const states: ItemPickState[] = [];
 
+      let prescriptionItemIds = new Set<string>();
+      if (isLabPick) {
+        const { data: prescriptions } = await supabase
+          .from('order_prescriptions')
+          .select('order_item_id')
+          .eq('order_id', order.id)
+          .not('order_item_id', 'is', null);
+        if (prescriptions) {
+          prescriptionItemIds = new Set(prescriptions.map(p => p.order_item_id as string));
+        }
+      }
+
       for (const item of order.items) {
         if (item.sku === 'RX' || item.sku === 'FEE') continue;
 
@@ -108,6 +121,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
             lots: [],
             picked_this_session: 0,
             done: true,
+            has_prescription: prescriptionItemIds.has(item.id),
           });
           continue;
         }
@@ -129,6 +143,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
             lots: [],
             picked_this_session: 0,
             done: false,
+            has_prescription: prescriptionItemIds.has(item.id),
           });
           continue;
         }
@@ -177,6 +192,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
           lots: lotRecs,
           picked_this_session: 0,
           done: false,
+          has_prescription: prescriptionItemIds.has(item.id),
         });
       }
 
@@ -194,6 +210,10 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const pickedCount = itemStates.filter(s => s.done).length;
   const progressPct = totalItems > 0 ? (pickedCount / totalItems) * 100 : 0;
   const allDone = pickedCount === totalItems && totalItems > 0;
+
+  const rxItemsDone = isLabPick && itemStates.some(s => s.has_prescription) &&
+    itemStates.filter(s => s.has_prescription).every(s => s.done) &&
+    !allDone;
 
   const currentItem = itemStates[currentItemIndex];
   const currentLot = currentItem?.lots[0];
@@ -353,6 +373,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
         newStatus = isPartial ? 'send_to_lab' : 'in_lab';
         updateData.fulfillment_status = newStatus;
         if (!isPartial) {
+          updateData.cs_status = 'in_lab';
           await supabase.from('order_prescriptions').update({
             lab_status: 'in_lab',
             lab_sent_date: new Date().toISOString(),
@@ -456,8 +477,11 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <div className={`text-sm font-medium truncate ${state.done ? 'text-green-800' : 'text-gray-900'}`}>
-                          {state.product_name}
+                        <div className={`text-sm font-medium truncate ${state.done ? 'text-green-800' : 'text-gray-900'} flex items-center gap-1.5`}>
+                          <span className="truncate">{state.product_name}</span>
+                          {isLabPick && state.has_prescription && (
+                            <span className="flex-shrink-0 text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full font-semibold">Rx</span>
+                          )}
                         </div>
                         <div className="text-xs text-gray-500">
                           Qty: {state.quantity - state.already_picked}
@@ -474,14 +498,16 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                 <div className="border border-green-200 bg-green-50 rounded-xl p-5 text-center">
                   <CheckCircle2 className="h-10 w-10 text-green-600 mx-auto mb-2" />
                   <div className="text-green-700 font-semibold text-base">All Items Picked!</div>
-                  <div className="text-green-600 text-sm mt-1">Press "Complete Pick" — then use the Pack button</div>
+                  <div className="text-green-600 text-sm mt-1">
+                    {isLabPick ? 'Press "Send to Lab" to complete the lab pick' : 'Press "Complete Pick" — then use the Pack button'}
+                  </div>
                   <Button
                     variant="primary"
                     className="mt-4 w-full bg-gray-900 hover:bg-gray-800 text-white h-12 text-base"
                     onClick={() => submitPicks(false)}
                     disabled={processing}
                   >
-                    {processing ? 'Processing...' : 'Complete Pick'}
+                    {processing ? 'Processing...' : (isLabPick ? 'Send to Lab' : 'Complete Pick')}
                   </Button>
                 </div>
               ) : scanScenario?.type === 'different_lot' ? (
@@ -540,8 +566,15 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
               ) : currentItem ? (
                 <div className="border border-blue-200 bg-blue-50 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 bg-blue-600 text-white">
-                    <div className="text-xs font-semibold uppercase tracking-wide opacity-80">
-                      Current Item ({currentItemIndex + 1}/{totalItems})
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide opacity-80">
+                        Current Item ({currentItemIndex + 1}/{totalItems})
+                      </div>
+                      {isLabPick && currentItem.has_prescription && (
+                        <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                          <FlaskConical className="h-3 w-3" /> Rx — Send to Lab
+                        </span>
+                      )}
                     </div>
                     <div className="text-base font-bold mt-0.5 leading-tight">{currentItem.product_name}</div>
                   </div>
@@ -672,6 +705,27 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                 </div>
               ) : null}
 
+              {rxItemsDone && !scanScenario && (
+                <div className="border border-teal-200 bg-teal-50 rounded-xl p-4 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <FlaskConical className="h-4 w-4 text-teal-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-sm font-semibold text-teal-800">Prescription Items Ready</div>
+                      <p className="text-xs text-teal-700 mt-0.5">
+                        All Rx items are picked. You can send these to the lab now and come back to pick the remaining items after the lab returns the order.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    className="w-full h-11 bg-teal-600 hover:bg-teal-700 text-white border-0 text-sm font-semibold"
+                    onClick={() => submitPicks(false)}
+                    disabled={processing}
+                  >
+                    {processing ? 'Processing...' : 'Rx Items Picked — Send to Lab'}
+                  </Button>
+                </div>
+              )}
+
               {!allDone && !scanScenario && pickedCount > 0 && (
                 <div className="flex gap-2 pt-1">
                   <Button
@@ -682,13 +736,15 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                   >
                     Cancel
                   </Button>
-                  <Button
-                    className="flex-1 h-12 bg-amber-500 hover:bg-amber-600 text-white border-0 text-sm"
-                    onClick={() => submitPicks(true)}
-                    disabled={processing}
-                  >
-                    {processing ? 'Saving...' : `Save Partial (${pickedCount}/${totalItems})`}
-                  </Button>
+                  {!rxItemsDone && (
+                    <Button
+                      className="flex-1 h-12 bg-amber-500 hover:bg-amber-600 text-white border-0 text-sm"
+                      onClick={() => submitPicks(true)}
+                      disabled={processing}
+                    >
+                      {processing ? 'Saving...' : `Save Partial (${pickedCount}/${totalItems})`}
+                    </Button>
+                  )}
                 </div>
               )}
 

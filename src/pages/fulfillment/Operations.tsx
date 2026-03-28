@@ -422,6 +422,23 @@ export default function Operations() {
     fetchOrders();
   }, [fetchOrders]);
 
+  const handleMarkAsInLab = async (orderId: string) => {
+    await supabase.from('orders').update({
+      fulfillment_status: 'in_lab',
+      cs_status: 'in_lab',
+      updated_at: new Date().toISOString(),
+    }).eq('id', orderId);
+    await supabase.from('order_prescriptions').update({
+      lab_status: 'in_lab',
+      lab_sent_date: new Date().toISOString(),
+    }).eq('order_id', orderId);
+    await supabase.from('order_activity_log').insert({
+      order_id: orderId,
+      action: 'Marked as In Lab — prescription items sent to lab',
+    });
+    fetchOrders();
+  };
+
   const isPartiallyPicked = (order: Order) => {
     if (!order.items || order.items.length === 0) return false;
     const totalPicked = order.items.reduce((s, i) => s + i.picked_quantity, 0);
@@ -657,6 +674,7 @@ export default function Operations() {
                 displayId={displayId}
                 onPrintLabInvoice={(order) => { setSelectedOrder(order); setShowLabInvoice(true); }}
                 onPickForLab={(order) => setLabPickOrder(order)}
+                onMarkAsInLab={handleMarkAsInLab}
                 onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
               />
             )}
@@ -1201,12 +1219,14 @@ function SendToLabTable({
   displayId,
   onPrintLabInvoice,
   onPickForLab,
+  onMarkAsInLab,
   onNavigate,
 }: {
   orders: Order[];
   displayId: (o: Order) => string;
   onPrintLabInvoice: (o: Order) => void;
   onPickForLab: (o: Order) => void;
+  onMarkAsInLab: (id: string) => void;
   onNavigate: (id: string) => void;
 }) {
   return (
@@ -1232,9 +1252,14 @@ function SendToLabTable({
                 <FileText className="h-3.5 w-3.5 mr-1.5" /> Lab Invoice
               </Button>
               {order.fulfillment_status !== 'in_lab' && (
-                <Button size="sm" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white border-0 py-2.5 h-auto" onClick={() => onPickForLab(order)}>
-                  <Send className="h-3.5 w-3.5 mr-1.5" /> Pick for Lab
-                </Button>
+                <>
+                  <Button size="sm" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white border-0 py-2.5 h-auto" onClick={() => onPickForLab(order)}>
+                    <Send className="h-3.5 w-3.5 mr-1.5" /> Pick for Lab
+                  </Button>
+                  <Button size="sm" className="flex-1 bg-slate-600 hover:bg-slate-700 text-white border-0 py-2.5 h-auto" onClick={() => onMarkAsInLab(order.id)}>
+                    <FlaskConical className="h-3.5 w-3.5 mr-1.5" /> Mark In Lab
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -1277,9 +1302,14 @@ function SendToLabTable({
                       <FileText className="h-3.5 w-3.5 mr-1" /> Lab Invoice
                     </Button>
                     {order.fulfillment_status !== 'in_lab' && (
-                      <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white border-0 px-3" onClick={() => onPickForLab(order)}>
-                        <Send className="h-3.5 w-3.5 mr-1" /> Pick for Lab
-                      </Button>
+                      <>
+                        <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white border-0 px-3" onClick={() => onPickForLab(order)}>
+                          <Send className="h-3.5 w-3.5 mr-1" /> Pick for Lab
+                        </Button>
+                        <Button size="sm" className="bg-slate-600 hover:bg-slate-700 text-white border-0 px-3" onClick={() => onMarkAsInLab(order.id)}>
+                          <FlaskConical className="h-3.5 w-3.5 mr-1" /> Mark In Lab
+                        </Button>
+                      </>
                     )}
                   </div>
                 </td>

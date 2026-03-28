@@ -202,9 +202,16 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       };
 
       if (selectedAction === 'not_printed') {
-        updates.fulfillment_status = 'not_printed';
-        await callWooProxy('update-order-status', { status: 'processing' });
-        await supabase.rpc('reserve_stock_for_order', { p_order_id: order.id });
+        if (order.cs_status === 'in_lab') {
+          updates.fulfillment_status = 'printed';
+          await supabase.from('order_prescriptions').update({
+            lab_return_date: new Date().toISOString(),
+          }).eq('order_id', order.id).eq('lab_status', 'in_lab');
+        } else {
+          updates.fulfillment_status = 'not_printed';
+          await callWooProxy('update-order-status', { status: 'processing' });
+          await supabase.rpc('reserve_stock_for_order', { p_order_id: order.id });
+        }
       }
 
       if (selectedAction === 'send_to_lab') {
@@ -505,6 +512,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const getButtonLabel = () => {
     if (saving) return 'Applying...';
     switch (selectedAction) {
+      case 'not_printed':       return order.cs_status === 'in_lab' ? 'Confirm Order (Lab Returned)' : 'Apply: Confirm Order';
       case 'exchange':          return 'Mark as Exchange';
       case 'cancel_after_dispatch': return 'Confirm CAD';
       case 'cancel_before_dispatch': return 'Confirm CBD';
@@ -693,6 +701,14 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
             <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
               <p className="text-xs text-rose-700">
                 The order will be listed in Returns with <strong>Reverse Pick</strong> status for the warehouse team to prioritize retrieval.
+              </p>
+            </div>
+          )}
+
+          {selectedAction === 'not_printed' && order.cs_status === 'in_lab' && (
+            <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg">
+              <p className="text-xs text-teal-700">
+                The order will move to the <strong>Printed</strong> tab in Operations. The warehouse will continue picking the remaining items and then pack and ship as normal.
               </p>
             </div>
           )}

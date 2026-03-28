@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, AlertTriangle, Lock, Package } from 'lucide-react';
+import { ChevronDown, AlertTriangle, Lock, Package, FlaskConical } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail, OrderItem } from './types';
 import { logActivity } from './service';
@@ -145,15 +145,15 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     availableActions = [...availableActions, 'send_to_lab'];
   }
 
-  if (order.cs_status === 'in_lab') {
-    if (hasPrescription) {
-      availableActions = ['not_printed', 'cancel_before_dispatch', 'refund'];
-    } else {
-      availableActions = ['not_printed', 'cancel_before_dispatch', 'refund'];
-    }
+  const isLabReturning =
+    order.cs_status === 'in_lab' ||
+    (order.cs_status === 'send_to_lab' && order.fulfillment_status === 'in_lab');
+
+  if (isLabReturning) {
+    availableActions = ['not_printed', 'cancel_before_dispatch', 'refund'];
   }
 
-  if ((CS_STATUSES_WITH_LAB.includes(order.cs_status) || order.cs_status === 'send_to_lab') && hasPrescription) {
+  if ((CS_STATUSES_WITH_LAB.includes(order.cs_status) || order.cs_status === 'send_to_lab') && hasPrescription && !isLabReturning) {
     availableActions = availableActions.filter(a => a !== 'not_printed');
   }
 
@@ -202,7 +202,10 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       };
 
       if (selectedAction === 'not_printed') {
-        if (order.cs_status === 'in_lab') {
+        const labReturning =
+          order.cs_status === 'in_lab' ||
+          (order.cs_status === 'send_to_lab' && order.fulfillment_status === 'in_lab');
+        if (labReturning) {
           updates.fulfillment_status = 'printed';
           await supabase.from('order_prescriptions').update({
             lab_return_date: new Date().toISOString(),
@@ -512,7 +515,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const getButtonLabel = () => {
     if (saving) return 'Applying...';
     switch (selectedAction) {
-      case 'not_printed':       return order.cs_status === 'in_lab' ? 'Confirm Order (Lab Returned)' : 'Apply: Confirm Order';
+      case 'not_printed':       return isLabReturning ? 'Confirm Order (Lab Returned)' : 'Apply: Confirm Order';
       case 'exchange':          return 'Mark as Exchange';
       case 'cancel_after_dispatch': return 'Confirm CAD';
       case 'cancel_before_dispatch': return 'Confirm CBD';
@@ -562,13 +565,25 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         </div>
       )}
 
-      {showLabFlowNotice && (
+      {showLabFlowNotice && !isLabReturning && (
         <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-start gap-2.5">
           <AlertTriangle className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
           <div>
             <div className="text-xs font-semibold text-teal-800 mb-0.5">Prescription Order — Lab Required</div>
             <p className="text-xs text-teal-700">
               This order has prescription lenses. Use <strong>Send to Lab</strong> first. The order can only be confirmed after it returns from the lab (<strong>In Lab</strong> status).
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isLabReturning && (
+        <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-start gap-2.5">
+          <FlaskConical className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+          <div>
+            <div className="text-xs font-semibold text-teal-800 mb-0.5">Order is In Lab</div>
+            <p className="text-xs text-teal-700">
+              When the lab returns this order, use <strong>Confirm Order (Lab Returned)</strong> to move it to the Printed tab for the warehouse to finish picking and pack.
             </p>
           </div>
         </div>
@@ -705,7 +720,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
             </div>
           )}
 
-          {selectedAction === 'not_printed' && order.cs_status === 'in_lab' && (
+          {selectedAction === 'not_printed' && isLabReturning && (
             <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg">
               <p className="text-xs text-teal-700">
                 The order will move to the <strong>Printed</strong> tab in Operations. The warehouse will continue picking the remaining items and then pack and ship as normal.

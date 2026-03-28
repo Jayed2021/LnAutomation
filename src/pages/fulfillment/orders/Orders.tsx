@@ -106,7 +106,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'scheduled', label: 'Scheduled' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'lab_orders', label: 'Lab Orders' },
-  { key: 'shipped', label: 'Shipped' },
+  { key: 'shipped', label: 'Shipped / Delivered' },
   { key: 'cancelled', label: 'Cancelled' },
 ];
 
@@ -911,6 +911,19 @@ export default function Orders() {
             {!searchLoading && <span className="ml-1 font-medium">— {filtered.length} result{filtered.length !== 1 ? 's' : ''} found</span>}
           </div>
         )}
+
+        {activeTab === 'shipped' && !isSearchMode && (() => {
+          const partialCount = filtered.filter(o => o.courier_info?.courier_status === 'Partial Delivery').length;
+          if (partialCount === 0) return null;
+          return (
+            <div className="px-5 py-2.5 bg-orange-50 border-b border-orange-100 flex items-center gap-2 text-xs text-orange-800">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 text-orange-500" />
+              <span>
+                <span className="font-semibold">{partialCount} order{partialCount !== 1 ? 's' : ''}</span> with Partial Delivery courier status require manual CS status review
+              </span>
+            </div>
+          );
+        })()}
 
         {/* Bulk Action Bar */}
         {isAdmin && someSelected && (

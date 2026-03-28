@@ -7,7 +7,7 @@ import { Badge } from '../../components/ui/Badge';
 import {
   ArrowLeft, Eye, EyeOff, CheckCircle2, XCircle, RefreshCw,
   ToggleLeft, ToggleRight, Truck, AlertCircle, ChevronDown, ChevronUp,
-  Save, Copy, Check, Link
+  Save, Copy, Check, Link, Clock, Activity, Zap
 } from 'lucide-react';
 
 interface CourierConfig {
@@ -32,6 +32,24 @@ interface PathaoCredentials {
 interface SteadfastCredentials {
   api_key: string;
   secret_key: string;
+}
+
+interface SyncSettings {
+  enabled: boolean;
+  intervalHours: number;
+  lookbackDays: number;
+  lastRun: string | null;
+  lastResult: SyncResult | null;
+}
+
+interface SyncResult {
+  checked: number;
+  updated: number;
+  unchanged: number;
+  partial_delivery_count: number;
+  errors: { consignment_id: string; error: string }[];
+  dry_run?: boolean;
+  timestamp?: string;
 }
 
 const PATHAO_URLS = {
@@ -69,6 +87,20 @@ export default function CourierSettings() {
 
   const [pathaoExpanded, setPathaoExpanded] = useState(true);
   const [steadfastExpanded, setSteadfastExpanded] = useState(true);
+  const [syncExpanded, setSyncExpanded] = useState(true);
+
+  const [syncSettings, setSyncSettings] = useState<SyncSettings>({
+    enabled: true,
+    intervalHours: 1,
+    lookbackDays: 14,
+    lastRun: null,
+    lastResult: null,
+  });
+  const [savingSync, setSavingSync] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncRunResult, setSyncRunResult] = useState<SyncResult | null>(null);
+  const [eligibleCount, setEligibleCount] = useState<number | null>(null);
 
   const [savingPathao, setSavingPathao] = useState(false);
   const [savingSteadfast, setSavingSteadfast] = useState(false);
@@ -105,14 +137,24 @@ export default function CourierSettings() {
   const loadConfigs = async () => {
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('courier_configs')
-        .select('*')
-        .in('courier_name', ['pathao', 'steadfast']);
+      const [{ data: courierData }, { data: settingsData }, { count: eligible }] = await Promise.all([
+        supabase.from('courier_configs').select('*').in('courier_name', ['pathao', 'steadfast']),
+        supabase.from('app_settings').select('key, value').in('key', [
+          'pathao_sync_enabled', 'pathao_sync_interval_hours',
+          'pathao_sync_lookback_days', 'pathao_sync_last_run', 'pathao_sync_last_result',
+        ]),
+        supabase
+          .from('order_courier_info')
+          .select('id', { count: 'exact', head: true })
+          .eq('courier_company', 'Pathao')
+          .not('consignment_id', 'is', null)
+          .or(`courier_status.is.null,courier_status.not.in.(Delivered,Return,Delivery Failed,Paid Return,Exchange,Partial Delivery)`)
+          .gte('created_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()),
+      ]);
 
-      if (data) {
-        const pathao = data.find(c => c.courier_name === 'pathao') || null;
-        const steadfast = data.find(c => c.courier_name === 'steadfast') || null;
+      if (courierData) {
+        const pathao = courierData.find(c => c.courier_name === 'pathao') || null;
+        const steadfast = courierData.find(c => c.courier_name === 'steadfast') || null;
 
         setPathaoConfig(pathao);
         setSteadfastConfig(steadfast);
@@ -141,6 +183,20 @@ export default function CourierSettings() {
           }
         }
       }
+
+      if (settingsData) {
+        const sm: Record<string, unknown> = {};
+        for (const row of settingsData) sm[row.key] = row.value;
+        setSyncSettings({
+          enabled: sm['pathao_sync_enabled'] === true || sm['pathao_sync_enabled'] === 'true',
+          intervalHours: parseInt(String(sm['pathao_sync_interval_hours'] ?? '1')) || 1,
+          lookbackDays: parseInt(String(sm['pathao_sync_lookback_days'] ?? '14')) || 14,
+          lastRun: (sm['pathao_sync_last_run'] && sm['pathao_sync_last_run'] !== 'null') ? sm['pathao_sync_last_run'] as string : null,
+          lastResult: (sm['pathao_sync_last_result'] && sm['pathao_sync_last_result'] !== 'null') ? sm['pathao_sync_last_result'] as SyncResult : null,
+        });
+      }
+
+      setEligibleCount(eligible ?? 0);
     } finally {
       setLoading(false);
     }
@@ -212,7 +268,63 @@ export default function CourierSettings() {
     }
   };
 
+  const saveSync = async () => {
+    setSavingSync(true);
+    setSyncNotice(null);
+    try {
+      await Promise.all([
+        supabase.from('app_settings').update({ value: syncSettings.enabled }).eq('key', 'pathao_sync_enabled'),
+        supabase.from('app_settings').update({ value: syncSettings.intervalHours }).eq('key', 'pathao_sync_interval_hours'),
+        supabase.from('app_settings').update({ value: syncSettings.lookbackDays }).eq('key', 'pathao_sync_lookback_days'),
+      ]);
+      setSyncNotice({ ok: true, message: 'Sync settings saved' });
+    } catch (err: unknown) {
+      setSyncNotice({ ok: false, message: (err as Error)?.message || 'Failed to save' });
+    } finally {
+      setSavingSync(false);
+    }
+  };
+
+  const runSync = async () => {
+    setSyncing(true);
+    setSyncRunResult(null);
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+      const res = await fetch(`${supabaseUrl}/functions/v1/pathao-sync-status`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.skipped) {
+        setSyncNotice({ ok: false, message: data.reason ?? 'Sync skipped' });
+      } else if (data.error) {
+        setSyncNotice({ ok: false, message: data.error });
+      } else {
+        setSyncRunResult(data as SyncResult);
+        setSyncNotice({ ok: true, message: `Sync complete — ${data.updated} updated` });
+        loadConfigs();
+      }
+    } catch (err: unknown) {
+      setSyncNotice({ ok: false, message: (err as Error)?.message || 'Sync failed' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const formatTs = (ts: string) => new Date(ts).toLocaleString();
+
+  const getSyncStatusIndicator = () => {
+    if (!syncSettings.lastRun) return { color: 'bg-gray-300', label: 'Never run' };
+    const hoursSince = (Date.now() - new Date(syncSettings.lastRun).getTime()) / (1000 * 60 * 60);
+    if (hoursSince < syncSettings.intervalHours * 1.5) return { color: 'bg-emerald-500', label: 'On schedule' };
+    if (hoursSince < syncSettings.intervalHours * 3) return { color: 'bg-amber-500', label: 'Slightly overdue' };
+    return { color: 'bg-red-500', label: 'Overdue' };
+  };
 
   if (loading) return (
     <div className="flex items-center justify-center py-20">
@@ -576,6 +688,189 @@ export default function CourierSettings() {
               </div>
             )}
           </Card>
+          {/* Pathao Status Sync */}
+          <Card>
+            <div
+              className="p-5 flex items-center justify-between cursor-pointer select-none"
+              onClick={() => setSyncExpanded(v => !v)}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-teal-50 flex items-center justify-center">
+                  <Activity className="w-4 h-4 text-teal-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Pathao Status Sync</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Automatically pull delivery status via REST API</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {syncSettings.enabled
+                  ? <Badge variant="emerald">Auto Sync On</Badge>
+                  : <Badge variant="gray">Auto Sync Off</Badge>}
+                {syncExpanded
+                  ? <ChevronUp className="w-4 h-4 text-gray-400" />
+                  : <ChevronDown className="w-4 h-4 text-gray-400" />}
+              </div>
+            </div>
+
+            {syncExpanded && (
+              <div className="border-t border-gray-100">
+                <div className="p-5 space-y-5">
+
+                  {/* Status strip */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-center">
+                      <div className="text-lg font-bold text-gray-900">{eligibleCount ?? '—'}</div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">Orders to track</div>
+                    </div>
+                    <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-center">
+                      <div className="text-lg font-bold text-gray-900">
+                        {syncSettings.lastRun ? `${syncSettings.intervalHours}h` : '—'}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">Sync interval</div>
+                    </div>
+                    <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <div className={`w-2 h-2 rounded-full ${getSyncStatusIndicator().color}`} />
+                        <span className="text-xs font-medium text-gray-700">{getSyncStatusIndicator().label}</span>
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1">
+                        {syncSettings.lastRun ? formatTs(syncSettings.lastRun) : 'Never run'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Last result */}
+                  {syncSettings.lastResult && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3.5 space-y-2">
+                      <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-gray-400" />
+                        Last sync result
+                        {syncSettings.lastRun && <span className="font-normal text-gray-400">— {formatTs(syncSettings.lastRun)}</span>}
+                      </p>
+                      <div className="flex items-center gap-4 text-xs">
+                        <span className="text-gray-600"><span className="font-semibold text-gray-900">{syncSettings.lastResult.checked}</span> checked</span>
+                        <span className="text-emerald-700"><span className="font-semibold">{syncSettings.lastResult.updated}</span> updated</span>
+                        <span className="text-gray-500"><span className="font-semibold">{syncSettings.lastResult.unchanged}</span> unchanged</span>
+                        {syncSettings.lastResult.partial_delivery_count > 0 && (
+                          <span className="text-orange-600 font-medium flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            {syncSettings.lastResult.partial_delivery_count} partial delivery
+                          </span>
+                        )}
+                        {syncSettings.lastResult.errors.length > 0 && (
+                          <span className="text-red-600"><span className="font-semibold">{syncSettings.lastResult.errors.length}</span> errors</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Live result from manual sync */}
+                  {syncRunResult && (
+                    <div className="rounded-lg border border-teal-200 bg-teal-50 p-3.5 space-y-2">
+                      <p className="text-xs font-semibold text-teal-800 flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5" />
+                        Manual sync result
+                      </p>
+                      <div className="flex items-center gap-4 text-xs">
+                        <span className="text-teal-700"><span className="font-semibold text-teal-900">{syncRunResult.checked}</span> checked</span>
+                        <span className="text-emerald-700"><span className="font-semibold">{syncRunResult.updated}</span> updated</span>
+                        <span className="text-gray-500"><span className="font-semibold">{syncRunResult.unchanged}</span> unchanged</span>
+                        {syncRunResult.partial_delivery_count > 0 && (
+                          <span className="text-orange-600 font-medium flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            {syncRunResult.partial_delivery_count} partial delivery
+                          </span>
+                        )}
+                        {syncRunResult.errors.length > 0 && (
+                          <span className="text-red-600"><span className="font-semibold">{syncRunResult.errors.length}</span> errors</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Auto sync toggle */}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setSyncSettings(s => ({ ...s, enabled: !s.enabled }))}
+                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      {syncSettings.enabled
+                        ? <ToggleRight className="w-8 h-8 text-emerald-500" />
+                        : <ToggleLeft className="w-8 h-8" />}
+                    </button>
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Enable automatic sync</p>
+                      <p className="text-xs text-gray-400">Runs every hour via scheduled job — skips if interval not reached</p>
+                    </div>
+                  </div>
+
+                  {/* Interval + lookback */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1.5">Sync Interval</label>
+                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+                        {[1, 2, 4, 6, 12, 24].map(h => (
+                          <button
+                            key={h}
+                            onClick={() => setSyncSettings(s => ({ ...s, intervalHours: h }))}
+                            className={`flex-1 py-2 transition-colors ${syncSettings.intervalHours === h ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                          >
+                            {h}h
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1">Minimum 1 hour</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1.5">Lookback Window</label>
+                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+                        {[7, 14, 21, 30].map(d => (
+                          <button
+                            key={d}
+                            onClick={() => setSyncSettings(s => ({ ...s, lookbackDays: d }))}
+                            className={`flex-1 py-2 transition-colors ${syncSettings.lookbackDays === d ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                          >
+                            {d}d
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1">Only sync orders booked within this window</p>
+                    </div>
+                  </div>
+
+                  {syncNotice && (
+                    <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${syncNotice.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                      {syncNotice.ok ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <XCircle className="w-4 h-4 flex-shrink-0" />}
+                      {syncNotice.message}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-1 gap-3 flex-wrap">
+                    <Button
+                      onClick={runSync}
+                      disabled={syncing}
+                      className="flex items-center gap-2 bg-teal-600 text-white hover:bg-teal-700"
+                    >
+                      {syncing
+                        ? <><RefreshCw className="w-4 h-4 animate-spin" /> Syncing...</>
+                        : <><RefreshCw className="w-4 h-4" /> Sync Now</>}
+                    </Button>
+                    <Button
+                      onClick={saveSync}
+                      disabled={savingSync}
+                      className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-700 ml-auto"
+                    >
+                      {savingSync
+                        ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</>
+                        : <><Save className="w-4 h-4" /> Save Sync Settings</>}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </Card>
+
         </div>
 
         {/* Sidebar */}

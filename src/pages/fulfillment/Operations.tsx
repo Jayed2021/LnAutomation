@@ -383,9 +383,11 @@ export default function Operations() {
       fulfillment_status: null,
       updated_at: new Date().toISOString(),
     }).eq('id', orderId);
+    await supabase.from('order_picks').delete().eq('order_id', orderId);
+    await supabase.from('order_items').update({ picked_quantity: 0 }).eq('order_id', orderId);
     await supabase.from('order_activity_log').insert({
       order_id: orderId,
-      action: `Returned to CS queue as ${newStatus === 'new_called' ? 'New & Called' : 'New Not Called'} (Mark as Processing)`,
+      action: `Returned to CS queue as ${newStatus === 'new_called' ? 'New & Called' : 'New Not Called'} (Mark as Processing) — pick data reset`,
     });
     fetchOrders();
   };

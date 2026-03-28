@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Camera, ScanLine } from 'lucide-react';
-import { BrowserMultiFormatReader } from '@zxing/browser';
-import { NotFoundException } from '@zxing/library';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -16,7 +14,9 @@ export function BarcodeScannerModal({ onScan, onClose }: BarcodeScannerModalProp
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     startScanner();
@@ -27,50 +27,55 @@ export function BarcodeScannerModal({ onScan, onClose }: BarcodeScannerModalProp
 
   const startScanner = async () => {
     try {
-      const reader = new BrowserMultiFormatReader();
-      readerRef.current = reader;
-
-      const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-      if (devices.length === 0) {
-        setCameraError('No camera found. Please use manual input or USB scanner.');
-        return;
-      }
-
-      const backCamera = devices.find(d =>
-        /back|rear|environment/i.test(d.label)
-      );
-      const deviceId = backCamera ? backCamera.deviceId : devices[devices.length - 1].deviceId;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+      });
+      streamRef.current = stream;
 
       if (!videoRef.current) return;
-
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
       setScanning(true);
 
-      await reader.decodeFromVideoDevice(deviceId, videoRef.current, (result, error) => {
-        if (result) {
-          const text = result.getText();
-          stopScanner();
-          onScan(text);
-          onClose();
-          return;
-        }
-        if (error && !(error instanceof NotFoundException)) {
-          console.error('Barcode decode error:', error);
-        }
-      });
-    } catch (error) {
-      console.error('Error starting scanner:', error);
-      setCameraError('Unable to access camera. Please use manual input or USB scanner.');
+      if ('BarcodeDetector' in window) {
+        // @ts-ignore
+        const detector = new window.BarcodeDetector({ formats: ['code_128', 'ean_13', 'ean_8', 'qr_code', 'code_39', 'upc_a', 'upc_e', 'itf', 'data_matrix'] });
+        const detect = async () => {
+          if (!videoRef.current || videoRef.current.readyState < 2) {
+            animFrameRef.current = requestAnimationFrame(detect);
+            return;
+          }
+          try {
+            const barcodes = await detector.detect(videoRef.current);
+            if (barcodes.length > 0) {
+              const value = barcodes[0].rawValue;
+              stopScanner();
+              onScan(value);
+              onClose();
+              return;
+            }
+          } catch {
+          }
+          animFrameRef.current = requestAnimationFrame(detect);
+        };
+        animFrameRef.current = requestAnimationFrame(detect);
+      } else {
+        setCameraError('Camera is active but barcode detection is not supported in this browser. Please use manual input or a USB scanner.');
+      }
+    } catch {
+      setCameraError('Unable to access camera. Please use manual input or a USB scanner.');
       setScanning(false);
     }
   };
 
   const stopScanner = () => {
-    if (readerRef.current) {
-      try {
-        readerRef.current.reset();
-      } catch {
-      }
-      readerRef.current = null;
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
     }
     setScanning(false);
   };
@@ -110,7 +115,10 @@ export function BarcodeScannerModal({ onScan, onClose }: BarcodeScannerModalProp
                 <video
                   ref={videoRef}
                   className="w-full h-full object-cover"
+                  muted
+                  playsInline
                 />
+                <canvas ref={canvasRef} className="hidden" />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="border-2 border-blue-500 w-64 h-32 rounded-lg relative">
                     <div className="absolute -top-1 -left-1 w-4 h-4 border-t-4 border-l-4 border-blue-500"></div>

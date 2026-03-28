@@ -204,6 +204,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       if (selectedAction === 'not_printed') {
         updates.fulfillment_status = 'not_printed';
         await callWooProxy('update-order-status', { status: 'processing' });
+        await supabase.rpc('reserve_stock_for_order', { p_order_id: order.id });
       }
 
       if (selectedAction === 'send_to_lab') {
@@ -214,6 +215,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       if (selectedAction === 'shipped') {
         updates.fulfillment_status = 'shipped';
         await callWooProxy('update-order-status', { status: 'completed' });
+        await supabase.rpc('fulfill_stock_reservation', { p_order_id: order.id });
       }
 
       if (selectedAction === 'mark_processing') {
@@ -224,6 +226,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         updates.cs_status = (count ?? 0) > 0 ? 'new_called' : 'new_not_called';
         updates.fulfillment_status = null;
         await callWooProxy('update-order-status', { status: 'processing' });
+        await supabase.rpc('release_stock_reservation', { p_order_id: order.id });
       }
 
       if (selectedAction === 'late_delivery') {
@@ -330,6 +333,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
             ? `Order cancelled in ERP. WooCommerce sync skipped — no WooCommerce order ID is linked to this order.`
             : `Order cancelled in ERP, but WooCommerce sync failed: ${wooResult.error}. Please update the status on WooCommerce manually.`;
         }
+        await supabase.rpc('release_stock_reservation', { p_order_id: order.id });
       }
 
       if (selectedAction === 'cancel_after_dispatch') {

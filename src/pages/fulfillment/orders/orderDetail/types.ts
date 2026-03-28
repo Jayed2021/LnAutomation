@@ -37,6 +37,7 @@ export interface OrderDetail {
   cancellation_reason: string | null;
   partial_delivery_notes: string | null;
   notes: string | null;
+  stock_shortage: boolean;
   coupon_lines: CouponLine[] | null;
   fee_lines: FeeLine[] | null;
   customer_note: string | null;

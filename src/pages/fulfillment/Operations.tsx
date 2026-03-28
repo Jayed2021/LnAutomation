@@ -34,6 +34,7 @@ interface Order {
   total_amount: number;
   packed_at: string | null;
   shipped_at: string | null;
+  stock_shortage: boolean;
   has_prescription: boolean;
   customer: {
     full_name: string;
@@ -148,6 +149,7 @@ export default function Operations() {
           total_amount,
           packed_at,
           shipped_at,
+          stock_shortage,
           customer:customers(full_name, phone_primary, address_line1, city, district),
           items:order_items(id, sku, product_name, quantity, picked_quantity, unit_price),
           prescriptions:order_prescriptions(id),
@@ -295,6 +297,7 @@ export default function Operations() {
     cancellation_reason: null,
     partial_delivery_notes: null,
     notes: null,
+    stock_shortage: order.stock_shortage ?? false,
     coupon_lines: null,
     fee_lines: null,
     customer_note: null,
@@ -385,6 +388,7 @@ export default function Operations() {
     }).eq('id', orderId);
     await supabase.from('order_picks').delete().eq('order_id', orderId);
     await supabase.from('order_items').update({ picked_quantity: 0 }).eq('order_id', orderId);
+    await supabase.rpc('release_stock_reservation', { p_order_id: orderId });
     await supabase.from('order_activity_log').insert({
       order_id: orderId,
       action: `Returned to CS queue as ${newStatus === 'new_called' ? 'New & Called' : 'New Not Called'} (Mark as Processing) — pick data reset`,
@@ -403,34 +407,7 @@ export default function Operations() {
       .eq('id', orderId);
     if (error) { console.error(error); return; }
 
-    const { data: picks } = await supabase
-      .from('order_picks')
-      .select('lot_id, quantity')
-      .eq('order_id', orderId);
-
-    if (picks) {
-      for (const pick of picks) {
-        const { data: lot } = await supabase
-          .from('inventory_lots')
-          .select('remaining_quantity, product_id')
-          .eq('id', pick.lot_id)
-          .maybeSingle();
-        if (lot) {
-          await supabase
-            .from('inventory_lots')
-            .update({ remaining_quantity: lot.remaining_quantity - pick.quantity })
-            .eq('id', pick.lot_id);
-          await supabase.from('stock_movements').insert({
-            movement_type: 'sale',
-            product_id: lot.product_id,
-            lot_id: pick.lot_id,
-            quantity: -pick.quantity,
-            reference_type: 'order',
-            reference_id: orderId,
-          });
-        }
-      }
-    }
+    await supabase.rpc('fulfill_stock_reservation', { p_order_id: orderId });
 
     await supabase.from('order_activity_log').insert({
       order_id: orderId,
@@ -812,8 +789,15 @@ function NotPrintedTable({
         {orders.map(order => (
           <div
             key={order.id}
-            className="p-4 hover:bg-orange-50 transition-colors"
+            className={`p-4 transition-colors ${order.stock_shortage ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-orange-50'}`}
           >
+            {order.stock_shortage && (
+              <div className="flex items-center gap-1.5 text-xs text-red-700 bg-red-100 border border-red-200 rounded-lg px-2.5 py-1.5 mb-2">
+                <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                <span className="font-semibold">Stock Shortage</span>
+                <span className="text-red-500">— insufficient available inventory to fill this order</span>
+              </div>
+            )}
             <button className="w-full text-left" onClick={() => onNavigate(order.id)}>
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-2">
@@ -880,13 +864,20 @@ function NotPrintedTable({
               <tr
                 key={order.id}
                 onClick={() => onNavigate(order.id)}
-                className={`border-b border-gray-50 hover:bg-orange-50 transition-colors cursor-pointer ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+                className={`border-b border-gray-50 transition-colors cursor-pointer ${order.stock_shortage ? 'bg-red-50 hover:bg-red-100' : `hover:bg-orange-50 ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}`}
               >
                 <td className="px-5 py-3">
-                  <span className="font-semibold text-blue-600">{displayId(order)}</span>
-                  {order.has_prescription && (
-                    <span className="ml-1.5 text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full">Rx</span>
-                  )}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-semibold text-blue-600">{displayId(order)}</span>
+                    {order.has_prescription && (
+                      <span className="text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full">Rx</span>
+                    )}
+                    {order.stock_shortage && (
+                      <span className="flex items-center gap-1 text-xs bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded-full font-semibold">
+                        <AlertTriangle className="h-3 w-3" /> Shortage
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-5 py-3">
                   <div className="font-medium text-gray-900">{order.customer?.full_name}</div>

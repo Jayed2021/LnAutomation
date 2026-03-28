@@ -140,11 +140,11 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
             lot_number,
             barcode,
             remaining_quantity,
+            reserved_quantity,
             received_date,
             location:warehouse_locations(code, name)
           `)
           .eq('product_id', product.id)
-          .gt('remaining_quantity', 0)
           .order('received_date', { ascending: true });
 
         let remaining = remainingToPick;
@@ -152,13 +152,15 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
 
         for (const lot of lots || []) {
           if (remaining <= 0) break;
-          const pickQty = Math.min(remaining, lot.remaining_quantity);
+          const availableQty = lot.remaining_quantity - (lot.reserved_quantity ?? 0);
+          if (availableQty <= 0) continue;
+          const pickQty = Math.min(remaining, availableQty);
           lotRecs.push({
             lot_id: lot.id,
             lot_number: lot.lot_number,
             barcode: lot.barcode || lot.lot_number,
-            location_code: lot.location?.code || 'N/A',
-            available_quantity: lot.remaining_quantity,
+            location_code: (lot.location as any)?.code || 'N/A',
+            available_quantity: availableQty,
             received_date: lot.received_date,
             recommended_quantity: pickQty,
           });
@@ -305,7 +307,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
             quantity: qty,
           });
 
-          if (qty >= lot.available_quantity) {
+          if (qty >= lot.available_quantity && lot.available_quantity > 0) {
             const { data: lotData } = await supabase
               .from('inventory_lots')
               .select('id, product_id, location_id')

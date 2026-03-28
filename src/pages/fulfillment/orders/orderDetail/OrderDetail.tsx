@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Trash2, AlertTriangle, X, Lock } from 'lucide-react';
+import { Trash2, AlertTriangle, X, Lock, PackageX } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { useAuth } from '../../../../contexts/AuthContext';
 import {
@@ -214,6 +214,18 @@ export default function OrderDetail() {
         <div className="flex items-center gap-2.5 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
           <Lock className="w-4 h-4 shrink-0 text-amber-600" />
           <span><span className="font-semibold">{activeLock.user_name}</span> is currently viewing this order.</span>
+        </div>
+      )}
+      {order.stock_shortage && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm">
+          <PackageX className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+          <div>
+            <div className="font-semibold text-red-800 mb-0.5">Stock Shortage</div>
+            <p className="text-red-700 text-xs">
+              Not enough available inventory to fulfil this order at the time of confirmation.
+              Check inventory levels and receive more stock before picking.
+            </p>
+          </div>
         </div>
       )}
       <OrderHeader

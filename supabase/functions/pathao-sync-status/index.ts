@@ -209,6 +209,7 @@ Deno.serve(async (req: Request) => {
     let unchanged = 0;
     let partialDeliveryCount = 0;
     const errors: { consignment_id: string; error: string }[] = [];
+    const statuses: Record<string, string> = {};
     const now = new Date().toISOString();
 
     for (const row of eligible) {
@@ -222,6 +223,8 @@ Deno.serve(async (req: Request) => {
         errors.push({ consignment_id: row.consignment_id!, error: fetchErr ?? "No status returned" });
         continue;
       }
+
+      statuses[row.consignment_id!] = order_status;
 
       if (order_status === row.courier_status) {
         unchanged++;
@@ -284,6 +287,7 @@ Deno.serve(async (req: Request) => {
       unchanged,
       partial_delivery_count: partialDeliveryCount,
       errors,
+      statuses,
       dry_run: dryRun,
       timestamp: now,
     };

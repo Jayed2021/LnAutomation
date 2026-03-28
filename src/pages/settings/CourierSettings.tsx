@@ -7,7 +7,7 @@ import { Badge } from '../../components/ui/Badge';
 import {
   ArrowLeft, Eye, EyeOff, CheckCircle2, XCircle, RefreshCw,
   ToggleLeft, ToggleRight, Truck, AlertCircle, ChevronDown, ChevronUp,
-  Save, Copy, Check, Link, Clock, Activity, Zap
+  Save, Copy, Check, Link, Clock, Activity, Zap, FlaskConical, Search
 } from 'lucide-react';
 
 interface CourierConfig {
@@ -48,6 +48,7 @@ interface SyncResult {
   unchanged: number;
   partial_delivery_count: number;
   errors: { consignment_id: string; error: string }[];
+  statuses?: Record<string, string>;
   dry_run?: boolean;
   timestamp?: string;
 }
@@ -101,6 +102,15 @@ export default function CourierSettings() {
   const [syncing, setSyncing] = useState(false);
   const [syncRunResult, setSyncRunResult] = useState<SyncResult | null>(null);
   const [eligibleCount, setEligibleCount] = useState<number | null>(null);
+
+  const [showLastErrors, setShowLastErrors] = useState(false);
+  const [showManualErrors, setShowManualErrors] = useState(false);
+
+  const [testConsignmentId, setTestConsignmentId] = useState('');
+  const [testOrderId, setTestOrderId] = useState('');
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState<{ raw: SyncResult; consignment_id: string } | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
 
   const [savingPathao, setSavingPathao] = useState(false);
   const [savingSteadfast, setSavingSteadfast] = useState(false);
@@ -313,6 +323,38 @@ export default function CourierSettings() {
       setSyncNotice({ ok: false, message: (err as Error)?.message || 'Sync failed' });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const runTestSync = async () => {
+    if (!testConsignmentId.trim()) return;
+    setTestRunning(true);
+    setTestResult(null);
+    setTestError(null);
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+      const params = new URLSearchParams({ consignment_ids: testConsignmentId.trim() });
+      const res = await fetch(`${supabaseUrl}/functions/v1/pathao-sync-status?${params}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setTestError(data.error);
+      } else if (data.skipped) {
+        setTestError(data.reason ?? 'Sync skipped');
+      } else {
+        setTestResult({ raw: data as SyncResult, consignment_id: testConsignmentId.trim() });
+      }
+    } catch (err: unknown) {
+      setTestError((err as Error)?.message || 'Request failed');
+    } finally {
+      setTestRunning(false);
     }
   };
 
@@ -748,7 +790,7 @@ export default function CourierSettings() {
                         Last sync result
                         {syncSettings.lastRun && <span className="font-normal text-gray-400">— {formatTs(syncSettings.lastRun)}</span>}
                       </p>
-                      <div className="flex items-center gap-4 text-xs">
+                      <div className="flex items-center gap-4 text-xs flex-wrap">
                         <span className="text-gray-600"><span className="font-semibold text-gray-900">{syncSettings.lastResult.checked}</span> checked</span>
                         <span className="text-emerald-700"><span className="font-semibold">{syncSettings.lastResult.updated}</span> updated</span>
                         <span className="text-gray-500"><span className="font-semibold">{syncSettings.lastResult.unchanged}</span> unchanged</span>
@@ -759,9 +801,32 @@ export default function CourierSettings() {
                           </span>
                         )}
                         {syncSettings.lastResult.errors.length > 0 && (
-                          <span className="text-red-600"><span className="font-semibold">{syncSettings.lastResult.errors.length}</span> errors</span>
+                          <button
+                            onClick={() => setShowLastErrors(v => !v)}
+                            className="flex items-center gap-1 text-red-600 hover:text-red-700 transition-colors"
+                          >
+                            <span className="font-semibold">{syncSettings.lastResult.errors.length}</span> errors
+                            {showLastErrors
+                              ? <ChevronUp className="w-3 h-3" />
+                              : <ChevronDown className="w-3 h-3" />}
+                          </button>
                         )}
                       </div>
+                      {showLastErrors && syncSettings.lastResult.errors.length > 0 && (
+                        <div className="mt-2 border border-red-100 rounded-lg overflow-hidden">
+                          <div className="bg-red-50 px-3 py-1.5 border-b border-red-100">
+                            <span className="text-[11px] font-semibold text-red-700 uppercase tracking-wide">Error Details</span>
+                          </div>
+                          <div className="divide-y divide-red-50 max-h-48 overflow-y-auto">
+                            {syncSettings.lastResult.errors.map((e, i) => (
+                              <div key={i} className="flex items-start gap-3 px-3 py-2 bg-white hover:bg-red-50/40 transition-colors">
+                                <code className="text-xs font-mono text-gray-700 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">{e.consignment_id}</code>
+                                <span className="text-xs text-red-600 leading-relaxed">{e.error}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -772,7 +837,7 @@ export default function CourierSettings() {
                         <Zap className="w-3.5 h-3.5" />
                         Manual sync result
                       </p>
-                      <div className="flex items-center gap-4 text-xs">
+                      <div className="flex items-center gap-4 text-xs flex-wrap">
                         <span className="text-teal-700"><span className="font-semibold text-teal-900">{syncRunResult.checked}</span> checked</span>
                         <span className="text-emerald-700"><span className="font-semibold">{syncRunResult.updated}</span> updated</span>
                         <span className="text-gray-500"><span className="font-semibold">{syncRunResult.unchanged}</span> unchanged</span>
@@ -783,11 +848,150 @@ export default function CourierSettings() {
                           </span>
                         )}
                         {syncRunResult.errors.length > 0 && (
-                          <span className="text-red-600"><span className="font-semibold">{syncRunResult.errors.length}</span> errors</span>
+                          <button
+                            onClick={() => setShowManualErrors(v => !v)}
+                            className="flex items-center gap-1 text-red-600 hover:text-red-700 transition-colors"
+                          >
+                            <span className="font-semibold">{syncRunResult.errors.length}</span> errors
+                            {showManualErrors
+                              ? <ChevronUp className="w-3 h-3" />
+                              : <ChevronDown className="w-3 h-3" />}
+                          </button>
                         )}
                       </div>
+                      {showManualErrors && syncRunResult.errors.length > 0 && (
+                        <div className="mt-2 border border-red-100 rounded-lg overflow-hidden">
+                          <div className="bg-red-50 px-3 py-1.5 border-b border-red-100">
+                            <span className="text-[11px] font-semibold text-red-700 uppercase tracking-wide">Error Details</span>
+                          </div>
+                          <div className="divide-y divide-red-50 max-h-48 overflow-y-auto">
+                            {syncRunResult.errors.map((e, i) => (
+                              <div key={i} className="flex items-start gap-3 px-3 py-2 bg-white hover:bg-red-50/40 transition-colors">
+                                <code className="text-xs font-mono text-gray-700 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">{e.consignment_id}</code>
+                                <span className="text-xs text-red-600 leading-relaxed">{e.error}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
+
+                  {/* Test Single Order Sync */}
+                  <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <FlaskConical className="w-3.5 h-3.5 text-gray-500" />
+                      <span className="text-xs font-semibold text-gray-700">Test Single Order Sync</span>
+                    </div>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      Enter a tracking number to fetch its current status from Pathao. If the order exists in the database, it will be updated automatically.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-500 mb-1">Order ID <span className="font-normal text-gray-400">(optional)</span></label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-gray-400 focus:border-transparent placeholder-gray-300"
+                          placeholder="e.g. abc-123"
+                          value={testOrderId}
+                          onChange={e => setTestOrderId(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-500 mb-1">Tracking Number / Consignment ID</label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-gray-400 focus:border-transparent placeholder-gray-300"
+                          placeholder="e.g. P123456789"
+                          value={testConsignmentId}
+                          onChange={e => setTestConsignmentId(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') runTestSync(); }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        onClick={runTestSync}
+                        disabled={testRunning || !testConsignmentId.trim()}
+                        className="flex items-center gap-2 bg-gray-700 text-white hover:bg-gray-900 text-xs py-1.5"
+                      >
+                        {testRunning
+                          ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Fetching...</>
+                          : <><Search className="w-3.5 h-3.5" /> Fetch Status</>}
+                      </Button>
+                      {(testResult || testError) && (
+                        <button
+                          onClick={() => { setTestResult(null); setTestError(null); }}
+                          className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    {testError && (
+                      <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-100 text-xs text-red-700">
+                        <XCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                        {testError}
+                      </div>
+                    )}
+
+                    {testResult && (() => {
+                      const r = testResult.raw;
+                      const err = r.errors.find(e => e.consignment_id === testResult.consignment_id);
+                      const pathaoStatus = r.statuses?.[testResult.consignment_id];
+                      const updated = r.updated > 0;
+                      const unchanged = r.unchanged > 0;
+                      return (
+                        <div className={`rounded-lg border p-3.5 space-y-2.5 ${err ? 'border-red-200 bg-red-50' : updated ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200 bg-gray-50'}`}>
+                          <div className="flex items-center gap-2">
+                            {err
+                              ? <XCircle className="w-3.5 h-3.5 text-red-500" />
+                              : updated
+                                ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                : <Clock className="w-3.5 h-3.5 text-gray-400" />}
+                            <span className={`text-xs font-semibold ${err ? 'text-red-700' : updated ? 'text-emerald-700' : 'text-gray-600'}`}>
+                              {err ? 'Error fetching status' : updated ? 'Status updated in database' : 'Status unchanged'}
+                            </span>
+                          </div>
+                          {err ? (
+                            <p className="text-xs text-red-600">{err.error}</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-gray-500 w-28 shrink-0">Consignment ID</span>
+                                <code className="font-mono text-gray-800 bg-white border border-gray-200 px-2 py-0.5 rounded">{testResult.consignment_id}</code>
+                              </div>
+                              {testOrderId && (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <span className="text-gray-500 w-28 shrink-0">Order ID</span>
+                                  <code className="font-mono text-gray-800 bg-white border border-gray-200 px-2 py-0.5 rounded">{testOrderId}</code>
+                                </div>
+                              )}
+                              {pathaoStatus && (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <span className="text-gray-500 w-28 shrink-0">Pathao Status</span>
+                                  <span className="font-semibold text-gray-900 bg-white border border-gray-200 px-2 py-0.5 rounded">{pathaoStatus}</span>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-gray-500 w-28 shrink-0">DB Result</span>
+                                <span className={`font-medium ${updated ? 'text-emerald-700' : 'text-gray-500'}`}>
+                                  {updated ? 'Order updated' : unchanged ? 'Already up to date' : 'No matching order found in DB'}
+                                </span>
+                              </div>
+                              {r.timestamp && (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <span className="text-gray-500 w-28 shrink-0">Checked at</span>
+                                  <span className="text-gray-600">{formatTs(r.timestamp)}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
 
                   {/* Auto sync toggle */}
                   <div className="flex items-center gap-3">

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Building2, MapPin, Phone, Mail, Globe, Hash, ReceiptText, Upload, X, Save, Image as ImageIcon, Store, CheckCircle2 } from 'lucide-react';
+import { Building2, MapPin, Phone, Mail, Globe, Hash, ReceiptText, Upload, X, Save, Image as ImageIcon, Store, CheckCircle2, Truck } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface StoreProfileData {
@@ -19,6 +19,7 @@ interface StoreProfileData {
   tax_number: string;
   invoice_footer: string;
   business_type: string;
+  preferred_courier: string;
 }
 
 const EMPTY: Omit<StoreProfileData, 'id'> = {
@@ -37,7 +38,16 @@ const EMPTY: Omit<StoreProfileData, 'id'> = {
   tax_number: '',
   invoice_footer: '',
   business_type: 'eyewear',
+  preferred_courier: 'pathao',
 };
+
+const COURIER_OPTIONS = [
+  { value: 'pathao', label: 'Pathao' },
+  { value: 'steadfast', label: 'Steadfast' },
+  { value: 'redx', label: 'RedX' },
+  { value: 'sundarban', label: 'Sundarban' },
+  { value: 'office', label: 'Office Delivery' },
+];
 
 export default function StoreProfile() {
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -64,7 +74,7 @@ export default function StoreProfile() {
     }
   };
 
-  const set = (key: keyof typeof draft) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const set = (key: keyof typeof draft) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setDraft(d => ({ ...d, [key]: e.target.value }));
     setDirty(true);
   };
@@ -297,6 +307,30 @@ export default function StoreProfile() {
           )}
         </div>
         <p className="text-xs text-gray-400 mt-2 text-center">Save the form above to update this preview</p>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
+          <Truck className="w-4 h-4 text-gray-500" />
+          <h2 className="font-semibold text-gray-900">Order Defaults</h2>
+        </div>
+        <div className="max-w-xs">
+          <label className={labelCls}>
+            <span className="flex items-center gap-1"><Truck className="w-3 h-3" /> Preferred Courier Service</span>
+          </label>
+          <select
+            value={draft.preferred_courier}
+            onChange={set('preferred_courier')}
+            className={inputCls}
+          >
+            {COURIER_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
+            Automatically assigned to every new order imported from WooCommerce. Can be changed per-order after import.
+          </p>
+        </div>
       </div>
 
       <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl p-4">

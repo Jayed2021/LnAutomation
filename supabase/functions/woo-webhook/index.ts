@@ -324,6 +324,19 @@ Deno.serve(async (req: Request) => {
       await supabase.from("orders").update({ has_prescription: true }).eq("id", orderId);
     }
 
+    const { data: storeProfile } = await supabase
+      .from("store_profile")
+      .select("preferred_courier")
+      .limit(1)
+      .maybeSingle();
+
+    const preferredCourier = storeProfile?.preferred_courier || "pathao";
+
+    await supabase.from("order_courier_info").insert({
+      order_id: orderId,
+      courier_company: preferredCourier,
+    });
+
     await supabase.from("order_activity_log").insert({
       order_id: orderId,
       action: "Order created from WooCommerce webhook",

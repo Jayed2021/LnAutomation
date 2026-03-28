@@ -35,13 +35,6 @@ export async function applyBulkUpdate(
         updated_at: now,
       };
 
-      if (
-        (row.mappedCsStatus === 'shipped' || row.mappedCsStatus === 'delivered') &&
-        row.rawEcr
-      ) {
-        orderUpdate.shipped_at = orderUpdate.shipped_at ?? now;
-      }
-
       if (row.mappedCsStatus === 'late_delivery') {
         const futureDate = new Date();
         futureDate.setDate(futureDate.getDate() + 3);

@@ -65,7 +65,7 @@ export async function fetchOrderItems(orderId: string): Promise<OrderItem[]> {
 export async function fetchOrderCourierInfo(orderId: string): Promise<OrderCourierInfo | null> {
   const { data, error } = await supabase
     .from('order_courier_info')
-    .select('id, courier_company, tracking_number, courier_area, total_receivable, collected_amount, delivery_charge, cod_charge, settlement_source, consignment_id, courier_status, courier_status_updated_at, courier_api_response, courier_api_error')
+    .select('id, courier_company, tracking_number, courier_area, total_receivable, collected_amount, delivery_charge, cod_charge, settlement_source, consignment_id, courier_status, courier_status_updated_at, courier_api_response, courier_api_error, total_receivable_modified_after_ship, total_receivable_ship_note')
     .eq('order_id', orderId)
     .maybeSingle();
   if (error) throw error;

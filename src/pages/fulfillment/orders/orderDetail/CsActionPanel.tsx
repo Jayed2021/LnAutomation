@@ -276,6 +276,22 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         updates.fulfillment_status = null;
         await callWooProxy('update-order-status', { status: 'processing' });
         await supabase.rpc('release_stock_reservation', { p_order_id: order.id });
+        await supabase.from('order_courier_info').update({
+          tracking_number: null,
+          consignment_id: null,
+          courier_status: null,
+          courier_status_updated_at: null,
+          courier_api_response: null,
+          courier_api_error: null,
+          collected_amount: 0,
+          delivery_charge: 0,
+          cod_charge: 0,
+          total_receivable: order.total_amount,
+          settlement_source: null,
+          total_receivable_modified_after_ship: false,
+          total_receivable_ship_note: null,
+          updated_at: new Date().toISOString(),
+        }).eq('order_id', order.id);
       }
 
       if (selectedAction === 'late_delivery') {

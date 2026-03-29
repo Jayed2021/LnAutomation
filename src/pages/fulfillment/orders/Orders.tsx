@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search, Calendar, Users, TrendingUp, Package, Truck, Download, UploadCloud,
   ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
-  ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle, Lock, Info
+  ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle, Lock, Info,
+  RefreshCw
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -28,6 +29,21 @@ const DATE_RANGE_LABELS: Record<DateRange, string> = {
 const PAGE_SIZE = 50;
 
 const ALL_TIME_TABS: Tab[] = ['needs_action', 'scheduled', 'in_progress', 'lab_orders'];
+const THIS_MONTH_TABS: Tab[] = ['partial'];
+
+const GLOBAL_STATS_CACHE_KEY = 'orders_global_stats_cache';
+const GLOBAL_STATS_TTL_MS = 2 * 60 * 60 * 1000;
+
+const SCROLL_STATE_KEY = 'orders_scroll_state';
+const LAST_VIEWED_ORDER_KEY = 'orders_last_viewed_order_id';
+
+interface GlobalStats {
+  totalOrders: number;
+  totalValue: number;
+  shippedCount: number;
+  shippedValue: number;
+  lastFetched: number;
+}
 
 function getDateRange(range: DateRange): { start: Date | null; end: Date | null } {
   if (range === 'all_time' || range === 'custom') return { start: null, end: null };
@@ -98,26 +114,33 @@ function formatDateLabel(start: Date | null, end: Date | null): string {
   return `${fmt(start)} - ${fmt(end)}`;
 }
 
-type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'lab_orders' | 'shipped' | 'cancelled';
+function formatTimeAgo(ts: number): string {
+  const diffMs = Date.now() - ts;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  return `${diffHr}h ago`;
+}
+
+type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'lab_orders' | 'partial';
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'needs_action', label: 'Pending' },
   { key: 'all', label: 'All Orders' },
-  { key: 'needs_action', label: 'Needs Action' },
   { key: 'scheduled', label: 'Scheduled' },
   { key: 'in_progress', label: 'In Progress' },
-  { key: 'lab_orders', label: 'Lab Orders' },
-  { key: 'shipped', label: 'Shipped / Delivered' },
-  { key: 'cancelled', label: 'Cancelled' },
+  { key: 'lab_orders', label: 'Lab' },
+  { key: 'partial', label: 'Partial' },
 ];
 
 const TAB_STATUSES: Record<Tab, string[]> = {
   all: [],
   needs_action: ['new_not_called', 'new_called'],
   scheduled: ['late_delivery', 'awaiting_payment'],
-  in_progress: ['exchange', 'not_printed', 'printed', 'packed'],
+  in_progress: ['not_printed', 'printed', 'packed'],
   lab_orders: ['send_to_lab', 'in_lab'],
-  shipped: [],
-  cancelled: ['cancelled_cbd', 'cancelled_cad', 'refund', 'exchange_returnable'],
+  partial: ['partial_delivery'],
 };
 
 const BULK_STATUSES: CsStatus[] = [
@@ -281,7 +304,7 @@ function groupOrdersByPhone(orders: OrderListItem[]): CustomerGroup[] {
   return Array.from(map.values());
 }
 
-const VALID_TABS: Tab[] = ['all', 'needs_action', 'scheduled', 'in_progress', 'lab_orders', 'shipped', 'cancelled'];
+const VALID_TABS: Tab[] = ['all', 'needs_action', 'scheduled', 'in_progress', 'lab_orders', 'partial'];
 const VALID_DATE_RANGES: DateRange[] = ['today', 'yesterday', 'this_week', 'this_month', 'last_month', 'this_quarter', 'all_time', 'custom'];
 
 const ORDER_SELECT = `
@@ -316,6 +339,24 @@ function buildPageNumbers(currentPage: number, totalPages: number): (number | '.
   return pages;
 }
 
+function getCachedGlobalStats(): GlobalStats | null {
+  try {
+    const raw = localStorage.getItem(GLOBAL_STATS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed: GlobalStats = JSON.parse(raw);
+    if (Date.now() - parsed.lastFetched > GLOBAL_STATS_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedGlobalStats(stats: GlobalStats) {
+  try {
+    localStorage.setItem(GLOBAL_STATS_CACHE_KEY, JSON.stringify(stats));
+  } catch {}
+}
+
 export default function Orders() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -327,6 +368,12 @@ export default function Orders() {
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
+  const [globalStats, setGlobalStats] = useState<GlobalStats | null>(getCachedGlobalStats);
+  const [globalStatsLoading, setGlobalStatsLoading] = useState(false);
+
+  const highlightedOrderIdRef = useRef<string | null>(null);
+  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
+  const scrollRestoredRef = useRef(false);
 
   const paramTab = searchParams.get('tab') as Tab | null;
   const paramDateRange = searchParams.get('dateRange') as DateRange | null;
@@ -338,7 +385,11 @@ export default function Orders() {
   const paramCustomEnd = searchParams.get('customEnd') ?? toLocalDateInput(new Date());
 
   const activeTab: Tab = paramTab && VALID_TABS.includes(paramTab) ? paramTab : 'needs_action';
-  const dateRange: DateRange = paramDateRange && VALID_DATE_RANGES.includes(paramDateRange) ? paramDateRange : 'this_week';
+  const isAllTimeTab = ALL_TIME_TABS.includes(activeTab);
+  const isThisMonthTab = THIS_MONTH_TABS.includes(activeTab);
+
+  const defaultDateRange: DateRange = isAllTimeTab ? 'all_time' : isThisMonthTab ? 'this_month' : 'this_week';
+  const dateRange: DateRange = paramDateRange && VALID_DATE_RANGES.includes(paramDateRange) ? paramDateRange : defaultDateRange;
   const searchQuery = paramSearch;
   const statusFilter = paramStatus;
   const assignedToMe = paramAssigned;
@@ -346,7 +397,6 @@ export default function Orders() {
   const customStart = paramCustomStart;
   const customEnd = paramCustomEnd;
 
-  const isAllTimeTab = ALL_TIME_TABS.includes(activeTab);
   const isSearchMode = searchQuery.trim().length > 0;
 
   const [showDateDropdown, setShowDateDropdown] = useState(false);
@@ -355,6 +405,31 @@ export default function Orders() {
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const lastViewedId = localStorage.getItem(LAST_VIEWED_ORDER_KEY);
+    const savedScrollState = localStorage.getItem(SCROLL_STATE_KEY);
+
+    if (lastViewedId && savedScrollState && !scrollRestoredRef.current) {
+      scrollRestoredRef.current = true;
+      highlightedOrderIdRef.current = lastViewedId;
+      setHighlightedOrderId(lastViewedId);
+
+      const savedParams = new URLSearchParams(savedScrollState);
+      setSearchParams(savedParams, { replace: true });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!highlightedOrderId || !highlightedRowRef.current) return;
+    const timer = setTimeout(() => {
+      highlightedRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => {
+        localStorage.removeItem(LAST_VIEWED_ORDER_KEY);
+      }, 1000);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [highlightedOrderId, orders]);
 
   const updateParams = useCallback((updates: Record<string, string | null>) => {
     setSearchParams(prev => {
@@ -371,12 +446,12 @@ export default function Orders() {
   }, [setSearchParams]);
 
   const setActiveTab = useCallback((tab: Tab) => {
-    updateParams({ tab: tab === 'needs_action' ? null : tab, page: null });
+    updateParams({ tab: tab === 'needs_action' ? null : tab, page: null, dateRange: null });
   }, [updateParams]);
 
   const setDateRange = useCallback((range: DateRange) => {
-    updateParams({ dateRange: range === 'this_week' ? null : range });
-  }, [updateParams]);
+    updateParams({ dateRange: range === defaultDateRange ? null : range });
+  }, [updateParams, defaultDateRange]);
 
   const setSearchQuery = useCallback((q: string) => {
     updateParams({ search: q || null, page: null });
@@ -462,6 +537,38 @@ export default function Orders() {
     }
   }, [startIso, endIso, assignedToMe, user?.id]);
 
+  const fetchGlobalStats = useCallback(async (force = false) => {
+    const cached = getCachedGlobalStats();
+    if (!force && cached) {
+      setGlobalStats(cached);
+      return;
+    }
+    setGlobalStatsLoading(true);
+    try {
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('orders')
+        .select('total_amount, shipped_at')
+        .not('cs_status', 'in', '("cancelled_cbd","cancelled_cad")');
+
+      if (ordersError) throw ordersError;
+
+      const rows = ordersData ?? [];
+      const totalOrders = rows.length;
+      const totalValue = rows.reduce((s: number, r: any) => s + (r.total_amount ?? 0), 0);
+      const shippedRows = rows.filter((r: any) => !!r.shipped_at);
+      const shippedCount = shippedRows.length;
+      const shippedValue = shippedRows.reduce((s: number, r: any) => s + (r.total_amount ?? 0), 0);
+
+      const stats: GlobalStats = { totalOrders, totalValue, shippedCount, shippedValue, lastFetched: Date.now() };
+      setCachedGlobalStats(stats);
+      setGlobalStats(stats);
+    } catch (err) {
+      console.error('Error fetching global stats:', err);
+    } finally {
+      setGlobalStatsLoading(false);
+    }
+  }, []);
+
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchSearchOrders = useCallback(async (q: string) => {
@@ -533,6 +640,10 @@ export default function Orders() {
   }, [fetchOrders, lastRefreshed, isSearchMode]);
 
   useEffect(() => {
+    fetchGlobalStats();
+  }, [fetchGlobalStats]);
+
+  useEffect(() => {
     if (!isSearchMode) {
       setSearchOrders([]);
       return;
@@ -602,6 +713,12 @@ export default function Orders() {
     fetchOrders();
   }, [fetchOrders]);
 
+  const handleRowClick = useCallback((orderId: string) => {
+    localStorage.setItem(LAST_VIEWED_ORDER_KEY, orderId);
+    localStorage.setItem(SCROLL_STATE_KEY, searchParams.toString());
+    navigate(`/fulfillment/orders/${orderId}`);
+  }, [navigate, searchParams]);
+
   const sourceOrders = isSearchMode ? searchOrders : orders;
 
   const filtered = useMemo(() => {
@@ -610,8 +727,10 @@ export default function Orders() {
         if (statusFilter && order.cs_status !== statusFilter) return false;
         return true;
       }
-      if (activeTab === 'shipped') {
-        if (!order.shipped_at) return false;
+      if (activeTab === 'partial') {
+        const courierPartial = order.courier_info?.courier_status === 'Partial Delivery';
+        const csPartial = order.cs_status === 'partial_delivery';
+        if (!courierPartial && !csPartial) return false;
       } else if (activeTab !== 'all' && TAB_STATUSES[activeTab].length > 0) {
         if (!TAB_STATUSES[activeTab].includes(order.cs_status)) return false;
       }
@@ -623,7 +742,11 @@ export default function Orders() {
   const tabCounts = useMemo(() => Object.fromEntries(
     TABS.map(tab => {
       if (tab.key === 'all') return [tab.key, orders.length];
-      if (tab.key === 'shipped') return [tab.key, orders.filter(o => !!o.shipped_at).length];
+      if (tab.key === 'partial') {
+        return [tab.key, orders.filter(o =>
+          o.courier_info?.courier_status === 'Partial Delivery' || o.cs_status === 'partial_delivery'
+        ).length];
+      }
       const statuses = TAB_STATUSES[tab.key];
       return [tab.key, orders.filter(o => statuses.includes(o.cs_status)).length];
     })
@@ -635,11 +758,8 @@ export default function Orders() {
 
   const groups = useMemo(() => groupOrdersByPhone(paginatedOrders), [paginatedOrders]);
 
-  const totalValue = filtered.reduce((s, o) => s + (o.total_amount ?? 0), 0);
-  const avgValue = filtered.length > 0 ? totalValue / filtered.length : 0;
-  const shippedCount = orders.filter(o => !!o.shipped_at).length;
-
   const formatAmount = (v: number) => `৳${v.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatAmountShort = (v: number) => `৳${v.toLocaleString('en-BD', { maximumFractionDigits: 0 })}`;
 
   const formatDate = (d: string) => {
     const date = new Date(d);
@@ -721,11 +841,34 @@ export default function Orders() {
   const COLS = isAdmin ? 8 : 7;
   const isListLoading = isSearchMode ? searchLoading : loading;
 
+  const statsLastFetchedLabel = globalStats ? formatTimeAgo(globalStats.lastFetched) : null;
+  const avgOrderValue = globalStats && globalStats.totalOrders > 0
+    ? globalStats.totalValue / globalStats.totalOrders
+    : 0;
+
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Manage customer orders from confirmation to shipment</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Manage customer orders from confirmation to shipment</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowPullModal(true)}
+            className="flex items-center gap-2 px-3.5 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors bg-white"
+          >
+            <Download className="w-4 h-4" />
+            Pull by WC ID
+          </button>
+          <button
+            onClick={() => navigate('/fulfillment/orders/bulk-update')}
+            className="flex items-center gap-2 px-3.5 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors bg-white"
+          >
+            <UploadCloud className="w-4 h-4" />
+            Bulk Update
+          </button>
+        </div>
       </div>
 
       {/* Date Range Bar */}
@@ -808,21 +951,91 @@ export default function Orders() {
 
       {/* Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: "Orders", sublabel: `${activeTab === 'all' ? 'All' : DATE_RANGE_LABELS[isAllTimeTab ? 'all_time' : dateRange]} orders`, value: filtered.length, icon: <Package className="w-5 h-5 text-blue-500" />, format: (v: number) => v.toString() },
-          { label: 'Total Value', sublabel: `${DATE_RANGE_LABELS[isAllTimeTab ? 'all_time' : dateRange]}'s revenue`, value: totalValue, icon: <TrendingUp className="w-5 h-5 text-green-500" />, format: formatAmount },
-          { label: 'Avg Order Value', sublabel: 'Per order in period', value: avgValue, icon: <TrendingUp className="w-5 h-5 text-amber-500" />, format: formatAmount },
-          { label: 'Shipped Orders', sublabel: `৳${(shippedCount * avgValue).toLocaleString('en-BD', { maximumFractionDigits: 0 })} total value`, value: shippedCount, icon: <Truck className="w-5 h-5 text-teal-500" />, format: (v: number) => v.toString() },
-        ].map(card => (
-          <div key={card.label} className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              {card.icon}
-              <span className="text-sm font-medium text-gray-600">{card.label}</span>
-            </div>
-            <div className="text-2xl font-bold text-gray-900">{card.format(card.value)}</div>
-            <div className="text-xs text-gray-500 mt-1">{card.sublabel}</div>
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Package className="w-5 h-5 text-blue-500" />
+            <span className="text-sm font-medium text-gray-600">Orders</span>
           </div>
-        ))}
+          <div className="text-2xl font-bold text-gray-900">
+            {globalStatsLoading && !globalStats ? (
+              <div className="h-7 w-16 bg-gray-100 rounded animate-pulse" />
+            ) : (
+              (globalStats?.totalOrders ?? 0).toLocaleString()
+            )}
+          </div>
+          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
+            <span>All orders (excl. cancelled)</span>
+            {statsLastFetchedLabel && (
+              <span className="text-gray-400">{statsLastFetchedLabel}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="w-5 h-5 text-green-500" />
+            <span className="text-sm font-medium text-gray-600">Total Value</span>
+          </div>
+          <div className="text-2xl font-bold text-gray-900">
+            {globalStatsLoading && !globalStats ? (
+              <div className="h-7 w-24 bg-gray-100 rounded animate-pulse" />
+            ) : (
+              formatAmount(globalStats?.totalValue ?? 0)
+            )}
+          </div>
+          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
+            <span>All orders (excl. cancelled)</span>
+            {statsLastFetchedLabel && (
+              <span className="text-gray-400">{statsLastFetchedLabel}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="w-5 h-5 text-amber-500" />
+            <span className="text-sm font-medium text-gray-600">Avg Order Value</span>
+          </div>
+          <div className="text-2xl font-bold text-gray-900">
+            {globalStatsLoading && !globalStats ? (
+              <div className="h-7 w-20 bg-gray-100 rounded animate-pulse" />
+            ) : (
+              formatAmount(avgOrderValue)
+            )}
+          </div>
+          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
+            <span>Per order (excl. cancelled)</span>
+            {statsLastFetchedLabel && (
+              <span className="text-gray-400">{statsLastFetchedLabel}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Truck className="w-5 h-5 text-teal-500" />
+            <span className="text-sm font-medium text-gray-600">Shipped Orders</span>
+          </div>
+          <div className="text-2xl font-bold text-gray-900">
+            {globalStatsLoading && !globalStats ? (
+              <div className="h-7 w-12 bg-gray-100 rounded animate-pulse" />
+            ) : (
+              (globalStats?.shippedCount ?? 0).toLocaleString()
+            )}
+          </div>
+          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
+            <span>{globalStats ? formatAmountShort(globalStats.shippedValue) : '—'} total value</span>
+            {statsLastFetchedLabel && (
+              <button
+                onClick={() => fetchGlobalStats(true)}
+                title="Refresh stats"
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${globalStatsLoading ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Main Table Card */}
@@ -885,22 +1098,6 @@ export default function Orders() {
             <Users className="w-4 h-4" />
             Assigned to Me
           </button>
-
-          <button
-            onClick={() => setShowPullModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Pull by WC ID
-          </button>
-
-          <button
-            onClick={() => navigate('/fulfillment/orders/bulk-update')}
-            className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            <UploadCloud className="w-4 h-4" />
-            Bulk Update
-          </button>
         </div>
 
         {isSearchMode && (
@@ -912,14 +1109,16 @@ export default function Orders() {
           </div>
         )}
 
-        {activeTab === 'shipped' && !isSearchMode && (() => {
-          const partialCount = filtered.filter(o => o.courier_info?.courier_status === 'Partial Delivery').length;
-          if (partialCount === 0) return null;
+        {activeTab === 'partial' && !isSearchMode && (() => {
+          const courierOnlyCount = filtered.filter(
+            o => o.courier_info?.courier_status === 'Partial Delivery' && o.cs_status !== 'partial_delivery'
+          ).length;
+          if (courierOnlyCount === 0) return null;
           return (
-            <div className="px-5 py-2.5 bg-orange-50 border-b border-orange-100 flex items-center gap-2 text-xs text-orange-800">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0 text-orange-500" />
+            <div className="px-5 py-2.5 bg-amber-50 border-b border-amber-100 flex items-center gap-2 text-xs text-amber-800">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
               <span>
-                <span className="font-semibold">{partialCount} order{partialCount !== 1 ? 's' : ''}</span> with Partial Delivery courier status require manual CS status review
+                <span className="font-semibold">{courierOnlyCount} order{courierOnlyCount !== 1 ? 's' : ''}</span> highlighted below have courier Partial Delivery status but CS status has not been updated yet
               </span>
             </div>
           );
@@ -1072,86 +1271,106 @@ export default function Orders() {
                           </td>
                         </tr>
                       )}
-                      {!isCollapsed && group.orders.map(order => (
-                        <tr
-                          key={order.id}
-                          onClick={() => { setHighlightedOrderId(null); navigate(`/fulfillment/orders/${order.id}`); }}
-                          className={`border-b border-gray-100 cursor-pointer transition-colors ${
-                            isGrouped ? 'bg-white' : ''
-                          } ${
-                            selectedIds.has(order.id)
-                              ? 'bg-blue-50/60'
-                              : highlightedOrderId === order.id
-                              ? 'bg-green-50 hover:bg-green-50/80'
-                              : 'hover:bg-blue-50/30'
-                          }`}
-                        >
-                          {isAdmin && (
-                            <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                checked={selectedIds.has(order.id)}
-                                onChange={() => toggleSelect(order.id)}
-                                className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
-                              />
+                      {!isCollapsed && group.orders.map(order => {
+                        const isCourierOnlyPartial = activeTab === 'partial'
+                          && order.courier_info?.courier_status === 'Partial Delivery'
+                          && order.cs_status !== 'partial_delivery';
+                        const isHighlighted = highlightedOrderId === order.id;
+
+                        let rowClass = 'border-b border-gray-100 cursor-pointer transition-colors';
+                        if (selectedIds.has(order.id)) {
+                          rowClass += ' bg-blue-50/60';
+                        } else if (isHighlighted) {
+                          rowClass += ' bg-green-50 hover:bg-green-50/80';
+                        } else if (isCourierOnlyPartial) {
+                          rowClass += ' bg-amber-50 hover:bg-amber-100/60';
+                        } else if (isGrouped) {
+                          rowClass += ' bg-white hover:bg-blue-50/30';
+                        } else {
+                          rowClass += ' hover:bg-blue-50/30';
+                        }
+
+                        return (
+                          <tr
+                            key={order.id}
+                            ref={isHighlighted ? highlightedRowRef : undefined}
+                            onClick={() => handleRowClick(order.id)}
+                            className={rowClass}
+                          >
+                            {isAdmin && (
+                              <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.has(order.id)}
+                                  onChange={() => toggleSelect(order.id)}
+                                  className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 cursor-pointer"
+                                />
+                              </td>
+                            )}
+                            <td className={`px-3 py-2.5 text-xs text-gray-500 ${isGrouped ? 'pl-8' : ''}`}>
+                              {formatDate(order.order_date)}
                             </td>
-                          )}
-                          <td className={`px-3 py-2.5 text-xs text-gray-500 ${isGrouped ? 'pl-8' : ''}`}>
-                            {formatDate(order.order_date)}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-semibold text-gray-900">
-                                #{order.woo_order_id ?? order.order_number}
-                              </span>
-                              {lockedOrderIds.has(order.id) && (
-                                <div title="Someone is currently viewing this order" className="shrink-0 text-amber-500">
-                                  <Lock className="w-3 h-3" />
-                                </div>
-                              )}
-                              {order.has_prescription && (
-                                <div
-                                  title="This order has prescription / lens options attached"
-                                  className="flex items-center gap-0.5 px-1 py-0.5 bg-amber-100 border border-amber-300 rounded-full text-amber-700 shrink-0"
-                                >
-                                  <FlaskConical className="w-2.5 h-2.5" />
-                                  <span className="text-[10px] font-semibold">Rx</span>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <div className="text-xs font-medium text-gray-900">{order.customer?.full_name ?? '—'}</div>
-                            <div className="text-[11px] text-gray-500 mt-0.5">{order.customer?.phone_primary ?? '—'}</div>
-                          </td>
-                          <td className="px-3 py-2.5 text-xs font-medium text-gray-900">
-                            ৳{(order.total_amount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <StatusBadge status={order.cs_status} className="text-[11px] px-1.5 py-0.5" />
-                            {order.cs_status === 'late_delivery' && order.expected_delivery_date && (
-                              <div className="text-[10px] text-amber-600 mt-0.5">
-                                Due: {formatDate(order.expected_delivery_date)}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <DeliveryStatusBadge order={order} />
-                          </td>
-                          <td className="px-3 py-2.5">
-                            {order.assigned_user ? (
+                            <td className="px-3 py-2.5">
                               <div className="flex items-center gap-1.5">
-                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold ${avatarColor(order.assigned_user.full_name)}`}>
-                                  {getInitials(order.assigned_user.full_name)}
-                                </div>
-                                <span className="text-xs text-gray-800">{order.assigned_user.full_name}</span>
+                                <span className="text-xs font-semibold text-gray-900">
+                                  #{order.woo_order_id ?? order.order_number}
+                                </span>
+                                {lockedOrderIds.has(order.id) && (
+                                  <div title="Someone is currently viewing this order" className="shrink-0 text-amber-500">
+                                    <Lock className="w-3 h-3" />
+                                  </div>
+                                )}
+                                {order.has_prescription && (
+                                  <div
+                                    title="This order has prescription / lens options attached"
+                                    className="flex items-center gap-0.5 px-1 py-0.5 bg-amber-100 border border-amber-300 rounded-full text-amber-700 shrink-0"
+                                  >
+                                    <FlaskConical className="w-2.5 h-2.5" />
+                                    <span className="text-[10px] font-semibold">Rx</span>
+                                  </div>
+                                )}
                               </div>
-                            ) : (
-                              <span className="text-xs text-gray-400">—</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <div className="text-xs font-medium text-gray-900">{order.customer?.full_name ?? '—'}</div>
+                              <div className="text-[11px] text-gray-500 mt-0.5">{order.customer?.phone_primary ?? '—'}</div>
+                            </td>
+                            <td className="px-3 py-2.5 text-xs font-medium text-gray-900">
+                              ৳{(order.total_amount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <StatusBadge status={order.cs_status} className="text-[11px] px-1.5 py-0.5" />
+                              {order.cs_status === 'late_delivery' && order.expected_delivery_date && (
+                                <div className="text-[10px] text-amber-600 mt-0.5">
+                                  Due: {formatDate(order.expected_delivery_date)}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <DeliveryStatusBadge order={order} />
+                              {order.courier_info?.tracking_number && (
+                                <div className="text-[10px] text-gray-400 mt-0.5 font-mono">
+                                  {order.courier_info.tracking_number}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              {order.assigned_user ? (
+                                <div className="flex items-center gap-1.5">
+                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold ${avatarColor(order.assigned_user.full_name)}`}>
+                                    {getInitials(order.assigned_user.full_name)}
+                                  </div>
+                                  <span className="text-xs text-gray-800">
+                                    {order.assigned_user.full_name.split(' ')[0]}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </React.Fragment>
                   );
                 })

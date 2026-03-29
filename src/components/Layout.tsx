@@ -32,7 +32,7 @@ interface NavItem {
 export const Layout: React.FC = () => {
   const { user, setUser, hasModuleAccess } = useAuth();
   const { triggerRefresh, isRefreshing } = useRefresh();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [receiveGoodsCount, setReceiveGoodsCount] = useState(0);
   const [showPasswordModal, setShowPasswordModal] = useState(false);

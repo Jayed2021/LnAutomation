@@ -7,7 +7,7 @@ import { Badge } from '../../components/ui/Badge';
 import {
   ArrowLeft, Eye, EyeOff, CheckCircle2, XCircle, RefreshCw,
   ToggleLeft, ToggleRight, Truck, AlertCircle, ChevronDown, ChevronUp,
-  Save, Copy, Check, Link, Clock, Activity, Zap, FlaskConical, Search
+  Save, Copy, Check, Link, Clock, Activity, Zap, FlaskConical, Search, KeyRound, AlertTriangle
 } from 'lucide-react';
 
 interface CourierConfig {
@@ -112,6 +112,9 @@ export default function CourierSettings() {
   const [testResult, setTestResult] = useState<{ raw: SyncResult; consignment_id: string } | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
 
+  const [serviceRoleKey, setServiceRoleKey] = useState('');
+  const [showServiceRoleKey, setShowServiceRoleKey] = useState(false);
+
   const [savingPathao, setSavingPathao] = useState(false);
   const [savingSteadfast, setSavingSteadfast] = useState(false);
   const [pathaoNotice, setPathaoNotice] = useState<{ ok: boolean; message: string } | null>(null);
@@ -152,6 +155,7 @@ export default function CourierSettings() {
         supabase.from('app_settings').select('key, value').in('key', [
           'pathao_sync_enabled', 'pathao_sync_interval_hours',
           'pathao_sync_lookback_days', 'pathao_sync_last_run', 'pathao_sync_last_result',
+          'service_role_key',
         ]),
         supabase
           .from('order_courier_info')
@@ -204,6 +208,8 @@ export default function CourierSettings() {
           lastRun: (sm['pathao_sync_last_run'] && sm['pathao_sync_last_run'] !== 'null') ? sm['pathao_sync_last_run'] as string : null,
           lastResult: (sm['pathao_sync_last_result'] && sm['pathao_sync_last_result'] !== 'null') ? sm['pathao_sync_last_result'] as SyncResult : null,
         });
+        const svcKey = sm['service_role_key'];
+        setServiceRoleKey(svcKey ? String(svcKey).replace(/^"|"$/g, '') : '');
       }
 
       setEligibleCount(eligible ?? 0);
@@ -282,11 +288,18 @@ export default function CourierSettings() {
     setSavingSync(true);
     setSyncNotice(null);
     try {
-      await Promise.all([
+      const updates: Promise<unknown>[] = [
         supabase.from('app_settings').update({ value: syncSettings.enabled }).eq('key', 'pathao_sync_enabled'),
         supabase.from('app_settings').update({ value: syncSettings.intervalHours }).eq('key', 'pathao_sync_interval_hours'),
         supabase.from('app_settings').update({ value: syncSettings.lookbackDays }).eq('key', 'pathao_sync_lookback_days'),
-      ]);
+      ];
+      const trimmedKey = serviceRoleKey.trim();
+      if (trimmedKey) {
+        updates.push(
+          supabase.from('app_settings').upsert({ key: 'service_role_key', value: trimmedKey }, { onConflict: 'key' })
+        );
+      }
+      await Promise.all(updates);
       setSyncNotice({ ok: true, message: 'Sync settings saved' });
     } catch (err: unknown) {
       setSyncNotice({ ok: false, message: (err as Error)?.message || 'Failed to save' });
@@ -1042,6 +1055,40 @@ export default function CourierSettings() {
                       <p className="text-[11px] text-gray-400 mt-1">Only sync orders booked within this window</p>
                     </div>
                   </div>
+
+                  {/* Service Role Key */}
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                      <KeyRound className="w-3.5 h-3.5 text-gray-400" />
+                      Supabase Service Role Key
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showServiceRoleKey ? 'text' : 'password'}
+                        value={serviceRoleKey}
+                        onChange={e => setServiceRoleKey(e.target.value)}
+                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs pr-10 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowServiceRoleKey(v => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                      >
+                        {showServiceRoleKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-gray-400">Required for scheduled auto-sync. Find this in your Supabase project settings under API.</p>
+                  </div>
+
+                  {syncSettings.enabled && !serviceRoleKey.trim() && (
+                    <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                      <p className="text-xs text-amber-800">
+                        Auto sync is enabled but the Service Role Key is not set. The scheduled cron job will not run until this is configured.
+                      </p>
+                    </div>
+                  )}
 
                   {syncNotice && (
                     <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${syncNotice.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>

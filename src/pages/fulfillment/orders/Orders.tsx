@@ -385,7 +385,7 @@ export default function Orders() {
   const paramCustomStart = searchParams.get('customStart') ?? toLocalDateInput(new Date());
   const paramCustomEnd = searchParams.get('customEnd') ?? toLocalDateInput(new Date());
 
-  const activeTab: Tab = paramTab && VALID_TABS.includes(paramTab) ? paramTab : 'needs_action';
+  const activeTab: Tab = paramTab && VALID_TABS.includes(paramTab) ? paramTab : 'all';
   const isAllTimeTab = ALL_TIME_TABS.includes(activeTab);
   const isThisMonthTab = THIS_MONTH_TABS.includes(activeTab);
 
@@ -481,7 +481,7 @@ export default function Orders() {
   }, [setSearchParams]);
 
   const setActiveTab = useCallback((tab: Tab) => {
-    updateParams({ tab: tab === 'needs_action' ? null : tab, page: null, dateRange: null });
+    updateParams({ tab: tab === 'all' ? null : tab, page: null, dateRange: null });
   }, [updateParams]);
 
   const setDateRange = useCallback((range: DateRange) => {

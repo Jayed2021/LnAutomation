@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Save, Users, AlertTriangle, CheckCircle2,
   Calendar, RefreshCw, ChevronRight, UserCheck, ToggleLeft, ToggleRight,
-  Clock, Timer
+  Clock, Timer, Key, Eye, EyeOff
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -54,6 +54,8 @@ export default function CsAssignment() {
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleInterval, setScheduleInterval] = useState(30);
   const [scheduleLastRun, setScheduleLastRun] = useState<string | null>(null);
+  const [scheduleServiceKey, setScheduleServiceKey] = useState('');
+  const [showServiceKey, setShowServiceKey] = useState(false);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleSavedOk, setScheduleSavedOk] = useState(false);
 
@@ -87,6 +89,7 @@ export default function CsAssignment() {
         'auto_distribution_enabled',
         'auto_distribution_interval_minutes',
         'auto_distribution_last_run',
+        'service_role_key',
       ]),
     ]);
 
@@ -117,6 +120,8 @@ export default function CsAssignment() {
     setScheduleInterval(Number(settingsMap.get('auto_distribution_interval_minutes') ?? 30) || 30);
     const lastRun = settingsMap.get('auto_distribution_last_run');
     setScheduleLastRun(lastRun && lastRun !== null ? String(lastRun).replace(/^"|"$/g, '') : null);
+    const svcKey = settingsMap.get('service_role_key');
+    setScheduleServiceKey(svcKey ? String(svcKey).replace(/^"|"$/g, '') : '');
 
     setLoading(false);
   }, []);
@@ -265,11 +270,21 @@ export default function CsAssignment() {
     setScheduleSavedOk(false);
 
     const clampedInterval = Math.min(1440, Math.max(5, scheduleInterval));
+    const trimmedKey = scheduleServiceKey.trim();
 
-    await Promise.all([
+    const updates: Promise<unknown>[] = [
       supabase.from('app_settings').update({ value: scheduleEnabled }).eq('key', 'auto_distribution_enabled'),
       supabase.from('app_settings').update({ value: clampedInterval }).eq('key', 'auto_distribution_interval_minutes'),
-    ]);
+    ];
+
+    if (trimmedKey) {
+      updates.push(
+        supabase.from('app_settings')
+          .upsert({ key: 'service_role_key', value: trimmedKey }, { onConflict: 'key' })
+      );
+    }
+
+    await Promise.all(updates);
 
     setScheduleInterval(clampedInterval);
     setScheduleSaving(false);
@@ -367,7 +382,43 @@ export default function CsAssignment() {
             </div>
           </div>
 
-          {scheduleEnabled && (!isValid || !hasActiveAgents) && (
+          {/* Service Role Key */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+              <Key className="w-3.5 h-3.5" />
+              Supabase Service Role Key
+            </label>
+            <div className="relative max-w-xl">
+              <input
+                type={showServiceKey ? 'text' : 'password'}
+                value={scheduleServiceKey}
+                onChange={e => { setScheduleServiceKey(e.target.value); setScheduleSavedOk(false); }}
+                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowServiceKey(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                {showServiceKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400">
+              Found in your Supabase dashboard under Project Settings &rarr; API &rarr; Service Role Key. Required for the cron job to call the Edge Function.
+            </p>
+          </div>
+
+          {scheduleEnabled && !scheduleServiceKey.trim() && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-sm text-amber-800">
+                Auto-distribution is enabled but the Service Role Key is not configured. The cron job will not run until it is saved.
+              </p>
+            </div>
+          )}
+
+          {scheduleEnabled && !isValid && hasActiveAgents && (
             <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
               <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
               <p className="text-sm text-amber-800">

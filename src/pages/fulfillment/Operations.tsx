@@ -248,14 +248,26 @@ export default function Operations() {
 
   const handleCameraScan = (barcode: string) => {
     setShowScanner(false);
-    const order = orders.find(o =>
+
+    const allOrders = [...orders, ...shippedOrders];
+    const matched = allOrders.find(o =>
       o.order_number === barcode ||
       o.woo_order_number === barcode ||
       String(o.woo_order_id) === barcode
     );
-    if (order && order.fulfillment_status === 'printed') {
-      setSelectedOrder(order);
-      setShowPickModal(true);
+
+    if (matched) {
+      const status = matched.fulfillment_status as TabKey;
+      const tabKey: TabKey = (status === 'in_lab' ? 'send_to_lab' : status) as TabKey;
+      setSearchQuery(matched.woo_order_number ?? matched.order_number);
+      setActiveTab(tabKey);
+
+      if (matched.fulfillment_status === 'printed') {
+        setSelectedOrder(matched);
+        setShowPickModal(true);
+      }
+    } else {
+      setSearchQuery(barcode);
     }
   };
 

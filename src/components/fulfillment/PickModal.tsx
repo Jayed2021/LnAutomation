@@ -45,6 +45,7 @@ interface ItemPickState {
   already_picked: number;
   lots: LotRecommendation[];
   picked_this_session: number;
+  scanned_count: number;
   done: boolean;
   has_prescription?: boolean;
 }
@@ -120,6 +121,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
             already_picked: item.picked_quantity,
             lots: [],
             picked_this_session: 0,
+            scanned_count: 0,
             done: true,
             has_prescription: prescriptionItemIds.has(item.id),
           });
@@ -142,6 +144,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
             already_picked: item.picked_quantity,
             lots: [],
             picked_this_session: 0,
+            scanned_count: 0,
             done: false,
             has_prescription: prescriptionItemIds.has(item.id),
           });
@@ -191,6 +194,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
           already_picked: item.picked_quantity,
           lots: lotRecs,
           picked_this_session: 0,
+          scanned_count: 0,
           done: false,
           has_prescription: prescriptionItemIds.has(item.id),
         });
@@ -234,10 +238,11 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   };
 
   const markCurrentDone = () => {
+    const cur = itemStates[currentItemIndex];
     const newStates = [...itemStates];
     newStates[currentItemIndex] = {
-      ...newStates[currentItemIndex],
-      picked_this_session: newStates[currentItemIndex].quantity - newStates[currentItemIndex].already_picked,
+      ...cur,
+      picked_this_session: cur.scanned_count > 0 ? cur.scanned_count : cur.quantity - cur.already_picked,
       done: true,
     };
     setItemStates(newStates);
@@ -252,12 +257,29 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
     const trimmed = value.trim();
     if (!trimmed || !currentItem || currentItem.done) return;
 
+    const requiredQty = currentItem.quantity - currentItem.already_picked;
     const expectedBarcode = currentLot?.barcode;
 
     if (expectedBarcode) {
       if (trimmed === expectedBarcode) {
-        const newStates = markCurrentDone();
-        advanceToNext(newStates, currentItemIndex);
+        const newCount = currentItem.scanned_count + 1;
+        if (newCount >= requiredQty) {
+          const newStates = [...itemStates];
+          newStates[currentItemIndex] = { ...currentItem, scanned_count: newCount };
+          setItemStates(newStates);
+          const doneStates = [...newStates];
+          doneStates[currentItemIndex] = { ...newStates[currentItemIndex], picked_this_session: newCount, done: true };
+          setItemStates(doneStates);
+          setBarcodeInput('');
+          scannerFiredRef.current = false;
+          advanceToNext(doneStates, currentItemIndex);
+        } else {
+          const newStates = [...itemStates];
+          newStates[currentItemIndex] = { ...currentItem, scanned_count: newCount };
+          setItemStates(newStates);
+          setBarcodeInput('');
+          scannerFiredRef.current = false;
+        }
         return;
       }
 
@@ -276,8 +298,21 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       return;
     }
 
-    const newStates = markCurrentDone();
-    advanceToNext(newStates, currentItemIndex);
+    const newCount = currentItem.scanned_count + 1;
+    if (newCount >= requiredQty) {
+      const newStates = [...itemStates];
+      newStates[currentItemIndex] = { ...currentItem, scanned_count: newCount, picked_this_session: newCount, done: true };
+      setItemStates(newStates);
+      setBarcodeInput('');
+      scannerFiredRef.current = false;
+      advanceToNext(newStates, currentItemIndex);
+    } else {
+      const newStates = [...itemStates];
+      newStates[currentItemIndex] = { ...currentItem, scanned_count: newCount };
+      setItemStates(newStates);
+      setBarcodeInput('');
+      scannerFiredRef.current = false;
+    }
   };
 
   const handleJustPick = async () => {
@@ -479,6 +514,11 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                         <div className="text-xs text-gray-500">
                           Qty: {state.quantity - state.already_picked}
                           {state.lots[0] && <span className="ml-2 text-blue-600 font-mono">{state.lots[0].location_code}</span>}
+                          {!state.done && idx === currentItemIndex && state.scanned_count > 0 && (
+                            <span className="ml-2 font-semibold text-blue-600">
+                              {state.scanned_count}/{state.quantity - state.already_picked} scanned
+                            </span>
+                          )}
                         </div>
                       </div>
                       {state.done && <span className="text-xs text-green-600 font-medium flex-shrink-0">Done</span>}
@@ -585,6 +625,20 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                         </div>
                       </div>
                     </div>
+
+                    {currentItem.scanned_count > 0 && (
+                      <div className="flex items-center justify-between bg-blue-100 border border-blue-200 rounded-xl px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <ScanLine className="h-4 w-4 text-blue-600" />
+                          <span className="text-sm font-semibold text-blue-800">Scanned</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg font-bold text-blue-900 tabular-nums">
+                            {currentItem.scanned_count} / {currentItem.quantity - currentItem.already_picked}
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     {currentLot ? (
                       <div className="bg-green-50 border border-green-200 rounded-xl p-3">

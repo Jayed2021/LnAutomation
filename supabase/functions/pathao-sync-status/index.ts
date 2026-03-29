@@ -263,6 +263,63 @@ Deno.serve(async (req: Request) => {
           });
         }
 
+        if (order_status === "Return" || order_status === "Paid Return") {
+          const { data: existingReturn } = await supabase
+            .from("returns")
+            .select("id")
+            .eq("order_id", row.order_id)
+            .maybeSingle();
+
+          if (!existingReturn) {
+            const { data: orderRow } = await supabase
+              .from("orders")
+              .select("customer_id")
+              .eq("id", row.order_id)
+              .maybeSingle();
+
+            if (orderRow?.customer_id) {
+              const returnNumber = `RET-${Date.now()}`;
+              const { data: newReturn } = await supabase
+                .from("returns")
+                .insert({
+                  return_number: returnNumber,
+                  order_id: row.order_id,
+                  customer_id: orderRow.customer_id,
+                  return_reason: "CAD",
+                  status: "expected",
+                })
+                .select("id")
+                .single();
+
+              if (newReturn) {
+                const { data: orderItems } = await supabase
+                  .from("order_items")
+                  .select("id, product_id, sku, quantity")
+                  .eq("order_id", row.order_id);
+
+                if (orderItems?.length) {
+                  await supabase.from("return_items").insert(
+                    orderItems.map((oi) => ({
+                      return_id: newReturn.id,
+                      order_item_id: oi.id,
+                      product_id: oi.product_id,
+                      sku: oi.sku,
+                      quantity: oi.quantity,
+                      qc_status: "pending",
+                    }))
+                  );
+                }
+
+                activityLogs.push({
+                  order_id: row.order_id,
+                  action: `Return ${returnNumber} auto-created via Pathao REST API sync (status: ${order_status})`,
+                  performed_by: null,
+                });
+              }
+            }
+          }
+        }
+
         if (order_status === "Partial Delivery") {
           activityLogs.push({
             order_id: row.order_id,

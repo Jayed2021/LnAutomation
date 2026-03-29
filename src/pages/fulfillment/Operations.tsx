@@ -19,7 +19,7 @@ import { STATUS_CONFIG } from './orders/types';
 import { buildInvoiceHtml, buildPackingSlipHtml } from './orders/orderDetail/InvoiceTemplate';
 import {
   fetchStoreProfile, fetchFifoLotsForItems,
-  fetchOrderPrescriptions, fetchPackagingItems,
+  fetchOrderPrescriptions, fetchPackagingItems, fetchDefaultPackagingWithPrice,
 } from './orders/orderDetail/service';
 import type { OrderDetail, OrderItem, OrderPrescription, PackagingItem } from './orders/orderDetail/types';
 
@@ -337,19 +337,26 @@ export default function Operations() {
   };
 
   const handlePrintInvoice = async (order: Order) => {
-    const [storeProfile, prescriptions, fullItems, fullOrder] = await Promise.all([
+    const [storeProfile, prescriptions, fullOrder, packagingItems, defaultPkg] = await Promise.all([
       fetchStoreProfile(),
       fetchOrderPrescriptions(order.id),
-      supabase
-        .from('order_items')
-        .select('id, product_id, sku, product_name, quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id')
-        .eq('order_id', order.id)
-        .order('created_at')
-        .then(r => (r.data ?? []) as OrderItem[]),
       fetchFullOrderForPrint(order.id),
+      fetchPackagingItems(order.id),
+      fetchDefaultPackagingWithPrice(),
     ]);
+    const { data: rawItems } = await supabase
+      .from('order_items')
+      .select('id, product_id, sku, product_name, quantity, picked_quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id, product:products(selling_price)')
+      .eq('order_id', order.id)
+      .order('created_at');
+    const fullItems = ((rawItems ?? []) as any[]).map(row => ({
+      ...row,
+      regular_price: row.product?.selling_price ?? null,
+      product: undefined,
+    })) as import('./orders/orderDetail/types').OrderItem[];
+    const fifoLots = await fetchFifoLotsForItems(fullItems);
     const orderDetail = fullOrder ?? buildOrderDetailForPrint(order);
-    openPrintTab(buildInvoiceHtml(orderDetail, fullItems, prescriptions as OrderPrescription[], storeProfile));
+    openPrintTab(buildInvoiceHtml(orderDetail, fullItems, prescriptions as OrderPrescription[], storeProfile, fifoLots, packagingItems as PackagingItem[], defaultPkg));
   };
 
   const handlePrintPackingSlip = async (order: Order) => {

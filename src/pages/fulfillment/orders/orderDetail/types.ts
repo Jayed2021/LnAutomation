@@ -73,6 +73,7 @@ export interface OrderItem {
   pick_location: string | null;
   meta_data: WooMetaEntry[] | null;
   woo_item_id: number | null;
+  regular_price: number | null;
 }
 
 export interface OrderCourierInfo {

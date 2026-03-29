@@ -1,5 +1,5 @@
 import { OrderDetail, OrderItem, OrderPrescription, PackagingItem } from './types';
-import { StoreProfile, FifoLotInfo } from './service';
+import { StoreProfile, FifoLotInfo, DefaultPackagingMaterial } from './service';
 
 const fmt = (v: number) =>
   `&#2547;${v.toLocaleString('en-BD', { minimumFractionDigits: 2 })}`;
@@ -15,13 +15,16 @@ export function buildInvoiceHtml(
   items: OrderItem[],
   prescriptions: OrderPrescription[],
   storeProfile: StoreProfile | null,
+  fifoLots: Map<string, FifoLotInfo>,
+  packagingItems: PackagingItem[],
+  defaultPackaging: DefaultPackagingMaterial[],
 ): string {
   const sp = storeProfile;
   const addressParts = [
     sp?.address_line1, sp?.address_line2, sp?.city, sp?.postal_code, sp?.country,
   ].filter(Boolean) as string[];
 
-  const invoiceNumber = order.woo_order_id ?? order.order_number;
+  const wooOrderId = order.woo_order_id ?? order.order_number;
   const subtotal = order.subtotal;
   const discount = order.discount_amount;
   const shipping = order.shipping_fee;
@@ -31,18 +34,51 @@ export function buildInvoiceHtml(
     ? `<img src="${esc(sp.logo_url)}" alt="${esc(sp.store_name)}" style="height:48px;object-fit:contain;" />`
     : `<div style="font-size:22px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">${esc(sp?.store_name ?? 'Store')}</div>`;
 
+  const taglineHtml = sp?.tagline
+    ? `<div style="font-size:13px;font-weight:400;color:#444;margin-top:6px;text-align:center;">${esc(sp.tagline)}</div>`
+    : '';
+
   const storeAddressHtml = addressParts.map(l => `<span>${esc(l)}<br/></span>`).join('');
 
-  const itemsHtml = items.map(item => `
+  const itemsHtml = items.map(item => {
+    const lot = fifoLots.get(item.id);
+    const fifoSku = lot?.barcode ?? item.sku;
+    const locationBadge = lot && lot.location_code !== 'N/A'
+      ? `<span style="display:inline-block;margin-left:8px;padding:2px 8px;background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:0.5px;vertical-align:middle;">${esc(lot.location_code)}</span>`
+      : '';
+    const regularPrice = item.regular_price != null ? fmt(item.regular_price) : '—';
+    const itemDiscount = item.discount_amount > 0 ? `-${fmt(item.discount_amount)}` : '—';
+    return `
     <tr>
       <td style="padding:10px 12px;border-bottom:1px solid #eee;vertical-align:top;">
-        <div>${esc(item.product_name)}</div>
-        <div style="font-size:11px;color:#777;font-weight:600;margin-top:2px;">SKU: ${esc(item.sku)}</div>
+        <div style="font-size:11px;color:#555;">${esc(item.product_name)}</div>
+        <div style="margin-top:4px;">
+          <span style="font-size:13px;font-weight:700;color:#111;font-family:monospace;letter-spacing:0.5px;">${esc(fifoSku)}</span>${locationBadge}
+        </div>
       </td>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${regularPrice}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:center;">${item.quantity}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;">${fmt(item.line_total)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;color:#16a34a;">${itemDiscount}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:600;">${fmt(item.line_total)}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
+
+  const allPackaging: { name: string }[] = [];
+  defaultPackaging.forEach(p => allPackaging.push({ name: p.product_name }));
+  packagingItems.forEach(p => {
+    if (!defaultPackaging.find(d => d.sku === p.sku)) {
+      allPackaging.push({ name: p.product_name });
+    }
+  });
+  const packagingRowHtml = allPackaging.length > 0
+    ? `<tr>
+        <td colspan="5" style="padding:8px 12px;border-bottom:1px solid #eee;background:#fafafa;">
+          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#888;margin-right:8px;">Packaging:</span>
+          <span style="font-size:11px;color:#555;">${allPackaging.map(p => esc(p.name)).join(' &nbsp;·&nbsp; ')}</span>
+        </td>
+      </tr>`
+    : '';
 
   const discountRow = discount > 0
     ? `<tr><td style="padding:5px 12px;color:#16a34a;">Discount</td><td style="padding:5px 12px;text-align:right;color:#16a34a;">-${fmt(discount)}</td></tr>`
@@ -106,7 +142,8 @@ export function buildInvoiceHtml(
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>Invoice #${esc(String(invoiceNumber))}</title>
+  <title>Invoice #${esc(String(wooOrderId))}</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, Helvetica, sans-serif; color: #111; background: #fff; }
@@ -126,13 +163,20 @@ export function buildInvoiceHtml(
   <div style="max-width:794px;margin:0 auto;padding:48px 48px 64px;">
 
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;">
-      <div>${logoHtml}</div>
+      <div>
+        ${logoHtml}
+        ${taglineHtml}
+      </div>
       <div style="text-align:right;font-size:12px;line-height:1.6;color:#222;">
         <strong style="display:block;font-size:13px;font-weight:700;">${esc(sp?.store_name ?? '')}</strong>
         ${storeAddressHtml}
         ${sp?.phone_primary ? `<span>${esc(sp.phone_primary)}<br/></span>` : ''}
         ${sp?.email ? `<span>${esc(sp.email)}</span>` : ''}
       </div>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <svg id="order-barcode"></svg>
     </div>
 
     <div style="font-size:28px;font-weight:800;margin-bottom:24px;">INVOICE</div>
@@ -150,7 +194,7 @@ export function buildInvoiceHtml(
           <tbody>
             <tr>
               <td style="color:#555;padding-right:24px;padding-bottom:2px;white-space:nowrap;">Order Number:</td>
-              <td style="font-weight:500;padding-bottom:2px;">${esc(String(invoiceNumber))}</td>
+              <td style="font-weight:500;padding-bottom:2px;">${esc(String(wooOrderId))}</td>
             </tr>
             <tr>
               <td style="color:#555;padding-right:24px;padding-bottom:2px;white-space:nowrap;">Order Date:</td>
@@ -166,12 +210,15 @@ export function buildInvoiceHtml(
       <thead>
         <tr style="background:#111;color:#fff;">
           <th style="padding:10px 12px;text-align:left;font-weight:600;letter-spacing:0.3px;">Product</th>
-          <th style="padding:10px 12px;text-align:center;font-weight:600;letter-spacing:0.3px;">Quantity</th>
-          <th style="padding:10px 12px;text-align:right;font-weight:600;letter-spacing:0.3px;">Price</th>
+          <th style="padding:10px 12px;text-align:right;font-weight:600;letter-spacing:0.3px;">Unit Price</th>
+          <th style="padding:10px 12px;text-align:center;font-weight:600;letter-spacing:0.3px;">Qty</th>
+          <th style="padding:10px 12px;text-align:right;font-weight:600;letter-spacing:0.3px;">Discount</th>
+          <th style="padding:10px 12px;text-align:right;font-weight:600;letter-spacing:0.3px;">Total</th>
         </tr>
       </thead>
       <tbody>
         ${itemsHtml}
+        ${packagingRowHtml}
       </tbody>
     </table>
 
@@ -196,6 +243,20 @@ export function buildInvoiceHtml(
     ${footerHtml}
 
   </div>
+  <script>
+    if (typeof JsBarcode !== 'undefined') {
+      JsBarcode('#order-barcode', '${esc(String(order.woo_order_id ?? order.order_number))}', {
+        format: 'CODE128',
+        width: 2,
+        height: 50,
+        displayValue: true,
+        fontSize: 13,
+        margin: 0,
+        background: '#ffffff',
+        lineColor: '#000000',
+      });
+    }
+  <\/script>
 </body>
 </html>`;
 }

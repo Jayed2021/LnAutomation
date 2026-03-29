@@ -31,11 +31,15 @@ export async function fetchOrderDetail(id: string): Promise<OrderDetail | null> 
 export async function fetchOrderItems(orderId: string): Promise<OrderItem[]> {
   const { data, error } = await supabase
     .from('order_items')
-    .select('id, product_id, sku, product_name, quantity, picked_quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id')
+    .select('id, product_id, sku, product_name, quantity, picked_quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id, product:products(selling_price)')
     .eq('order_id', orderId)
     .order('created_at');
   if (error) throw error;
-  return (data ?? []) as OrderItem[];
+  return ((data ?? []) as any[]).map(row => ({
+    ...row,
+    regular_price: row.product?.selling_price ?? null,
+    product: undefined,
+  })) as OrderItem[];
 }
 
 export async function fetchOrderCourierInfo(orderId: string): Promise<OrderCourierInfo | null> {
@@ -118,6 +122,7 @@ export async function logActivity(orderId: string, action: string, userId: strin
 
 export interface StoreProfile {
   store_name: string | null;
+  tagline: string | null;
   logo_url: string | null;
   address_line1: string | null;
   address_line2: string | null;
@@ -133,10 +138,35 @@ export interface StoreProfile {
 export async function fetchStoreProfile(): Promise<StoreProfile | null> {
   const { data } = await supabase
     .from('store_profile')
-    .select('store_name, logo_url, address_line1, address_line2, city, postal_code, country, phone_primary, email, website, invoice_footer')
+    .select('store_name, tagline, logo_url, address_line1, address_line2, city, postal_code, country, phone_primary, email, website, invoice_footer')
     .limit(1)
     .maybeSingle();
   return data as StoreProfile | null;
+}
+
+export interface DefaultPackagingMaterial {
+  sku: string;
+  product_name: string;
+  min_price: number;
+  quantity: number;
+}
+
+export async function fetchDefaultPackagingWithPrice(): Promise<DefaultPackagingMaterial[]> {
+  const { data } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', 'default_packaging_materials')
+    .maybeSingle();
+  if (!data?.value) return [];
+  const all = data.value as any[];
+  return all
+    .filter(item => item.min_price != null)
+    .map(item => ({
+      sku: item.sku,
+      product_name: item.product_name,
+      min_price: item.min_price,
+      quantity: item.quantity ?? 1,
+    }));
 }
 
 export interface FifoLotInfo {

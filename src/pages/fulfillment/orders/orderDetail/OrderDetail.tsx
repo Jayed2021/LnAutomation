@@ -11,7 +11,7 @@ import {
   fetchOrderDetail, fetchOrderItems, fetchOrderCourierInfo,
   fetchOrderPrescriptions, fetchOrderNotes, fetchCallLog,
   fetchActivityLog, fetchPackagingItems,
-  fetchStoreProfile, fetchFifoLotsForItems,
+  fetchStoreProfile, fetchFifoLotsForItems, fetchDefaultPackagingWithPrice,
   StoreProfile,
 } from './service';
 import { OrderHeader } from './OrderHeader';
@@ -163,9 +163,13 @@ export default function OrderDetail() {
     }
   };
 
-  const handlePrintInvoice = () => {
+  const handlePrintInvoice = async () => {
     if (!order) return;
-    openPrintTab(buildInvoiceHtml(order, items, prescriptions, storeProfile));
+    const [fifoLots, defaultPkg] = await Promise.all([
+      fetchFifoLotsForItems(items),
+      fetchDefaultPackagingWithPrice(),
+    ]);
+    openPrintTab(buildInvoiceHtml(order, items, prescriptions, storeProfile, fifoLots, packagingItems, defaultPkg));
   };
 
   const handlePrintPackingSlip = async () => {

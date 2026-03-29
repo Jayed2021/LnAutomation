@@ -422,6 +422,26 @@ export default function Orders() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!highlightedOrderId || scrollDoneRef.current || orders.length === 0) return;
+    const targetOrder = orders.find(o => o.id === highlightedOrderId);
+    if (!targetOrder) return;
+
+    const attempt = () => {
+      const row = highlightedRowRef.current ?? document.querySelector(`[data-order-id="${highlightedOrderId}"]`) as HTMLTableRowElement | null;
+      if (row && !scrollDoneRef.current) {
+        scrollDoneRef.current = true;
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => {
+          localStorage.removeItem(LAST_VIEWED_ORDER_KEY);
+        }, 1000);
+      }
+    };
+
+    const raf = requestAnimationFrame(() => setTimeout(attempt, 50));
+    return () => cancelAnimationFrame(raf);
+  }, [highlightedOrderId, orders]);
+
   const highlightedRowCallbackRef = useCallback((node: HTMLTableRowElement | null) => {
     if (!node || scrollDoneRef.current) return;
     scrollDoneRef.current = true;
@@ -1297,6 +1317,7 @@ export default function Orders() {
                           <tr
                             key={order.id}
                             ref={isHighlighted ? highlightedRowCallbackRef : undefined}
+                            data-order-id={order.id}
                             onClick={() => handleRowClick(order.id)}
                             className={rowClass}
                           >

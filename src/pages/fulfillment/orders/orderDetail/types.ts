@@ -66,6 +66,7 @@ export interface OrderItem {
   sku: string;
   product_name: string;
   quantity: number;
+  picked_quantity: number;
   unit_price: number;
   line_total: number;
   discount_amount: number;

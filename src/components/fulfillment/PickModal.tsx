@@ -370,15 +370,8 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       const updateData: Record<string, string | null> = {};
 
       if (isLabPick) {
-        newStatus = isPartial ? 'send_to_lab' : 'in_lab';
+        newStatus = 'send_to_lab';
         updateData.fulfillment_status = newStatus;
-        if (!isPartial) {
-          updateData.cs_status = 'in_lab';
-          await supabase.from('order_prescriptions').update({
-            lab_status: 'in_lab',
-            lab_sent_date: new Date().toISOString(),
-          }).eq('order_id', order.id);
-        }
       } else {
         newStatus = 'printed';
         updateData.fulfillment_status = newStatus;
@@ -389,7 +382,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       await supabase.from('order_activity_log').insert({
         order_id: order.id,
         action: isLabPick
-          ? (isPartial ? 'Lab pick partially completed' : 'Lab pick completed — sent to lab')
+          ? (isPartial ? 'Lab pick partially completed' : 'Lab pick completed — ready to send to lab')
           : (isPartial ? 'Partially picked' : 'Fully picked — ready to pack'),
       });
 

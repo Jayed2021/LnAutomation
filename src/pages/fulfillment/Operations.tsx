@@ -1229,6 +1229,17 @@ function SendToLabTable({
   onMarkAsInLab: (id: string) => void;
   onNavigate: (id: string) => void;
 }) {
+  const [confirmLabId, setConfirmLabId] = useState<string | null>(null);
+
+  const handleMarkInLab = (orderId: string) => {
+    if (confirmLabId === orderId) {
+      onMarkAsInLab(orderId);
+      setConfirmLabId(null);
+    } else {
+      setConfirmLabId(orderId);
+    }
+  };
+
   return (
     <>
       <div className="sm:hidden divide-y divide-gray-100">
@@ -1256,9 +1267,20 @@ function SendToLabTable({
                   <Button size="sm" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white border-0 py-2.5 h-auto" onClick={() => onPickForLab(order)}>
                     <Send className="h-3.5 w-3.5 mr-1.5" /> Pick for Lab
                   </Button>
-                  <Button size="sm" className="flex-1 bg-slate-600 hover:bg-slate-700 text-white border-0 py-2.5 h-auto" onClick={() => onMarkAsInLab(order.id)}>
-                    <FlaskConical className="h-3.5 w-3.5 mr-1.5" /> Mark In Lab
-                  </Button>
+                  {confirmLabId === order.id ? (
+                    <div className="flex items-center gap-1">
+                      <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 py-2.5 h-auto text-xs px-2" onClick={() => handleMarkInLab(order.id)}>
+                        Confirm?
+                      </Button>
+                      <button onClick={() => setConfirmLabId(null)} className="py-2.5 px-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 text-xs transition-colors">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <Button size="sm" className="flex-1 bg-slate-600 hover:bg-slate-700 text-white border-0 py-2.5 h-auto" onClick={() => handleMarkInLab(order.id)}>
+                      <FlaskConical className="h-3.5 w-3.5 mr-1.5" /> Mark In Lab
+                    </Button>
+                  )}
                 </>
               )}
             </div>
@@ -1306,9 +1328,20 @@ function SendToLabTable({
                         <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white border-0 px-3" onClick={() => onPickForLab(order)}>
                           <Send className="h-3.5 w-3.5 mr-1" /> Pick for Lab
                         </Button>
-                        <Button size="sm" className="bg-slate-600 hover:bg-slate-700 text-white border-0 px-3" onClick={() => onMarkAsInLab(order.id)}>
-                          <FlaskConical className="h-3.5 w-3.5 mr-1" /> Mark In Lab
-                        </Button>
+                        {confirmLabId === order.id ? (
+                          <div className="flex items-center gap-1">
+                            <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-2.5 text-xs" onClick={() => handleMarkInLab(order.id)}>
+                              Confirm?
+                            </Button>
+                            <button onClick={() => setConfirmLabId(null)} className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 transition-colors">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <Button size="sm" className="bg-slate-600 hover:bg-slate-700 text-white border-0 px-3" onClick={() => handleMarkInLab(order.id)}>
+                            <FlaskConical className="h-3.5 w-3.5 mr-1" /> Mark In Lab
+                          </Button>
+                        )}
                       </>
                     )}
                   </div>

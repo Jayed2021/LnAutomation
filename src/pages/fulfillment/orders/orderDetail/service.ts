@@ -31,7 +31,7 @@ export async function fetchOrderDetail(id: string): Promise<OrderDetail | null> 
 export async function fetchOrderItems(orderId: string): Promise<OrderItem[]> {
   const { data, error } = await supabase
     .from('order_items')
-    .select('id, product_id, sku, product_name, quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id')
+    .select('id, product_id, sku, product_name, quantity, picked_quantity, unit_price, line_total, discount_amount, pick_location, meta_data, woo_item_id')
     .eq('order_id', orderId)
     .order('created_at');
   if (error) throw error;

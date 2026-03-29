@@ -89,6 +89,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const [selectedAction, setSelectedAction] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showLabConfirm, setShowLabConfirm] = useState(false);
   const [cancellationReasons, setCancellationReasons] = useState<CancellationReason[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -136,6 +137,8 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
   const isCbdStatus = order.cs_status === 'cancelled_cbd';
 
+  const allItemsFullyPicked = items.length > 0 && items.every(i => (i.picked_quantity ?? 0) >= i.quantity);
+
   const CS_STATUSES_WITH_LAB = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery'];
   const baseActions = BASE_ACTIONS[order.cs_status] ?? [];
 
@@ -150,7 +153,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     (order.cs_status === 'send_to_lab' && order.fulfillment_status === 'in_lab');
 
   if (isLabReturning) {
-    availableActions = ['not_printed', 'cancel_before_dispatch', 'refund'];
+    availableActions = ['cancel_before_dispatch', 'refund'];
   }
 
   if ((CS_STATUSES_WITH_LAB.includes(order.cs_status) || order.cs_status === 'send_to_lab') && hasPrescription && !isLabReturning) {
@@ -190,6 +193,35 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     }
   };
 
+  const handleApplyLabReturn = async () => {
+    setSaving(true);
+    try {
+      const updates: Record<string, unknown> = {
+        updated_at: new Date().toISOString(),
+      };
+      if (allItemsFullyPicked) {
+        updates.fulfillment_status = 'packed';
+        updates.cs_status = 'packed';
+        updates.packed_at = new Date().toISOString();
+      } else {
+        updates.fulfillment_status = 'printed';
+        updates.cs_status = 'not_printed';
+      }
+      await supabase.from('order_prescriptions').update({
+        lab_return_date: new Date().toISOString(),
+      }).eq('order_id', order.id).eq('lab_status', 'in_lab');
+      await supabase.from('orders').update(updates).eq('id', order.id);
+      const dest = allItemsFullyPicked ? 'Packed' : 'Printed';
+      await logActivity(order.id, `Lab returned — order confirmed and moved to ${dest}`, userId);
+      onUpdated();
+    } catch (err) {
+      console.error(err);
+      alert('An unexpected error occurred. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleApply = async () => {
     if (!selectedAction) return;
     setSaving(true);
@@ -206,7 +238,14 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           order.cs_status === 'in_lab' ||
           (order.cs_status === 'send_to_lab' && order.fulfillment_status === 'in_lab');
         if (labReturning) {
-          updates.fulfillment_status = 'printed';
+          if (allItemsFullyPicked) {
+            updates.fulfillment_status = 'packed';
+            updates.cs_status = 'packed';
+            updates.packed_at = new Date().toISOString();
+          } else {
+            updates.fulfillment_status = 'printed';
+            updates.cs_status = 'not_printed';
+          }
           await supabase.from('order_prescriptions').update({
             lab_return_date: new Date().toISOString(),
           }).eq('order_id', order.id).eq('lab_status', 'in_lab');
@@ -515,7 +554,13 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const getButtonLabel = () => {
     if (saving) return 'Applying...';
     switch (selectedAction) {
-      case 'not_printed':       return isLabReturning ? 'Confirm Order (Lab Returned)' : 'Apply: Confirm Order';
+      case 'not_printed':
+        if (isLabReturning) {
+          return allItemsFullyPicked
+            ? 'Confirm Order (Lab Returned — Ready to Pack)'
+            : 'Confirm Order (Lab Returned)';
+        }
+        return 'Apply: Confirm Order';
       case 'exchange':          return 'Mark as Exchange';
       case 'cancel_after_dispatch': return 'Confirm CAD';
       case 'cancel_before_dispatch': return 'Confirm CBD';
@@ -580,11 +625,47 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       {isLabReturning && (
         <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-start gap-2.5">
           <FlaskConical className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-          <div>
+          <div className="flex-1">
             <div className="text-xs font-semibold text-teal-800 mb-0.5">Order is In Lab</div>
-            <p className="text-xs text-teal-700">
-              When the lab returns this order, use <strong>Confirm Order (Lab Returned)</strong> to move it to the Printed tab for the warehouse to finish picking and pack.
-            </p>
+            {allItemsFullyPicked ? (
+              <p className="text-xs text-teal-700">
+                All items are already picked. When the lab returns this order, use <strong>Confirm Order</strong> to move it directly to <strong>Packed</strong> — ready for shipping.
+              </p>
+            ) : (
+              <p className="text-xs text-teal-700">
+                When the lab returns this order, use <strong>Confirm Order</strong> to move it to the <strong>Printed</strong> tab for the warehouse to finish picking and pack.
+              </p>
+            )}
+            <div className="mt-3">
+              {showLabConfirm ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-teal-800 font-medium">Are you sure?</span>
+                  <button
+                    onClick={() => {
+                      setShowLabConfirm(false);
+                      handleApplyLabReturn();
+                    }}
+                    disabled={saving}
+                    className="px-3 py-1 bg-teal-700 hover:bg-teal-800 disabled:bg-teal-400 text-white text-xs font-semibold rounded-lg transition-colors"
+                  >
+                    {saving ? 'Applying...' : allItemsFullyPicked ? 'Yes, Move to Packed' : 'Yes, Confirm Order'}
+                  </button>
+                  <button
+                    onClick={() => setShowLabConfirm(false)}
+                    className="px-2 py-1 text-xs text-teal-700 hover:text-teal-900 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowLabConfirm(true)}
+                  className="text-xs font-semibold text-teal-700 hover:text-teal-900 underline underline-offset-2 transition-colors"
+                >
+                  {allItemsFullyPicked ? 'Confirm Order (Lab Returned — Ready to Pack)' : 'Confirm Order (Lab Returned)'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -716,14 +797,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
             <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
               <p className="text-xs text-rose-700">
                 The order will be listed in Returns with <strong>Reverse Pick</strong> status for the warehouse team to prioritize retrieval.
-              </p>
-            </div>
-          )}
-
-          {selectedAction === 'not_printed' && isLabReturning && (
-            <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg">
-              <p className="text-xs text-teal-700">
-                The order will move to the <strong>Printed</strong> tab in Operations. The warehouse will continue picking the remaining items and then pack and ship as normal.
               </p>
             </div>
           )}

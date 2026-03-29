@@ -67,21 +67,7 @@ export function buildInvoiceHtml(
   `;
   }).join('');
 
-  const allPackaging: { name: string }[] = [];
-  defaultPackaging.forEach(p => allPackaging.push({ name: p.product_name }));
-  packagingItems.forEach(p => {
-    if (!defaultPackaging.find(d => d.sku === p.sku)) {
-      allPackaging.push({ name: p.product_name });
-    }
-  });
-  const packagingRowHtml = allPackaging.length > 0
-    ? `<tr>
-        <td colspan="5" style="padding:8px 12px;border-bottom:1px solid #eee;background:#fafafa;">
-          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#888;margin-right:8px;">Packaging:</span>
-          <span style="font-size:11px;color:#555;">${allPackaging.map(p => esc(p.name)).join(' &nbsp;·&nbsp; ')}</span>
-        </td>
-      </tr>`
-    : '';
+  const packagingRowHtml = '';
 
   const discountRow = discount > 0
     ? `<tr><td style="padding:5px 12px;color:#16a34a;">Discount</td><td style="padding:5px 12px;text-align:right;color:#16a34a;">-${fmt(discount)}</td></tr>`

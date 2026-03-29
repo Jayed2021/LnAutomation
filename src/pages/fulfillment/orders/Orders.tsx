@@ -126,12 +126,12 @@ function formatTimeAgo(ts: number): string {
 type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'lab_orders' | 'partial';
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'all', label: 'All Orders' },
   { key: 'needs_action', label: 'Needs Action' },
   { key: 'scheduled', label: 'Scheduled' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'lab_orders', label: 'Lab' },
   { key: 'partial', label: 'Partial' },
-  { key: 'all', label: 'All Orders' },
 ];
 
 const TAB_STATUSES: Record<Tab, string[]> = {
@@ -423,11 +423,11 @@ export default function Orders() {
   }, []);
 
   useEffect(() => {
-    if (!highlightedOrderId || scrollDoneRef.current) return;
+    if (!highlightedOrderId || scrollDoneRef.current || loading) return;
 
     let cancelled = false;
     let attempts = 0;
-    const MAX_ATTEMPTS = 10;
+    const MAX_ATTEMPTS = 20;
     const INTERVAL_MS = 80;
 
     const tryScroll = () => {
@@ -452,7 +452,7 @@ export default function Orders() {
       cancelled = true;
       cancelAnimationFrame(raf);
     };
-  }, [highlightedOrderId]);
+  }, [highlightedOrderId, loading]);
 
   const highlightedRowCallbackRef = useCallback((node: HTMLTableRowElement | null) => {
     if (!node || scrollDoneRef.current) return;

@@ -48,6 +48,9 @@ export function buildInvoiceHtml(
       : '';
     const regularPrice = item.regular_price != null ? fmt(item.regular_price) : '—';
     const itemDiscount = item.discount_amount > 0 ? `-${fmt(item.discount_amount)}` : '—';
+    const computedTotal = item.regular_price != null
+      ? item.regular_price * item.quantity - (item.discount_amount ?? 0)
+      : item.line_total;
     return `
     <tr>
       <td style="padding:10px 12px;border-bottom:1px solid #eee;vertical-align:top;">
@@ -59,7 +62,7 @@ export function buildInvoiceHtml(
       <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${regularPrice}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:center;">${item.quantity}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;color:#16a34a;">${itemDiscount}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:600;">${fmt(item.line_total)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:600;">${fmt(computedTotal)}</td>
     </tr>
   `;
   }).join('');

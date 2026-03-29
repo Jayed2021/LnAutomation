@@ -35,9 +35,29 @@ export async function fetchOrderItems(orderId: string): Promise<OrderItem[]> {
     .eq('order_id', orderId)
     .order('created_at');
   if (error) throw error;
-  return ((data ?? []) as any[]).map(row => ({
+
+  const rows = (data ?? []) as any[];
+
+  const skusWithoutProduct = rows
+    .filter(r => !r.product_id && r.sku)
+    .map(r => r.sku as string);
+
+  let skuPriceMap = new Map<string, number>();
+  if (skusWithoutProduct.length > 0) {
+    const { data: prods } = await supabase
+      .from('products')
+      .select('sku, selling_price')
+      .in('sku', skusWithoutProduct);
+    if (prods) {
+      for (const p of prods) {
+        if (p.selling_price != null) skuPriceMap.set(p.sku, p.selling_price);
+      }
+    }
+  }
+
+  return rows.map(row => ({
     ...row,
-    regular_price: row.product?.selling_price ?? null,
+    regular_price: row.product?.selling_price ?? (row.sku ? skuPriceMap.get(row.sku) ?? null : null),
     product: undefined,
   })) as OrderItem[];
 }

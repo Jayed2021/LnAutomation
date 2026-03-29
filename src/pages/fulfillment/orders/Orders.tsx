@@ -126,7 +126,7 @@ function formatTimeAgo(ts: number): string {
 type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'lab_orders' | 'partial';
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'needs_action', label: 'Pending' },
+  { key: 'needs_action', label: 'Needs Action' },
   { key: 'scheduled', label: 'Scheduled' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'lab_orders', label: 'Lab' },
@@ -423,24 +423,36 @@ export default function Orders() {
   }, []);
 
   useEffect(() => {
-    if (!highlightedOrderId || scrollDoneRef.current || orders.length === 0) return;
-    const targetOrder = orders.find(o => o.id === highlightedOrderId);
-    if (!targetOrder) return;
+    if (!highlightedOrderId || scrollDoneRef.current) return;
 
-    const attempt = () => {
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 10;
+    const INTERVAL_MS = 80;
+
+    const tryScroll = () => {
+      if (cancelled || scrollDoneRef.current) return;
       const row = highlightedRowRef.current ?? document.querySelector(`[data-order-id="${highlightedOrderId}"]`) as HTMLTableRowElement | null;
-      if (row && !scrollDoneRef.current) {
+      if (row) {
         scrollDoneRef.current = true;
         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
         setTimeout(() => {
           localStorage.removeItem(LAST_VIEWED_ORDER_KEY);
         }, 1000);
+        return;
+      }
+      attempts++;
+      if (attempts < MAX_ATTEMPTS) {
+        setTimeout(tryScroll, INTERVAL_MS);
       }
     };
 
-    const raf = requestAnimationFrame(() => setTimeout(attempt, 50));
-    return () => cancelAnimationFrame(raf);
-  }, [highlightedOrderId, orders]);
+    const raf = requestAnimationFrame(() => setTimeout(tryScroll, 50));
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [highlightedOrderId]);
 
   const highlightedRowCallbackRef = useCallback((node: HTMLTableRowElement | null) => {
     if (!node || scrollDoneRef.current) return;

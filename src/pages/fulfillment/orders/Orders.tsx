@@ -127,11 +127,11 @@ type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'lab_orders' |
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'needs_action', label: 'Pending' },
-  { key: 'all', label: 'All Orders' },
   { key: 'scheduled', label: 'Scheduled' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'lab_orders', label: 'Lab' },
   { key: 'partial', label: 'Partial' },
+  { key: 'all', label: 'All Orders' },
 ];
 
 const TAB_STATUSES: Record<Tab, string[]> = {
@@ -374,6 +374,7 @@ export default function Orders() {
   const highlightedOrderIdRef = useRef<string | null>(null);
   const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
   const scrollRestoredRef = useRef(false);
+  const scrollDoneRef = useRef(false);
 
   const paramTab = searchParams.get('tab') as Tab | null;
   const paramDateRange = searchParams.get('dateRange') as DateRange | null;
@@ -412,6 +413,7 @@ export default function Orders() {
 
     if (lastViewedId && savedScrollState && !scrollRestoredRef.current) {
       scrollRestoredRef.current = true;
+      scrollDoneRef.current = false;
       highlightedOrderIdRef.current = lastViewedId;
       setHighlightedOrderId(lastViewedId);
 
@@ -420,16 +422,17 @@ export default function Orders() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!highlightedOrderId || !highlightedRowRef.current) return;
-    const timer = setTimeout(() => {
-      highlightedRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const highlightedRowCallbackRef = useCallback((node: HTMLTableRowElement | null) => {
+    if (!node || scrollDoneRef.current) return;
+    scrollDoneRef.current = true;
+    highlightedRowRef.current = node;
+    setTimeout(() => {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
       setTimeout(() => {
         localStorage.removeItem(LAST_VIEWED_ORDER_KEY);
       }, 1000);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [highlightedOrderId, orders]);
+    }, 100);
+  }, [highlightedOrderId]);
 
   const updateParams = useCallback((updates: Record<string, string | null>) => {
     setSearchParams(prev => {
@@ -1293,7 +1296,7 @@ export default function Orders() {
                         return (
                           <tr
                             key={order.id}
-                            ref={isHighlighted ? highlightedRowRef : undefined}
+                            ref={isHighlighted ? highlightedRowCallbackRef : undefined}
                             onClick={() => handleRowClick(order.id)}
                             className={rowClass}
                           >

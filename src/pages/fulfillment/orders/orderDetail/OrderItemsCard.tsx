@@ -608,19 +608,11 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
               Coupon(s):
             </div>
             <div className="flex flex-col items-end gap-1.5">
-              {couponLines.map((c, i) => {
-                const discountVal = parseFloat(c.discount) || 0;
-                return (
-                  <div key={i} className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded">
-                      {c.code.toUpperCase()}
-                    </span>
-                    {discountVal > 0 && (
-                      <span className="text-sm text-red-500">-{fmt(discountVal)}</span>
-                    )}
-                  </div>
-                );
-              })}
+              {couponLines.map((c, i) => (
+                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded">
+                  {c.code.toUpperCase()}
+                </span>
+              ))}
             </div>
           </div>
         )}

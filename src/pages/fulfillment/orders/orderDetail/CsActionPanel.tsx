@@ -183,6 +183,12 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     availableActions = ['mark_processing', ...availableActions];
   }
 
+  const isAdmin = userRole === 'admin';
+  if (isAdmin) {
+    const allActions = Object.keys(ACTION_LABELS);
+    availableActions = allActions.filter(a => a !== 'new_called');
+  }
+
   const showLabFlowNotice = hasPrescription && CS_STATUSES_WITH_LAB.includes(order.cs_status);
 
   const getWooConfig = async () => {

@@ -100,8 +100,22 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     expected_delivery_date: '',
     exchange_return_id: '',
     partial_items: [] as string[],
+    reverse_pick_items: [] as string[],
+    exchange_selected_items: [] as string[],
     refund_amount: '',
   });
+
+  interface ExchangeItem {
+    id: string;
+    product_id: string;
+    sku: string;
+    quantity: number;
+    product_name: string;
+  }
+
+  const [exchangeItems, setExchangeItems] = useState<ExchangeItem[]>([]);
+  const [exchangeItemsFetched, setExchangeItemsFetched] = useState(false);
+  const [exchangeFetchLoading, setExchangeFetchLoading] = useState(false);
 
   useEffect(() => {
     supabase.from('cancellation_reasons').select('id, reason_text, cancellation_type').eq('is_active', true).order('sort_order').then(({ data }) => {
@@ -128,8 +142,13 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       expected_delivery_date: '',
       exchange_return_id: '',
       partial_items: [],
+      reverse_pick_items: [],
+      exchange_selected_items: [],
       refund_amount: '',
     }));
+    setExchangeItems([]);
+    setExchangeItemsFetched(false);
+    setExchangeFetchLoading(false);
   }, [selectedAction]);
 
   const isWarehouseRole = WAREHOUSE_ROLES.includes(userRole ?? '');
@@ -222,6 +241,62 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     }
   };
 
+  const handleFetchExchangeItems = async () => {
+    const returnOrderNumber = form.exchange_return_id.trim();
+    if (!returnOrderNumber) return;
+    setExchangeFetchLoading(true);
+    setExchangeItems([]);
+    setExchangeItemsFetched(false);
+    setForm(p => ({ ...p, exchange_selected_items: [] }));
+    try {
+      const isNumeric = /^\d+$/.test(returnOrderNumber);
+      let retOrder: { id: string } | null = null;
+      if (isNumeric) {
+        const { data: byWooId } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('woo_order_id', parseInt(returnOrderNumber, 10))
+          .maybeSingle();
+        retOrder = byWooId;
+        if (!retOrder) {
+          const { data: byWooNumber } = await supabase
+            .from('orders')
+            .select('id')
+            .eq('woo_order_number', returnOrderNumber)
+            .maybeSingle();
+          retOrder = byWooNumber;
+        }
+      } else {
+        const { data: byOrderNumber } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('order_number', returnOrderNumber)
+          .maybeSingle();
+        retOrder = byOrderNumber;
+      }
+      if (!retOrder) {
+        setExchangeItemsFetched(false);
+        return;
+      }
+      const { data: orderItems } = await supabase
+        .from('order_items')
+        .select('id, product_id, sku, quantity, product_name')
+        .eq('order_id', retOrder.id);
+      setExchangeItems(
+        (orderItems ?? []).map(oi => ({
+          id: oi.id,
+          product_id: oi.product_id,
+          sku: oi.sku,
+          quantity: oi.quantity,
+          product_name: oi.product_name,
+        }))
+      );
+      setExchangeItemsFetched(true);
+    } finally {
+      setExchangeFetchLoading(false);
+    }
+  };
+
   const handleApply = async () => {
     if (!selectedAction) return;
     setSaving(true);
@@ -310,6 +385,11 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           setSaving(false);
           return;
         }
+        if (form.exchange_selected_items.length === 0) {
+          alert('Please fetch the returnable order\'s items and select at least one item to return.');
+          setSaving(false);
+          return;
+        }
         const returnOrderNumber = form.exchange_return_id.trim();
         const isNumeric = /^\d+$/.test(returnOrderNumber);
         let retOrder: { id: string; customer_id: string; cs_status: string } | null = null;
@@ -358,21 +438,18 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         }).select('id').single();
         if (newReturn) {
           updates.exchange_return_id = newReturn.id;
-          const { data: retOrderItems } = await supabase
-            .from('order_items')
-            .select('id, product_id, sku, quantity')
-            .eq('order_id', retOrder.id);
-          if (retOrderItems?.length) {
-            await supabase.from('return_items').insert(
-              retOrderItems.map(oi => ({
+          for (const itemId of form.exchange_selected_items) {
+            const item = exchangeItems.find(i => i.id === itemId);
+            if (item) {
+              await supabase.from('return_items').insert({
                 return_id: newReturn.id,
-                order_item_id: oi.id,
-                product_id: oi.product_id,
-                sku: oi.sku,
-                quantity: oi.quantity,
+                order_item_id: itemId,
+                product_id: item.product_id,
+                sku: item.sku,
+                quantity: item.quantity,
                 qc_status: 'pending',
-              }))
-            );
+              });
+            }
           }
         }
         await supabase.from('orders').update({
@@ -485,6 +562,11 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       }
 
       if (selectedAction === 'reverse_pick') {
+        if (form.reverse_pick_items.length === 0) {
+          alert('Please select at least one item for the reverse pick.');
+          setSaving(false);
+          return;
+        }
         const returnNumber = `RET-${Date.now()}`;
         const { data: rpReturn } = await supabase.from('returns').insert({
           return_number: returnNumber,
@@ -495,21 +577,18 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           created_by: userId,
         }).select('id').single();
         if (rpReturn) {
-          const { data: rpOrderItems } = await supabase
-            .from('order_items')
-            .select('id, product_id, sku, quantity')
-            .eq('order_id', order.id);
-          if (rpOrderItems?.length) {
-            await supabase.from('return_items').insert(
-              rpOrderItems.map(oi => ({
+          for (const itemId of form.reverse_pick_items) {
+            const item = items.find(i => i.id === itemId);
+            if (item) {
+              await supabase.from('return_items').insert({
                 return_id: rpReturn.id,
-                order_item_id: oi.id,
-                product_id: oi.product_id,
-                sku: oi.sku,
-                quantity: oi.quantity,
+                order_item_id: itemId,
+                product_id: item.product_id,
+                sku: item.sku,
+                quantity: item.quantity,
                 qc_status: 'pending',
-              }))
-            );
+              });
+            }
           }
         }
       }
@@ -548,8 +627,11 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         cancellation_reason_id: '', cancellation_reason_text: '',
         late_delivery_reason: '', expected_delivery_date: '',
         exchange_return_id: '', partial_items: [],
+        reverse_pick_items: [], exchange_selected_items: [],
         refund_amount: '',
       });
+      setExchangeItems([]);
+      setExchangeItemsFetched(false);
       onUpdated();
 
       if (wooSyncWarning) {
@@ -755,9 +837,50 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
             <div className="space-y-3 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div>
                 <div className="text-xs font-medium text-blue-800 mb-1">Returnable Order Number *</div>
-                <input value={form.exchange_return_id} onChange={e => setForm(p => ({ ...p, exchange_return_id: e.target.value }))} className={inputCls} placeholder="e.g. ORD-2026-123456 or 1966207" />
+                <input
+                  value={form.exchange_return_id}
+                  onChange={e => {
+                    setForm(p => ({ ...p, exchange_return_id: e.target.value, exchange_selected_items: [] }));
+                    setExchangeItems([]);
+                    setExchangeItemsFetched(false);
+                  }}
+                  className={inputCls}
+                  placeholder="e.g. ORD-2026-123456 or 1966207"
+                />
                 <p className="text-xs text-blue-500 mt-1">Enter the ERP order number or WooCommerce order ID. The linked order must be in Delivered or Partial Delivery status — it will be changed to Exchange Returnable (EXR).</p>
               </div>
+              <button
+                type="button"
+                onClick={handleFetchExchangeItems}
+                disabled={!form.exchange_return_id.trim() || exchangeFetchLoading}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-semibold rounded-lg transition-colors"
+              >
+                {exchangeFetchLoading ? 'Fetching...' : 'Fetch Items'}
+              </button>
+              {exchangeItemsFetched && exchangeItems.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-blue-800 mb-2">Select Items to Return *</div>
+                  {exchangeItems.map(item => (
+                    <label key={item.id} className="flex items-center gap-2 cursor-pointer mb-1.5">
+                      <input
+                        type="checkbox"
+                        checked={form.exchange_selected_items.includes(item.id)}
+                        onChange={e => setForm(p => ({
+                          ...p,
+                          exchange_selected_items: e.target.checked
+                            ? [...p.exchange_selected_items, item.id]
+                            : p.exchange_selected_items.filter(id => id !== item.id)
+                        }))}
+                        className="rounded border-gray-300"
+                      />
+                      <span className="text-sm text-gray-800">{item.product_name} <span className="text-gray-400">(Qty: {item.quantity})</span></span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {exchangeItemsFetched && exchangeItems.length === 0 && (
+                <p className="text-xs text-blue-600">No items found for this order.</p>
+              )}
             </div>
           )}
 
@@ -808,12 +931,31 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
             </div>
           )}
 
-          {/* Reverse pick info */}
+          {/* Reverse pick item selection */}
           {selectedAction === 'reverse_pick' && (
-            <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+            <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg space-y-3">
               <p className="text-xs text-rose-700">
                 The order will be listed in Returns with <strong>Reverse Pick</strong> status for the warehouse team to prioritize retrieval.
               </p>
+              <div>
+                <div className="text-xs font-medium text-rose-800 mb-2">Select Items to Reverse Pick *</div>
+                {items.map(item => (
+                  <label key={item.id} className="flex items-center gap-2 cursor-pointer mb-1.5">
+                    <input
+                      type="checkbox"
+                      checked={form.reverse_pick_items.includes(item.id)}
+                      onChange={e => setForm(p => ({
+                        ...p,
+                        reverse_pick_items: e.target.checked
+                          ? [...p.reverse_pick_items, item.id]
+                          : p.reverse_pick_items.filter(id => id !== item.id)
+                      }))}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm text-gray-800">{item.product_name} <span className="text-gray-400">(Qty: {item.quantity})</span></span>
+                  </label>
+                ))}
+              </div>
             </div>
           )}
 

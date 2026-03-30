@@ -41,11 +41,17 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const [shipNote, setShipNote] = useState('');
   const [pendingSave, setPendingSave] = useState<(() => Promise<void>) | null>(null);
 
+  const isPartialPaidOrder = order.payment_method?.toLowerCase().startsWith('partial paid') ||
+    order.payment_method?.toLowerCase().includes('+cod');
+  const expectedReceivable = isPartialPaidOrder && order.paid_amount != null
+    ? order.total_amount - order.paid_amount
+    : order.total_amount;
+
   const [edit, setEdit] = useState({
     courier_company: courier?.courier_company ?? '',
     tracking_number: courier?.tracking_number ?? '',
     courier_area: courier?.courier_area ?? '',
-    total_receivable: courier?.total_receivable ?? order.total_amount,
+    total_receivable: courier?.total_receivable ?? expectedReceivable,
     cod_charge: courier?.cod_charge ?? 0,
   });
 
@@ -68,10 +74,13 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const getOfficeDeliveryErrors = (): string[] => {
     if (!isOfficeDelivery) return [];
     const errors: string[] = [];
-    if (order.payment_method === 'COD' || !order.payment_method) {
+    const pm = order.payment_method?.toLowerCase().trim() ?? '';
+    const isEffectivelyCod = !pm || pm === 'cod' || pm === 'cash on delivery' || pm === 'cash_on_delivery';
+    const isNonCodLegacy = !isEffectivelyCod && !pm.startsWith('prepaid') && !pm.startsWith('partial paid');
+    if (isEffectivelyCod) {
       errors.push('Payment method must not be COD for Office Delivery');
     }
-    if (!order.payment_reference?.trim()) {
+    if (!isNonCodLegacy && !order.payment_reference?.trim()) {
       errors.push('Payment reference is required for Office Delivery');
     }
     return errors;
@@ -314,7 +323,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                 courier_company: courier?.courier_company ?? '',
                 tracking_number: courier?.tracking_number ?? '',
                 courier_area: courier?.courier_area ?? '',
-                total_receivable: courier?.total_receivable ?? order.total_amount,
+                total_receivable: courier?.total_receivable ?? expectedReceivable,
                 cod_charge: courier?.cod_charge ?? 0,
               });
               setEditing(true);
@@ -394,11 +403,16 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
             <div className="text-xs font-medium text-green-700 mb-0.5">Total Receivable (Courier Collection)</div>
             {editing
               ? <input type="number" value={edit.total_receivable} onChange={e => setEdit(p => ({ ...p, total_receivable: parseFloat(e.target.value) || 0 }))} className={inputCls} />
-              : <div className="text-lg font-bold text-green-800">৳{(courier?.total_receivable ?? order.total_amount).toLocaleString('en-BD', { minimumFractionDigits: 2 })}</div>}
+              : <div className="text-lg font-bold text-green-800">৳{(courier?.total_receivable ?? expectedReceivable).toLocaleString('en-BD', { minimumFractionDigits: 2 })}</div>}
             <div className="text-xs text-green-600 mt-0.5">Amount to collect from customer</div>
-            {editing && isShipped && edit.total_receivable !== (courier?.total_receivable ?? order.total_amount) && (
+            {editing && isShipped && edit.total_receivable !== (courier?.total_receivable ?? expectedReceivable) && (
               <p className="text-xs text-amber-700 mt-1.5 font-medium">
                 Changing this on a shipped order will flag the amount for accounts review.
+              </p>
+            )}
+            {editing && isPartialPaidOrder && order.paid_amount != null && edit.total_receivable !== expectedReceivable && (
+              <p className="text-xs text-amber-700 mt-1 font-medium flex items-center gap-1">
+                Expected COD amount is ৳{expectedReceivable.toLocaleString('en-BD', { minimumFractionDigits: 2 })} based on paid amount.
               </p>
             )}
           </div>
@@ -420,7 +434,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                     <li key={i} className="text-xs text-red-700">• {err}</li>
                   ))}
                 </ul>
-                <p className="text-xs text-red-600 mt-1">Update Payment Method and Payment Reference in Customer Information before saving.</p>
+                <p className="text-xs text-red-600 mt-1">Update Payment Method and Payment Reference in the Customer Information section before saving.</p>
               </div>
             </div>
           )}

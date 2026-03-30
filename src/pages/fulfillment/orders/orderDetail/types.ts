@@ -22,6 +22,7 @@ export interface OrderDetail {
   payment_method: string | null;
   payment_status: string;
   payment_reference: string | null;
+  paid_amount: number | null;
   subtotal: number;
   discount_amount: number;
   shipping_fee: number;

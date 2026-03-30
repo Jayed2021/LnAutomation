@@ -10,7 +10,7 @@ export async function fetchOrderDetail(id: string): Promise<OrderDetail | null> 
     .select(`
       id, order_number, woo_order_id, woo_order_number,
       order_date, created_at, cs_status, fulfillment_status,
-      payment_method, payment_status, payment_reference,
+      payment_method, payment_status, payment_reference, paid_amount,
       subtotal, discount_amount, shipping_fee, total_amount,
       order_source, order_type, conversation_url, meta_screenshot_url,
       confirmation_type, courier_entry_method,

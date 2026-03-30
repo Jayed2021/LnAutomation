@@ -1,24 +1,69 @@
 import React, { useState, useEffect } from 'react';
-import { Phone, Save, X, CreditCard as Edit2, MessageSquare } from 'lucide-react';
+import { Phone, Save, X, CreditCard as Edit2, MessageSquare, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail } from './types';
 
-const PAYMENT_METHODS = ['COD', 'SSL Commerz', 'bKash', 'Nagad', 'Bank Transfer', 'bKash+COD', 'SSL+COD', 'Nagad+COD'];
+const PRIMARY_METHODS = ['COD', 'Prepaid', 'Partial Paid'] as const;
+type PrimaryMethod = typeof PRIMARY_METHODS[number];
 
-function normalizePaymentMethod(raw: string | null | undefined): string {
-  if (!raw) return 'COD';
+const SUB_METHODS = ['Bkash', 'Nagad', 'SSL Commerz', 'Bank Transfer', 'Other'] as const;
+type SubMethod = typeof SUB_METHODS[number];
+
+const LEGACY_PARTIAL: Record<string, SubMethod> = {
+  'bkash+cod': 'Bkash',
+  'ssl+cod': 'SSL Commerz',
+  'nagad+cod': 'Nagad',
+};
+
+const LEGACY_PREPAID: Record<string, SubMethod> = {
+  'bkash': 'Bkash',
+  'nagad': 'Nagad',
+  'ssl commerz': 'SSL Commerz',
+  'pay online': 'SSL Commerz',
+  'bank transfer': 'Bank Transfer',
+};
+
+interface ParsedPayment {
+  primary: PrimaryMethod;
+  sub: SubMethod | '';
+  isLegacy: boolean;
+}
+
+function parsePaymentMethod(raw: string | null | undefined): ParsedPayment {
+  if (!raw) return { primary: 'COD', sub: '', isLegacy: false };
   const lower = raw.toLowerCase().trim();
-  if (lower === 'cod' || lower === 'cash on delivery' || lower === 'cash_on_delivery') return 'COD';
-  if (lower.includes('bkash') && lower.includes('cod')) return 'bKash+COD';
-  if (lower.includes('ssl') && lower.includes('cod')) return 'SSL+COD';
-  if (lower.includes('nagad') && lower.includes('cod')) return 'Nagad+COD';
-  if (lower.includes('bkash')) return 'bKash';
-  if (lower.includes('nagad')) return 'Nagad';
-  if (lower.includes('ssl') || lower.includes('pay online')) return 'SSL Commerz';
-  if (lower.includes('bank')) return 'Bank Transfer';
-  const match = PAYMENT_METHODS.find(m => m.toLowerCase() === lower);
-  if (match) return match;
-  return raw;
+
+  if (lower === 'cod' || lower === 'cash on delivery' || lower === 'cash_on_delivery') {
+    return { primary: 'COD', sub: '', isLegacy: false };
+  }
+
+  if (raw.startsWith('Prepaid - ')) {
+    const sub = raw.slice('Prepaid - '.length) as SubMethod;
+    return { primary: 'Prepaid', sub: SUB_METHODS.includes(sub as SubMethod) ? sub : '', isLegacy: false };
+  }
+  if (raw.startsWith('Partial Paid - ')) {
+    const sub = raw.slice('Partial Paid - '.length) as SubMethod;
+    return { primary: 'Partial Paid', sub: SUB_METHODS.includes(sub as SubMethod) ? sub : '', isLegacy: false };
+  }
+
+  for (const [key, sub] of Object.entries(LEGACY_PARTIAL)) {
+    if (lower === key || lower.includes(key)) {
+      return { primary: 'Partial Paid', sub, isLegacy: true };
+    }
+  }
+  for (const [key, sub] of Object.entries(LEGACY_PREPAID)) {
+    if (lower === key || lower.includes(key)) {
+      return { primary: 'Prepaid', sub, isLegacy: true };
+    }
+  }
+
+  return { primary: 'COD', sub: '', isLegacy: false };
+}
+
+function buildPaymentMethodString(primary: PrimaryMethod, sub: SubMethod | ''): string {
+  if (primary === 'COD') return 'COD';
+  if (!sub) return primary;
+  return `${primary} - ${sub}`;
 }
 
 const inputCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
@@ -45,9 +90,11 @@ interface EditState {
   address_line1: string;
   district: string;
   email: string;
-  payment_method: string;
+  primary_method: PrimaryMethod;
+  sub_method: SubMethod | '';
   payment_status: string;
   payment_reference: string;
+  paid_amount: string;
   customer_note: string;
 }
 
@@ -66,37 +113,56 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
       });
   }, []);
 
-  const [edit, setEdit] = useState<EditState>({
+  const parsed = parsePaymentMethod(order.payment_method);
+
+  const buildEditState = (): EditState => ({
     full_name: order.customer?.full_name ?? '',
     phone_primary: order.customer?.phone_primary ?? '',
     phone_secondary: order.customer?.phone_secondary ?? '',
     address_line1: order.customer?.address_line1 ?? '',
     district: order.customer?.district ?? '',
     email: order.customer?.email ?? '',
-    payment_method: normalizePaymentMethod(order.payment_method),
+    primary_method: parsed.primary,
+    sub_method: parsed.sub,
     payment_status: order.payment_status ?? 'unpaid',
     payment_reference: order.payment_reference ?? '',
+    paid_amount: order.paid_amount != null ? String(order.paid_amount) : '',
     customer_note: order.customer_note ?? '',
   });
 
+  const [edit, setEdit] = useState<EditState>(buildEditState);
+
   const startEdit = () => {
-    setEdit({
-      full_name: order.customer?.full_name ?? '',
-      phone_primary: order.customer?.phone_primary ?? '',
-      phone_secondary: order.customer?.phone_secondary ?? '',
-      address_line1: order.customer?.address_line1 ?? '',
-      district: order.customer?.district ?? '',
-      email: order.customer?.email ?? '',
-      payment_method: normalizePaymentMethod(order.payment_method),
-      payment_status: order.payment_status ?? 'unpaid',
-      payment_reference: order.payment_reference ?? '',
-    });
+    setEdit(buildEditState());
     setEditing(true);
   };
 
-  const isNonCod = edit.payment_method !== 'COD';
+  const isNonCod = edit.primary_method !== 'COD';
+  const isPartialPaid = edit.primary_method === 'Partial Paid';
+
   const referenceRequired = isNonCod && !edit.payment_reference.trim();
-  const canSave = !referenceRequired;
+  const paidAmountRequired = isNonCod && (!edit.paid_amount || parseFloat(edit.paid_amount) <= 0);
+  const subMethodRequired = isNonCod && !edit.sub_method;
+  const canSave = !referenceRequired && !paidAmountRequired && !subMethodRequired;
+
+  const computedCodAmount = isPartialPaid && edit.paid_amount
+    ? order.total_amount - (parseFloat(edit.paid_amount) || 0)
+    : null;
+
+  const codAmountMismatch =
+    isPartialPaid &&
+    computedCodAmount !== null &&
+    computedCodAmount < 0;
+
+  const handlePrimaryChange = (method: PrimaryMethod) => {
+    setEdit(p => ({
+      ...p,
+      primary_method: method,
+      sub_method: method === 'COD' ? '' : p.sub_method,
+      payment_reference: method === 'COD' ? '' : p.payment_reference,
+      paid_amount: method === 'COD' ? '' : p.paid_amount,
+    }));
+  };
 
   const handleSave = async () => {
     if (!canSave) return;
@@ -111,10 +177,14 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
         email: edit.email,
       }).eq('id', order.customer.id);
 
+      const paymentMethodString = buildPaymentMethodString(edit.primary_method, edit.sub_method);
+      const paidAmount = isNonCod && edit.paid_amount ? parseFloat(edit.paid_amount) : null;
+
       await supabase.from('orders').update({
-        payment_method: edit.payment_method,
+        payment_method: paymentMethodString,
         payment_status: edit.payment_status,
-        payment_reference: edit.payment_reference,
+        payment_reference: isNonCod ? edit.payment_reference : null,
+        paid_amount: paidAmount,
         customer_note: edit.customer_note || null,
         updated_at: new Date().toISOString(),
       }).eq('id', order.id);
@@ -127,6 +197,11 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
       setSaving(false);
     }
   };
+
+  const displayParsed = parsePaymentMethod(order.payment_method);
+  const remainingCod = order.paid_amount != null && displayParsed.primary === 'Partial Paid'
+    ? order.total_amount - order.paid_amount
+    : null;
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4">
@@ -219,18 +294,74 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
         )}
 
         {editing ? (
-          <>
-            <Field label="Payment Method">
-              <select value={edit.payment_method} onChange={e => setEdit(p => ({ ...p, payment_method: e.target.value }))} className={selectCls}>
-                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </Field>
-            <Field label="Payment Status">
-              <select value={edit.payment_status} onChange={e => setEdit(p => ({ ...p, payment_status: e.target.value }))} className={selectCls}>
-                <option value="unpaid">Unpaid</option>
-                <option value="paid">Paid</option>
-              </select>
-            </Field>
+          <div className="space-y-3 pt-1">
+            <div>
+              <div className="text-xs font-medium text-gray-500 mb-1.5">Payment Method</div>
+              <div className="grid grid-cols-3 gap-2">
+                {PRIMARY_METHODS.map(method => (
+                  <button
+                    key={method}
+                    type="button"
+                    onClick={() => handlePrimaryChange(method)}
+                    className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                      edit.primary_method === method
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {method}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {isNonCod && (
+              <div>
+                <div className="text-xs font-medium text-gray-500 mb-1">
+                  Payment Channel <span className="text-red-500">*</span>
+                </div>
+                <select
+                  value={edit.sub_method}
+                  onChange={e => setEdit(p => ({ ...p, sub_method: e.target.value as SubMethod }))}
+                  className={`${selectCls} ${subMethodRequired ? 'border-red-400 focus:ring-red-400' : ''}`}
+                >
+                  <option value="">Select channel...</option>
+                  {SUB_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            )}
+
+            {isNonCod && (
+              <div>
+                <div className="text-xs font-medium text-gray-500 mb-1">
+                  Paid Amount <span className="text-red-500">*</span>
+                </div>
+                <input
+                  type="number"
+                  value={edit.paid_amount}
+                  onChange={e => setEdit(p => ({ ...p, paid_amount: e.target.value }))}
+                  className={`${inputCls} ${paidAmountRequired ? 'border-red-400 focus:ring-red-400' : ''}`}
+                  placeholder="0.00"
+                  min="0"
+                  step="0.01"
+                />
+                {paidAmountRequired && (
+                  <p className="text-xs text-red-600 mt-1">Paid amount is required.</p>
+                )}
+                {isPartialPaid && computedCodAmount !== null && !codAmountMismatch && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    Remaining COD amount: ৳{computedCodAmount.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                  </p>
+                )}
+                {codAmountMismatch && (
+                  <div className="flex items-center gap-1.5 mt-1.5 p-2 bg-red-50 border border-red-200 rounded-lg">
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                    <p className="text-xs text-red-700">Paid amount exceeds order total — check the value.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {isNonCod && (
               <div>
                 <div className="text-xs font-medium text-gray-500 mb-1">
@@ -243,29 +374,77 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
                   placeholder="Transaction ID / Reference No."
                 />
                 {referenceRequired && (
-                  <p className="text-xs text-red-600 mt-1">Payment reference is required for non-COD methods.</p>
+                  <p className="text-xs text-red-600 mt-1">Payment reference is required.</p>
                 )}
               </div>
             )}
-          </>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 pt-0.5">
-            <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">Payment Method</div>
-              <div className="text-sm text-gray-900">{order.payment_method || '—'}</div>
-            </div>
+
+            {isPartialPaid && (
+              <div className="flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+                <AlertTriangle className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-700">
+                  The courier will collect the remaining balance (Total − Paid Amount) as COD.
+                </p>
+              </div>
+            )}
+
             <div>
               <div className="text-xs font-medium text-gray-500 mb-1">Payment Status</div>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${
-                order.payment_status === 'paid'
-                  ? 'bg-green-50 text-green-700 border-green-200'
-                  : 'bg-amber-50 text-amber-700 border-amber-200'
-              }`}>
-                {order.payment_status === 'paid' ? 'Paid' : 'Unpaid'}
-              </span>
+              <select value={edit.payment_status} onChange={e => setEdit(p => ({ ...p, payment_status: e.target.value }))} className={selectCls}>
+                <option value="unpaid">Unpaid</option>
+                <option value="paid">Paid</option>
+              </select>
             </div>
-            {order.payment_method !== 'COD' && order.payment_reference && (
-              <div className="col-span-2">
+          </div>
+        ) : (
+          <div className="space-y-2 pt-0.5">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-xs font-medium text-gray-500 mb-1">Payment Method</div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-sm text-gray-900">
+                    {order.payment_method || 'COD'}
+                  </span>
+                  {displayParsed.isLegacy && (
+                    <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                      Legacy — update
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-gray-500 mb-1">Payment Status</div>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${
+                  order.payment_status === 'paid'
+                    ? 'bg-green-50 text-green-700 border-green-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}>
+                  {order.payment_status === 'paid' ? 'Paid' : 'Unpaid'}
+                </span>
+              </div>
+            </div>
+
+            {displayParsed.primary !== 'COD' && order.paid_amount != null && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs font-medium text-gray-500 mb-1">Paid Amount</div>
+                  <div className="text-sm font-semibold text-gray-900">
+                    ৳{order.paid_amount.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                {remainingCod !== null && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 mb-1">Remaining COD</div>
+                    <div className={`text-sm font-semibold ${remainingCod < 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                      ৳{remainingCod.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {displayParsed.primary !== 'COD' && order.payment_reference && (
+              <div>
                 <div className="text-xs font-medium text-gray-500 mb-1">Payment Reference</div>
                 <div className="text-sm text-gray-900">{order.payment_reference}</div>
               </div>

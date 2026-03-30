@@ -1,0 +1,29 @@
+[project]
+project_id = "mgepetyohvqcfsrvffrv"
+
+[functions.woo-proxy]
+verify_jwt = false
+
+[functions.woo-webhook]
+verify_jwt = false
+
+[functions.woo-auto-sync]
+verify_jwt = false
+
+[functions.image-proxy]
+verify_jwt = false
+
+[functions.migrate-product-images]
+verify_jwt = false
+
+[functions.pathao-create-order]
+verify_jwt = false
+
+[functions.pathao-webhook]
+verify_jwt = false
+
+[functions.pathao-sync-status]
+verify_jwt = false
+
+[functions.auto-distribute-orders]
+verify_jwt = false

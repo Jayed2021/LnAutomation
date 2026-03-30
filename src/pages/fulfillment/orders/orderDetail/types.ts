@@ -27,6 +27,7 @@ export interface OrderDetail {
   shipping_fee: number;
   total_amount: number;
   order_source: string | null;
+  order_type: string;
   conversation_url: string | null;
   meta_screenshot_url: string | null;
   confirmation_type: string | null;

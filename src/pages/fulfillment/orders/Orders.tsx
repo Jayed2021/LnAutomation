@@ -309,7 +309,7 @@ const VALID_DATE_RANGES: DateRange[] = ['today', 'yesterday', 'this_week', 'this
 
 const ORDER_SELECT = `
   id, order_number, woo_order_id, woo_order_number,
-  order_date, cs_status, total_amount, expected_delivery_date,
+  order_date, cs_status, order_type, total_amount, expected_delivery_date,
   has_prescription, shipped_at,
   customer:customers(full_name, phone_primary),
   assigned_user:users!orders_assigned_to_fkey(id, full_name),
@@ -1364,6 +1364,19 @@ export default function Orders() {
                                     <FlaskConical className="w-2.5 h-2.5" />
                                     <span className="text-[10px] font-semibold">Rx</span>
                                   </div>
+                                )}
+                                {order.order_type && order.order_type !== 'standard' && (
+                                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
+                                    order.order_type === 'gift' ? 'bg-pink-100 text-pink-700' :
+                                    order.order_type === 'influencer' ? 'bg-amber-100 text-amber-700' :
+                                    order.order_type === 'home_try_on' ? 'bg-teal-100 text-teal-700' :
+                                    order.order_type === 'creative_work' ? 'bg-blue-100 text-blue-700' :
+                                    'bg-gray-100 text-gray-600'
+                                  }`}>
+                                    {order.order_type === 'home_try_on' ? 'HTO' :
+                                     order.order_type === 'creative_work' ? 'CW' :
+                                     order.order_type.charAt(0).toUpperCase() + order.order_type.slice(1)}
+                                  </span>
                                 )}
                               </div>
                             </td>

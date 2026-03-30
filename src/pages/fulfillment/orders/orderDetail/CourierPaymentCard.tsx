@@ -63,6 +63,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
 
   const isShipped = order.cs_status === 'shipped';
   const isOfficeDelivery = edit.courier_company === 'Office Delivery';
+  const isPathao = edit.courier_company === 'Pathao';
 
   const getOfficeDeliveryErrors = (): string[] => {
     if (!isOfficeDelivery) return [];
@@ -357,7 +358,13 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
           <div>
             <div className="text-xs font-medium text-gray-500 mb-1">Courier Company</div>
             {editing
-              ? <select value={edit.courier_company} onChange={e => setEdit(p => ({ ...p, courier_company: e.target.value }))} className={inputCls}>
+              ? <select value={edit.courier_company} onChange={e => {
+                  const company = e.target.value;
+                  setEdit(p => ({ ...p, courier_company: company }));
+                  if (company !== 'Pathao') {
+                    setConfirmEdit(p => ({ ...p, courier_entry_method: 'manual' }));
+                  }
+                }} className={inputCls}>
                   <option value="">Select courier</option>
                   {COURIERS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
@@ -526,9 +533,12 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                     Manual Entry
                   </button>
                   <button
-                    onClick={() => setConfirmEdit(p => ({ ...p, courier_entry_method: 'automatic' }))}
+                    onClick={() => isPathao && setConfirmEdit(p => ({ ...p, courier_entry_method: 'automatic' }))}
+                    disabled={!isPathao}
                     className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium transition-colors ${
-                      confirmEdit.courier_entry_method === 'automatic'
+                      !isPathao
+                        ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed'
+                        : confirmEdit.courier_entry_method === 'automatic'
                         ? 'bg-blue-50 border-blue-300 text-blue-700'
                         : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
@@ -537,7 +547,10 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                     Automatic API
                   </button>
                 </div>
-                {confirmEdit.courier_entry_method === 'automatic' && (
+                {!isPathao && (
+                  <p className="text-xs text-gray-400 mt-1.5">Automatic API is only available for Pathao.</p>
+                )}
+                {isPathao && confirmEdit.courier_entry_method === 'automatic' && (
                   <p className="text-xs text-blue-600 mt-1.5">Order will be submitted to Pathao automatically when you confirm.</p>
                 )}
               </div>

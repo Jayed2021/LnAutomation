@@ -12,7 +12,7 @@ export async function fetchOrderDetail(id: string): Promise<OrderDetail | null> 
       order_date, created_at, cs_status, fulfillment_status,
       payment_method, payment_status, payment_reference,
       subtotal, discount_amount, shipping_fee, total_amount,
-      order_source, conversation_url, meta_screenshot_url,
+      order_source, order_type, conversation_url, meta_screenshot_url,
       confirmation_type, courier_entry_method,
       late_delivery_reason, expected_delivery_date,
       exchange_return_id, cancellation_reason, partial_delivery_notes, notes,

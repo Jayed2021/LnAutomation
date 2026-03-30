@@ -1,9 +1,25 @@
 import React, { useState } from 'react';
-import { ChevronDown, Save, X, CreditCard as Edit2 } from 'lucide-react';
+import { Save, X, CreditCard as Edit2 } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail } from './types';
 
 const SOURCES = ['Website', 'Facebook', 'Instagram', 'WhatsApp', 'Phone'];
+
+export const ORDER_TYPES: { value: string; label: string }[] = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'gift', label: 'Gift' },
+  { value: 'influencer', label: 'Influencer' },
+  { value: 'home_try_on', label: 'Home Try On' },
+  { value: 'creative_work', label: 'Creative Work' },
+];
+
+const ORDER_TYPE_STYLES: Record<string, string> = {
+  standard: 'bg-gray-100 text-gray-600',
+  gift: 'bg-pink-100 text-pink-700',
+  influencer: 'bg-amber-100 text-amber-700',
+  home_try_on: 'bg-teal-100 text-teal-700',
+  creative_work: 'bg-blue-100 text-blue-700',
+};
 
 interface Props {
   order: OrderDetail;
@@ -19,6 +35,7 @@ export function OrderSourceCard({ order, users, userId, canEdit, onUpdated }: Pr
   const [edit, setEdit] = useState({
     cs_status: order.cs_status,
     order_source: order.order_source ?? 'Website',
+    order_type: order.order_type ?? 'standard',
     assigned_to: order.assigned_user?.id ?? '',
     confirmed_by: order.confirmed_user?.id ?? '',
     conversation_url: order.conversation_url ?? '',
@@ -31,6 +48,7 @@ export function OrderSourceCard({ order, users, userId, canEdit, onUpdated }: Pr
     try {
       await supabase.from('orders').update({
         order_source: edit.order_source.toLowerCase(),
+        order_type: edit.order_type,
         assigned_to: edit.assigned_to || null,
         confirmed_by: edit.confirmed_by || null,
         conversation_url: edit.conversation_url || null,
@@ -45,10 +63,13 @@ export function OrderSourceCard({ order, users, userId, canEdit, onUpdated }: Pr
     }
   };
 
+  const currentTypeLabel = ORDER_TYPES.find(t => t.value === (order.order_type ?? 'standard'))?.label ?? 'Standard';
+  const typeStyle = ORDER_TYPE_STYLES[order.order_type ?? 'standard'] ?? ORDER_TYPE_STYLES.standard;
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
       <div className="flex items-center justify-between mb-5">
-        <h3 className="font-semibold text-gray-900">Order Status &amp; Source</h3>
+        <h3 className="font-semibold text-gray-900">Order Info</h3>
         {!editing ? (
           canEdit && (
             <button onClick={() => setEditing(true)} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium">
@@ -105,6 +126,21 @@ export function OrderSourceCard({ order, users, userId, canEdit, onUpdated }: Pr
             </a>
           </div>
         )}
+
+        <div>
+          <div className="text-xs font-medium text-gray-500 mb-1">Order Type</div>
+          {editing
+            ? (
+              <select value={edit.order_type} onChange={e => setEdit(p => ({ ...p, order_type: e.target.value }))} className={inputCls}>
+                {ORDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            )
+            : (
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${typeStyle}`}>
+                {currentTypeLabel}
+              </span>
+            )}
+        </div>
 
         <div>
           <div className="text-xs font-medium text-gray-500 mb-1">Assigned CS Person</div>

@@ -26,6 +26,7 @@ export interface OrderListItem {
   woo_order_number: string | null;
   order_date: string;
   cs_status: CsStatus;
+  order_type: string;
   total_amount: number;
   expected_delivery_date: string | null;
   has_prescription: boolean;

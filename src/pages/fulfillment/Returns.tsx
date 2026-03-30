@@ -38,7 +38,7 @@ interface Return {
   refund_status: string | null;
   created_at: string;
   order_id: string;
-  order: { order_number: string; woo_order_id: number | null; cs_status: string } | null;
+  order: { order_number: string; woo_order_id: number | null; cs_status: string; order_date: string | null } | null;
   customer: { full_name: string; phone_primary: string | null } | null;
   items: ReturnItem[];
 }
@@ -160,7 +160,7 @@ export default function Returns() {
           refund_status,
           created_at,
           order_id,
-          order:orders!order_id(order_number, woo_order_id, cs_status),
+          order:orders!order_id(order_number, woo_order_id, cs_status, order_date),
           customer:customers!customer_id(full_name, phone_primary),
           items:return_items(
             id,
@@ -386,6 +386,7 @@ export default function Returns() {
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Return ID</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order Date</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order Status</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Items</th>
@@ -420,6 +421,11 @@ export default function Returns() {
                           <div className="font-medium text-gray-800">
                             {r.order?.woo_order_id ? `#${r.order.woo_order_id}` : (r.order?.order_number ?? '—')}
                           </div>
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
+                          {r.order?.order_date
+                            ? new Date(r.order.order_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                            : <span className="text-gray-400">—</span>}
                         </td>
                         <td className="px-4 py-3">
                           {r.order?.cs_status ? (() => {
@@ -543,7 +549,7 @@ export default function Returns() {
 
                       {isExpanded && r.items && r.items.length > 0 && (
                         <tr key={`${r.id}-expanded`} className="bg-gray-50 border-b border-gray-100">
-                          <td colSpan={8} className="px-6 py-3">
+                          <td colSpan={9} className="px-6 py-3">
                             <div className="space-y-1.5">
                               {r.items.map(item => {
                                 const receiveBadge = ITEM_RECEIVE_BADGE[item.receive_status] ?? ITEM_RECEIVE_BADGE.pending;

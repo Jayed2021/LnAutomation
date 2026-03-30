@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { RefreshProvider } from './contexts/RefreshContext';
@@ -6,106 +6,121 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
-import PurchaseOrders from './pages/purchase/PurchaseOrders';
-import CreatePurchaseOrder from './pages/purchase/CreatePurchaseOrder';
-import PurchaseOrderDetail from './pages/purchase/PurchaseOrderDetail';
-import Suppliers from './pages/purchase/Suppliers';
-import SupplierDetail from './pages/purchase/SupplierDetail';
-import Products from './pages/inventory/Products';
-import ProductDetail from './pages/inventory/ProductDetail';
-import Shipments from './pages/inventory/Shipments';
-import StockMovements from './pages/inventory/StockMovements';
-import WarehouseLocations from './pages/inventory/WarehouseLocations';
-import InventoryAudit from './pages/inventory/InventoryAudit';
-import AuditDetail from './pages/inventory/AuditDetail';
-import ReceiveGoods from './pages/inventory/ReceiveGoods';
-import Stock from './pages/inventory/Stock';
-import Orders from './pages/fulfillment/orders/Orders';
-import OrderDetail from './pages/fulfillment/orders/orderDetail/OrderDetail';
-import Operations from './pages/fulfillment/Operations';
-import Returns from './pages/fulfillment/Returns';
-import ReturnDetail from './pages/fulfillment/ReturnDetail';
-import BulkUpdateOrders from './pages/fulfillment/orders/bulkUpdate/BulkUpdateOrders';
-import Collection from './pages/finance/Collection';
-import Expenses from './pages/finance/Expenses';
-import Reports from './pages/Reports';
-import Settings from './pages/Settings';
-import WooCommerceSettings from './pages/settings/WooCommerceSettings';
-import BarcodeSettings from './pages/settings/BarcodeSettings';
-import PackagingSettings from './pages/settings/PackagingSettings';
-import StoreProfile from './pages/settings/StoreProfile';
-import CourierSettings from './pages/settings/CourierSettings';
-import SmsSettings from './pages/settings/SmsSettings';
-import UserManagement from './pages/settings/UserManagement';
-import CsAssignment from './pages/settings/CsAssignment';
-import ComingSoon from './pages/ComingSoon';
-import ProfitLoss from './pages/reports/ProfitLoss';
-import Customers from './pages/customers/Customers';
-import CustomerDetail from './pages/customers/CustomerDetail';
+
+const PurchaseOrders = lazy(() => import('./pages/purchase/PurchaseOrders'));
+const CreatePurchaseOrder = lazy(() => import('./pages/purchase/CreatePurchaseOrder'));
+const PurchaseOrderDetail = lazy(() => import('./pages/purchase/PurchaseOrderDetail'));
+const Suppliers = lazy(() => import('./pages/purchase/Suppliers'));
+const SupplierDetail = lazy(() => import('./pages/purchase/SupplierDetail'));
+
+const Products = lazy(() => import('./pages/inventory/Products'));
+const ProductDetail = lazy(() => import('./pages/inventory/ProductDetail'));
+const Shipments = lazy(() => import('./pages/inventory/Shipments'));
+const StockMovements = lazy(() => import('./pages/inventory/StockMovements'));
+const WarehouseLocations = lazy(() => import('./pages/inventory/WarehouseLocations'));
+const InventoryAudit = lazy(() => import('./pages/inventory/InventoryAudit'));
+const AuditDetail = lazy(() => import('./pages/inventory/AuditDetail'));
+const ReceiveGoods = lazy(() => import('./pages/inventory/ReceiveGoods'));
+const Stock = lazy(() => import('./pages/inventory/Stock'));
+
+const Orders = lazy(() => import('./pages/fulfillment/orders/Orders'));
+const OrderDetail = lazy(() => import('./pages/fulfillment/orders/orderDetail/OrderDetail'));
+const Operations = lazy(() => import('./pages/fulfillment/Operations'));
+const Returns = lazy(() => import('./pages/fulfillment/Returns'));
+const ReturnDetail = lazy(() => import('./pages/fulfillment/ReturnDetail'));
+const BulkUpdateOrders = lazy(() => import('./pages/fulfillment/orders/bulkUpdate/BulkUpdateOrders'));
+
+const Collection = lazy(() => import('./pages/finance/Collection'));
+const Expenses = lazy(() => import('./pages/finance/Expenses'));
+
+const Reports = lazy(() => import('./pages/Reports'));
+const ProfitLoss = lazy(() => import('./pages/reports/ProfitLoss'));
+
+const Settings = lazy(() => import('./pages/Settings'));
+const WooCommerceSettings = lazy(() => import('./pages/settings/WooCommerceSettings'));
+const BarcodeSettings = lazy(() => import('./pages/settings/BarcodeSettings'));
+const PackagingSettings = lazy(() => import('./pages/settings/PackagingSettings'));
+const StoreProfile = lazy(() => import('./pages/settings/StoreProfile'));
+const CourierSettings = lazy(() => import('./pages/settings/CourierSettings'));
+const SmsSettings = lazy(() => import('./pages/settings/SmsSettings'));
+const UserManagement = lazy(() => import('./pages/settings/UserManagement'));
+const CsAssignment = lazy(() => import('./pages/settings/CsAssignment'));
+
+const ComingSoon = lazy(() => import('./pages/ComingSoon'));
+const Customers = lazy(() => import('./pages/customers/Customers'));
+const CustomerDetail = lazy(() => import('./pages/customers/CustomerDetail'));
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <RefreshProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route
-            path="/*"
-            element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<Dashboard />} />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route
+              path="/*"
+              element={
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route path="dashboard" element={<Dashboard />} />
 
-            <Route path="purchase/orders" element={<PurchaseOrders />} />
-            <Route path="purchase/orders/:id" element={<PurchaseOrderDetail />} />
-            <Route path="purchase/orders/:id/edit" element={<CreatePurchaseOrder />} />
-            <Route path="purchase/create" element={<CreatePurchaseOrder />} />
-            <Route path="purchase/suppliers" element={<Suppliers />} />
-            <Route path="purchase/suppliers/:id" element={<SupplierDetail />} />
+              <Route path="purchase/orders" element={<Suspense fallback={<PageLoader />}><PurchaseOrders /></Suspense>} />
+              <Route path="purchase/orders/:id" element={<Suspense fallback={<PageLoader />}><PurchaseOrderDetail /></Suspense>} />
+              <Route path="purchase/orders/:id/edit" element={<Suspense fallback={<PageLoader />}><CreatePurchaseOrder /></Suspense>} />
+              <Route path="purchase/create" element={<Suspense fallback={<PageLoader />}><CreatePurchaseOrder /></Suspense>} />
+              <Route path="purchase/suppliers" element={<Suspense fallback={<PageLoader />}><Suppliers /></Suspense>} />
+              <Route path="purchase/suppliers/:id" element={<Suspense fallback={<PageLoader />}><SupplierDetail /></Suspense>} />
 
-            <Route path="inventory/products" element={<Products />} />
-            <Route path="inventory/products/:id" element={<ProductDetail />} />
-            <Route path="inventory/shipments" element={<Shipments />} />
-            <Route path="inventory/stock" element={<Stock />} />
-            <Route path="inventory/movements" element={<StockMovements />} />
-            <Route path="inventory/locations" element={<WarehouseLocations />} />
-            <Route path="inventory/audit" element={<InventoryAudit />} />
-            <Route path="inventory/audit/:id" element={<AuditDetail />} />
-            <Route path="inventory/cycle-counts" element={<Navigate to="/inventory/audit" replace />} />
-            <Route path="inventory/receive" element={<ReceiveGoods />} />
-            <Route path="inventory/warehouse" element={<WarehouseLocations />} />
+              <Route path="inventory/products" element={<Suspense fallback={<PageLoader />}><Products /></Suspense>} />
+              <Route path="inventory/products/:id" element={<Suspense fallback={<PageLoader />}><ProductDetail /></Suspense>} />
+              <Route path="inventory/shipments" element={<Suspense fallback={<PageLoader />}><Shipments /></Suspense>} />
+              <Route path="inventory/stock" element={<Suspense fallback={<PageLoader />}><Stock /></Suspense>} />
+              <Route path="inventory/movements" element={<Suspense fallback={<PageLoader />}><StockMovements /></Suspense>} />
+              <Route path="inventory/locations" element={<Suspense fallback={<PageLoader />}><WarehouseLocations /></Suspense>} />
+              <Route path="inventory/audit" element={<Suspense fallback={<PageLoader />}><InventoryAudit /></Suspense>} />
+              <Route path="inventory/audit/:id" element={<Suspense fallback={<PageLoader />}><AuditDetail /></Suspense>} />
+              <Route path="inventory/cycle-counts" element={<Navigate to="/inventory/audit" replace />} />
+              <Route path="inventory/receive" element={<Suspense fallback={<PageLoader />}><ReceiveGoods /></Suspense>} />
+              <Route path="inventory/warehouse" element={<Suspense fallback={<PageLoader />}><WarehouseLocations /></Suspense>} />
 
-            <Route path="fulfillment/orders" element={<Orders />} />
-            <Route path="fulfillment/orders/bulk-update" element={<BulkUpdateOrders />} />
-            <Route path="fulfillment/orders/:id" element={<OrderDetail />} />
-            <Route path="fulfillment/operations" element={<Operations />} />
-            <Route path="fulfillment/returns" element={<Returns />} />
-            <Route path="fulfillment/returns/:id" element={<ReturnDetail />} />
+              <Route path="fulfillment/orders" element={<Suspense fallback={<PageLoader />}><Orders /></Suspense>} />
+              <Route path="fulfillment/orders/bulk-update" element={<Suspense fallback={<PageLoader />}><BulkUpdateOrders /></Suspense>} />
+              <Route path="fulfillment/orders/:id" element={<Suspense fallback={<PageLoader />}><OrderDetail /></Suspense>} />
+              <Route path="fulfillment/operations" element={<Suspense fallback={<PageLoader />}><Operations /></Suspense>} />
+              <Route path="fulfillment/returns" element={<Suspense fallback={<PageLoader />}><Returns /></Suspense>} />
+              <Route path="fulfillment/returns/:id" element={<Suspense fallback={<PageLoader />}><ReturnDetail /></Suspense>} />
 
-            <Route path="finance/collection" element={<Collection />} />
-            <Route path="finance/expenses" element={<Expenses />} />
-            <Route path="finance/profit" element={<ComingSoon moduleName="Profit Analysis" />} />
+              <Route path="finance/collection" element={<Suspense fallback={<PageLoader />}><Collection /></Suspense>} />
+              <Route path="finance/expenses" element={<Suspense fallback={<PageLoader />}><Expenses /></Suspense>} />
+              <Route path="finance/profit" element={<Suspense fallback={<PageLoader />}><ComingSoon moduleName="Profit Analysis" /></Suspense>} />
 
-            <Route path="customers" element={<Customers />} />
-            <Route path="customers/:id" element={<CustomerDetail />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="reports/profit-loss" element={<ProfitLoss />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="settings/woocommerce" element={<WooCommerceSettings />} />
-            <Route path="settings/barcode" element={<BarcodeSettings />} />
-            <Route path="settings/packaging" element={<PackagingSettings />} />
-            <Route path="settings/store-profile" element={<StoreProfile />} />
-            <Route path="settings/courier" element={<CourierSettings />} />
-            <Route path="settings/sms" element={<SmsSettings />} />
-            <Route path="settings/users" element={<UserManagement />} />
-            <Route path="settings/cs-assignment" element={<CsAssignment />} />
-          </Route>
-        </Routes>
+              <Route path="customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />
+              <Route path="customers/:id" element={<Suspense fallback={<PageLoader />}><CustomerDetail /></Suspense>} />
+              <Route path="reports" element={<Suspense fallback={<PageLoader />}><Reports /></Suspense>} />
+              <Route path="reports/profit-loss" element={<Suspense fallback={<PageLoader />}><ProfitLoss /></Suspense>} />
+              <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
+              <Route path="settings/woocommerce" element={<Suspense fallback={<PageLoader />}><WooCommerceSettings /></Suspense>} />
+              <Route path="settings/barcode" element={<Suspense fallback={<PageLoader />}><BarcodeSettings /></Suspense>} />
+              <Route path="settings/packaging" element={<Suspense fallback={<PageLoader />}><PackagingSettings /></Suspense>} />
+              <Route path="settings/store-profile" element={<Suspense fallback={<PageLoader />}><StoreProfile /></Suspense>} />
+              <Route path="settings/courier" element={<Suspense fallback={<PageLoader />}><CourierSettings /></Suspense>} />
+              <Route path="settings/sms" element={<Suspense fallback={<PageLoader />}><SmsSettings /></Suspense>} />
+              <Route path="settings/users" element={<Suspense fallback={<PageLoader />}><UserManagement /></Suspense>} />
+              <Route path="settings/cs-assignment" element={<Suspense fallback={<PageLoader />}><CsAssignment /></Suspense>} />
+            </Route>
+          </Routes>
         </RefreshProvider>
       </AuthProvider>
     </BrowserRouter>

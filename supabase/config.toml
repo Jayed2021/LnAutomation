@@ -1,6 +1,3 @@
-[project]
-project_id = "mgepetyohvqcfsrvffrv"
-
 [functions.woo-proxy]
 verify_jwt = false
 

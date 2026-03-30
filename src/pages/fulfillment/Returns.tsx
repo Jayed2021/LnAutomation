@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   PackageX, Search, Package, PackageCheck, PackageOpen,
-  ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin
+  ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin, Trash2, X
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -127,6 +128,9 @@ const ITEM_RECEIVE_BADGE: Record<string, { label: string; cls: string }> = {
 
 export default function Returns() {
   const { lastRefreshed } = useRefresh();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const [activeFilter, setActiveFilter] = useState<FilterStatus>('expected');
   const [returns, setReturns] = useState<Return[]>([]);
   const [loading, setLoading] = useState(true);
@@ -135,6 +139,12 @@ export default function Returns() {
   const [restockingReturn, setRestockingReturn] = useState<Return | null>(null);
   const [qcReturn, setQcReturn] = useState<Return | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const [scanBarInput, setScanBarInput] = useState('');
+  const [scanBarError, setScanBarError] = useState('');
+  const scanBarRef = useRef<HTMLInputElement>(null);
 
   const fetchReturns = useCallback(async () => {
     try {
@@ -231,11 +241,93 @@ export default function Returns() {
     fetchReturns();
   };
 
+  const handleDeleteReturn = async (returnId: string) => {
+    try {
+      setDeleting(true);
+      await supabase.from('return_items').delete().eq('return_id', returnId);
+      await supabase.from('returns').delete().eq('id', returnId);
+      setDeleteConfirmId(null);
+      fetchReturns();
+    } catch (err) {
+      console.error('Error deleting return:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleScanBarSubmit = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    const matched = returns.find(r =>
+      r.status === 'expected' && (
+        r.order?.woo_order_id?.toString() === trimmed ||
+        r.order?.order_number?.toLowerCase() === trimmed.toLowerCase() ||
+        r.return_number.toLowerCase() === trimmed.toLowerCase()
+      )
+    );
+
+    if (matched) {
+      setScanBarError('');
+      setScanBarInput('');
+      setReceivingReturn(matched);
+    } else {
+      setScanBarError(`No expected return found matching "${trimmed}"`);
+      setScanBarInput('');
+    }
+  };
+
+  const handleScanBarKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleScanBarSubmit(scanBarInput);
+    }
+  };
+
   return (
     <div className="p-6 max-w-full">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Returns Management</h1>
         <p className="text-sm text-gray-500 mt-1">Manage product returns, quality control, and restocking</p>
+      </div>
+
+      <div className="mb-5">
+        <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2 text-gray-400 shrink-0">
+            <ScanLine className="w-5 h-5 text-blue-500" />
+            <span className="text-sm font-medium text-gray-600">Scan to Receive</span>
+          </div>
+          <div className="w-px h-5 bg-gray-200 shrink-0" />
+          <input
+            ref={scanBarRef}
+            type="text"
+            value={scanBarInput}
+            onChange={e => { setScanBarInput(e.target.value); setScanBarError(''); }}
+            onKeyDown={handleScanBarKeyDown}
+            placeholder="Scan order barcode or enter order number to open receive modal..."
+            className="flex-1 text-sm bg-transparent border-none outline-none placeholder-gray-400 text-gray-800"
+          />
+          {scanBarInput && (
+            <button
+              onClick={() => { setScanBarInput(''); setScanBarError(''); }}
+              className="shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            onClick={() => handleScanBarSubmit(scanBarInput)}
+            disabled={!scanBarInput.trim()}
+            className="shrink-0 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-semibold rounded-lg transition-colors"
+          >
+            Open
+          </button>
+        </div>
+        {scanBarError && (
+          <p className="text-xs text-red-600 mt-1.5 pl-1 flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {scanBarError}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-6 gap-3 mb-6">
@@ -307,6 +399,7 @@ export default function Returns() {
                   const itemCount = r.items?.length ?? 0;
                   const isExpanded = expandedRows.has(r.id);
                   const hasLostItems = r.items?.some(i => i.receive_status === 'lost');
+                  const isConfirmingDelete = deleteConfirmId === r.id;
 
                   return (
                     <>
@@ -414,6 +507,35 @@ export default function Returns() {
                                 <Wrench className="w-3.5 h-3.5" />
                                 Write Off
                               </Button>
+                            )}
+
+                            {isAdmin && !isConfirmingDelete && (
+                              <button
+                                onClick={() => setDeleteConfirmId(r.id)}
+                                title="Delete return record"
+                                className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+
+                            {isAdmin && isConfirmingDelete && (
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-red-600 font-medium">Delete?</span>
+                                <button
+                                  onClick={() => handleDeleteReturn(r.id)}
+                                  disabled={deleting}
+                                  className="px-2 py-1 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  Yes
+                                </button>
+                                <button
+                                  onClick={() => setDeleteConfirmId(null)}
+                                  className="px-2 py-1 text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                                >
+                                  No
+                                </button>
+                              </div>
                             )}
                           </div>
                         </td>

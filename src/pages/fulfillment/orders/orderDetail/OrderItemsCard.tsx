@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock, Eye } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
-import { OrderItem, OrderDetail, OrderPrescription } from './types';
+import { OrderItem, OrderDetail, OrderPrescription, FeeLine } from './types';
 import { logActivity } from './service';
 import { AddProductsModal } from './AddProductsModal';
 
@@ -18,6 +18,10 @@ interface FeeRow {
   _tempId: string;
   name: string;
   amount: number;
+}
+
+interface EditableFeeLine extends FeeLine {
+  _deleted?: boolean;
 }
 
 type EditableItem = OrderItem & { _deleted?: boolean };
@@ -47,6 +51,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
   const [editing, setEditing] = useState(false);
   const [editItems, setEditItems] = useState<EditableItem[]>([]);
   const [feeRows, setFeeRows] = useState<FeeRow[]>([]);
+  const [editFeeLines, setEditFeeLines] = useState<EditableFeeLine[]>([]);
   const [saving, setSaving] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -57,6 +62,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
   const startEdit = () => {
     setEditItems(items.map(i => ({ ...i })));
     setFeeRows([]);
+    setEditFeeLines((order.fee_lines ?? []).map(f => ({ ...f })));
     setEditing(true);
     setSyncStatus('idle');
     setSyncMessage(null);
@@ -65,6 +71,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
   const cancelEdit = () => {
     setEditing(false);
     setFeeRows([]);
+    setEditFeeLines([]);
     setSyncStatus('idle');
     setSyncMessage(null);
   };
@@ -75,10 +82,13 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
     setSyncMessage(null);
 
     const originalIds = new Set(items.map(i => i.id));
-    const remainingIds = new Set(editItems.filter(i => !i._deleted).map(i => i.id));
     const deletedItems = editItems.filter(i => i._deleted);
     const addedItems = editItems.filter(i => !originalIds.has(i.id));
     const itemsChanged = deletedItems.length > 0 || addedItems.length > 0;
+
+    const updatedFeeLines = editFeeLines.filter(f => !f._deleted);
+    const feeLinesChanged = editFeeLines.some(f => f._deleted) ||
+      JSON.stringify(editFeeLines.filter(f => !f._deleted)) !== JSON.stringify(order.fee_lines ?? []);
 
     try {
       for (const item of editItems.filter(i => !i._deleted)) {
@@ -125,13 +135,17 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
         });
       }
 
-      const activeItems = editItems.filter(i => !i._deleted);
-      const subtotal = activeItems.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+      const activeItems = editItems.filter(i => !i._deleted && i.sku !== 'RX');
+      const itemsSubtotal = activeItems.reduce((s, i) => s + i.quantity * i.unit_price, 0)
         + feeRows.reduce((s, f) => s + f.amount, 0);
-      const total = subtotal + order.shipping_fee - order.discount_amount;
+      const feeLineTotal = updatedFeeLines.reduce((s, f) => s + (parseFloat(f.total) || parseFloat(f.amount) || 0), 0);
+      const subtotal = itemsSubtotal + rxFeeTotal;
+      const total = itemsSubtotal + feeLineTotal + rxFeeTotal + order.shipping_fee - order.discount_amount;
+
       await supabase.from('orders').update({
         subtotal,
         total_amount: Math.max(0, total),
+        fee_lines: updatedFeeLines,
         updated_at: new Date().toISOString(),
       }).eq('id', order.id);
 
@@ -143,6 +157,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
       } else {
         setEditing(false);
         setFeeRows([]);
+        setEditFeeLines([]);
         onUpdated();
       }
     } catch (err: any) {
@@ -238,6 +253,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
       setTimeout(() => {
         setEditing(false);
         setFeeRows([]);
+        setEditFeeLines([]);
         setSyncStatus('idle');
         setSyncMessage(null);
       }, 2000);
@@ -291,10 +307,16 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
       + rxFeeTotal
     : items.filter(i => i.sku !== 'RX').reduce((s, i) => s + i.line_total, 0) + rxFeeTotal;
 
+  const activeFeeLines = editing
+    ? editFeeLines.filter(f => !f._deleted)
+    : (order.fee_lines ?? []);
+
+  const feeLineTotal = activeFeeLines.reduce((s, f) => s + (parseFloat(f.total) || parseFloat(f.amount) || 0), 0);
+
+  const liveOrderTotal = subtotal + feeLineTotal + order.shipping_fee - order.discount_amount;
+
   const couponLines = order.coupon_lines ?? [];
   const hasCoupons = couponLines.length > 0;
-  const feeLines = order.fee_lines ?? [];
-  const hasFees = feeLines.length > 0;
 
   const inputCls = 'px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full';
   const isSavingOrSyncing = saving || syncStatus === 'syncing';
@@ -345,8 +367,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
           </tr>
         </thead>
         <tbody>
-          {displayItems.map((item, idx) => {
-            const activeIdx = editItems.filter(i => !i._deleted).indexOf(item as EditableItem);
+          {displayItems.map((item) => {
             const rowTotal = editing ? item.quantity * item.unit_price : item.line_total;
             const rowDiscount = item.discount_amount ?? 0;
             const rowAmount = rowTotal - rowDiscount;
@@ -453,6 +474,51 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
             );
           })}
 
+          {editing && editFeeLines.filter(f => !f._deleted).map((fee, idx) => {
+            const feeAmt = parseFloat(fee.total) || parseFloat(fee.amount) || 0;
+            const originalIdx = editFeeLines.indexOf(fee);
+            return (
+              <tr key={idx} className="border-b border-gray-50 bg-orange-50/40">
+                <td className="py-3">
+                  <input
+                    type="text"
+                    value={fee.name}
+                    onChange={e => setEditFeeLines(prev => prev.map((f, i) => i === originalIdx ? { ...f, name: e.target.value } : f))}
+                    className={inputCls}
+                  />
+                </td>
+                <td className="py-3 text-center">
+                  <span className="text-xs text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded">Woo fee</span>
+                </td>
+                <td className="py-3 text-right">
+                  <input
+                    type="number"
+                    value={feeAmt}
+                    onChange={e => {
+                      const val = String(parseFloat(e.target.value) || 0);
+                      setEditFeeLines(prev => prev.map((f, i) => i === originalIdx ? { ...f, total: val, amount: val } : f));
+                    }}
+                    className={`${inputCls} text-right`}
+                  />
+                </td>
+                <td className="py-3 text-right">
+                  <span className="text-sm text-gray-400">—</span>
+                </td>
+                <td className="py-3 text-right">
+                  <span className="text-sm font-medium text-gray-900">{fmt(feeAmt)}</span>
+                </td>
+                <td className="py-3 pl-2">
+                  <button
+                    onClick={() => setEditFeeLines(prev => prev.map((f, i) => i === originalIdx ? { ...f, _deleted: true } : f))}
+                    className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+
           {editing && feeRows.map((fee, idx) => (
             <tr key={fee._tempId} className="border-b border-gray-50 bg-orange-50/40">
               <td className="py-3">
@@ -507,9 +573,9 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
           </div>
         )}
 
-        {hasFees && (
+        {activeFeeLines.length > 0 && (
           <div className="space-y-1.5">
-            {feeLines.map((fee, i) => {
+            {activeFeeLines.map((fee, i) => {
               const feeTotal = parseFloat(fee.total) || parseFloat(fee.amount) || 0;
               return (
                 <div key={i} className="flex items-center justify-between text-sm">
@@ -561,7 +627,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
 
         <div className="flex justify-between text-base font-bold border-t border-gray-200 pt-2 mt-2 bg-blue-50 -mx-5 px-5 py-2 rounded-b-xl">
           <span>Order Total:</span>
-          <span>{fmt(order.total_amount)}</span>
+          <span>{fmt(Math.max(0, liveOrderTotal))}</span>
         </div>
       </div>
 

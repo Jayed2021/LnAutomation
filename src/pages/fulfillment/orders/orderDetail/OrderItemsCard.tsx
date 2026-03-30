@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock, Eye } from 'lucide-react';
+import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock, Eye, Percent, DollarSign } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderItem, OrderDetail, OrderPrescription, FeeLine } from './types';
 import { logActivity } from './service';
@@ -25,6 +25,13 @@ interface EditableFeeLine extends FeeLine {
 }
 
 type EditableItem = OrderItem & { _deleted?: boolean };
+
+type DiscountType = 'percentage' | 'flat';
+
+interface DiscountState {
+  type: DiscountType;
+  value: string;
+}
 
 function isLikelyUrl(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
@@ -59,10 +66,20 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
   const [showAddProducts, setShowAddProducts] = useState(false);
   const [addingFee, setAddingFee] = useState(false);
 
+  const [editShippingFee, setEditShippingFee] = useState<string>('0');
+  const [editDiscount, setEditDiscount] = useState<string>('0');
+
+  const [showDiscountPanel, setShowDiscountPanel] = useState(false);
+  const [discount, setDiscount] = useState<DiscountState>({ type: 'flat', value: '' });
+
   const startEdit = () => {
     setEditItems(items.map(i => ({ ...i })));
     setFeeRows([]);
     setEditFeeLines((order.fee_lines ?? []).map(f => ({ ...f })));
+    setEditShippingFee(String(order.shipping_fee ?? 0));
+    setEditDiscount(String(order.discount_amount ?? 0));
+    setShowDiscountPanel(false);
+    setDiscount({ type: 'flat', value: '' });
     setEditing(true);
     setSyncStatus('idle');
     setSyncMessage(null);
@@ -72,8 +89,25 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
     setEditing(false);
     setFeeRows([]);
     setEditFeeLines([]);
+    setShowDiscountPanel(false);
+    setDiscount({ type: 'flat', value: '' });
     setSyncStatus('idle');
     setSyncMessage(null);
+  };
+
+  const applyDiscount = () => {
+    const val = parseFloat(discount.value) || 0;
+    if (val <= 0) return;
+
+    if (discount.type === 'flat') {
+      setEditDiscount(String(val));
+    } else {
+      const base = liveSubtotalForDiscount;
+      const computed = Math.round((base * val) / 100 * 100) / 100;
+      setEditDiscount(String(computed));
+    }
+    setShowDiscountPanel(false);
+    setDiscount({ type: 'flat', value: '' });
   };
 
   const handleSave = async () => {
@@ -89,6 +123,9 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
     const updatedFeeLines = editFeeLines.filter(f => !f._deleted);
     const feeLinesChanged = editFeeLines.some(f => f._deleted) ||
       JSON.stringify(editFeeLines.filter(f => !f._deleted)) !== JSON.stringify(order.fee_lines ?? []);
+
+    const newShippingFee = parseFloat(editShippingFee) || 0;
+    const newDiscountAmount = parseFloat(editDiscount) || 0;
 
     try {
       for (const item of editItems.filter(i => !i._deleted)) {
@@ -140,12 +177,14 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
         + feeRows.reduce((s, f) => s + f.amount, 0);
       const feeLineTotal = updatedFeeLines.reduce((s, f) => s + (parseFloat(f.total) || parseFloat(f.amount) || 0), 0);
       const subtotal = itemsSubtotal + rxFeeTotal;
-      const total = itemsSubtotal + feeLineTotal + rxFeeTotal + order.shipping_fee - order.discount_amount;
+      const total = itemsSubtotal + feeLineTotal + rxFeeTotal + newShippingFee - newDiscountAmount;
 
       await supabase.from('orders').update({
         subtotal,
         total_amount: Math.max(0, total),
         fee_lines: updatedFeeLines,
+        shipping_fee: newShippingFee,
+        discount_amount: newDiscountAmount,
         updated_at: new Date().toISOString(),
       }).eq('id', order.id);
 
@@ -313,7 +352,16 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
 
   const feeLineTotal = activeFeeLines.reduce((s, f) => s + (parseFloat(f.total) || parseFloat(f.amount) || 0), 0);
 
-  const liveOrderTotal = subtotal + feeLineTotal + order.shipping_fee - order.discount_amount;
+  const liveSubtotalForDiscount = editing
+    ? editItems.filter(i => !i._deleted && i.sku !== 'RX').reduce((s, i) => s + i.quantity * i.unit_price, 0)
+      + feeRows.reduce((s, f) => s + f.amount, 0)
+      + rxFeeTotal + feeLineTotal
+    : subtotal + feeLineTotal;
+
+  const effectiveShipping = editing ? (parseFloat(editShippingFee) || 0) : order.shipping_fee;
+  const effectiveDiscount = editing ? (parseFloat(editDiscount) || 0) : order.discount_amount;
+
+  const liveOrderTotal = subtotal + feeLineTotal + effectiveShipping - effectiveDiscount;
 
   const couponLines = order.coupon_lines ?? [];
   const hasCoupons = couponLines.length > 0;
@@ -323,6 +371,13 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
 
   const EDITABLE_STATUSES = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery'];
   const canEditItems = EDITABLE_STATUSES.includes(order.cs_status);
+
+  const discountPreview = (() => {
+    const val = parseFloat(discount.value) || 0;
+    if (val <= 0) return null;
+    if (discount.type === 'flat') return val;
+    return Math.round((liveSubtotalForDiscount * val) / 100 * 100) / 100;
+  })();
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
@@ -448,6 +503,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
                   {editing ? (
                     <input
                       type="number"
+                      min={0}
                       value={item.discount_amount ?? 0}
                       onChange={e => setEditItems(prev => prev.map(it => it.id === item.id ? { ...it, discount_amount: parseFloat(e.target.value) || 0 } : it))}
                       className={`${inputCls} text-right`}
@@ -459,9 +515,23 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
                   )}
                 </td>
                 <td className="py-3 text-right">
-                  <span className="text-sm font-medium text-gray-900">
-                    {fmt(rowAmount)}
-                  </span>
+                  {editing ? (
+                    <input
+                      type="number"
+                      min={0}
+                      value={rowAmount}
+                      onChange={e => {
+                        const newAmount = parseFloat(e.target.value) || 0;
+                        const computedDiscount = Math.max(0, item.quantity * item.unit_price - newAmount);
+                        setEditItems(prev => prev.map(it => it.id === item.id ? { ...it, discount_amount: Math.round(computedDiscount * 100) / 100 } : it));
+                      }}
+                      className={`${inputCls} text-right font-medium`}
+                    />
+                  ) : (
+                    <span className="text-sm font-medium text-gray-900">
+                      {fmt(rowAmount)}
+                    </span>
+                  )}
                 </td>
                 {editing && (
                   <td className="py-3 pl-2">
@@ -590,15 +660,36 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
           </div>
         )}
 
-        <div className="flex justify-between text-sm">
+        <div className="flex justify-between items-center text-sm">
           <span className="text-gray-500">Shipping Fee:</span>
-          <span>{fmt(order.shipping_fee)}</span>
+          {editing ? (
+            <input
+              type="number"
+              min={0}
+              value={editShippingFee}
+              onChange={e => setEditShippingFee(e.target.value)}
+              className="px-2 py-0.5 border border-gray-200 rounded text-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-500 w-28"
+            />
+          ) : (
+            <span>{fmt(order.shipping_fee)}</span>
+          )}
         </div>
-        <div className="flex justify-between text-sm">
+
+        <div className="flex justify-between items-center text-sm">
           <span className="text-gray-500">Discount:</span>
-          <span className={order.discount_amount > 0 ? 'text-red-500' : ''}>
-            {order.discount_amount > 0 ? `-${fmt(order.discount_amount)}` : fmt(0)}
-          </span>
+          {editing ? (
+            <input
+              type="number"
+              min={0}
+              value={editDiscount}
+              onChange={e => setEditDiscount(e.target.value)}
+              className="px-2 py-0.5 border border-gray-200 rounded text-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-500 w-28"
+            />
+          ) : (
+            <span className={order.discount_amount > 0 ? 'text-red-500' : ''}>
+              {order.discount_amount > 0 ? `-${fmt(order.discount_amount)}` : fmt(0)}
+            </span>
+          )}
         </div>
 
         {hasCoupons && (
@@ -624,36 +715,114 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
       </div>
 
       {editing && (
-        <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-4 mt-4">
-          <button
-            onClick={() => setShowAddProducts(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add product(s)
-          </button>
-          <button
-            onClick={handleAddFeeRow}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add fee
-          </button>
-          <button
-            onClick={cancelEdit}
-            disabled={isSavingOrSyncing}
-            className="px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={isSavingOrSyncing}
-            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
-          >
-            <Save className="w-4 h-4" />
-            {saving ? 'Saving...' : syncStatus === 'syncing' ? 'Syncing to WooCommerce...' : 'Save'}
-          </button>
+        <div className="border-t border-gray-100 pt-4 mt-4">
+          {showDiscountPanel && (
+            <div className="mb-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xs font-semibold text-gray-700">Add Discount</span>
+                <button
+                  onClick={() => { setShowDiscountPanel(false); setDiscount({ type: 'flat', value: '' }); }}
+                  className="ml-auto p-0.5 text-gray-400 hover:text-gray-600 rounded transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2 mb-3">
+                <button
+                  onClick={() => setDiscount(d => ({ ...d, type: 'flat' }))}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border font-medium transition-colors ${
+                    discount.type === 'flat'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <DollarSign className="w-3 h-3" />
+                  Flat
+                </button>
+                <button
+                  onClick={() => setDiscount(d => ({ ...d, type: 'percentage' }))}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border font-medium transition-colors ${
+                    discount.type === 'percentage'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <Percent className="w-3 h-3" />
+                  Percentage
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="number"
+                    min={0}
+                    max={discount.type === 'percentage' ? 100 : undefined}
+                    placeholder={discount.type === 'percentage' ? 'e.g. 10' : 'e.g. 100'}
+                    value={discount.value}
+                    onChange={e => setDiscount(d => ({ ...d, value: e.target.value }))}
+                    className="w-full px-3 py-1.5 pr-8 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    autoFocus
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                    {discount.type === 'percentage' ? '%' : '৳'}
+                  </span>
+                </div>
+                {discountPreview !== null && (
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                    = {fmt(discountPreview)}
+                  </span>
+                )}
+                <button
+                  onClick={applyDiscount}
+                  disabled={!discount.value || parseFloat(discount.value) <= 0}
+                  className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-40 whitespace-nowrap"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            {!showDiscountPanel && (
+              <button
+                onClick={() => setShowDiscountPanel(true)}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <Percent className="w-4 h-4" />
+                Add Discount
+              </button>
+            )}
+            <button
+              onClick={() => setShowAddProducts(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add product(s)
+            </button>
+            <button
+              onClick={handleAddFeeRow}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add fee
+            </button>
+            <button
+              onClick={cancelEdit}
+              disabled={isSavingOrSyncing}
+              className="px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSavingOrSyncing}
+              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
+            >
+              <Save className="w-4 h-4" />
+              {saving ? 'Saving...' : syncStatus === 'syncing' ? 'Syncing to WooCommerce...' : 'Save'}
+            </button>
+          </div>
         </div>
       )}
 

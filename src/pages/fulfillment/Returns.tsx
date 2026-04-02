@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   PackageX, Search, Package, PackageCheck, PackageOpen,
-  ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin, Trash2, X
+  ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin, Trash2, X, Camera
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
@@ -12,6 +12,7 @@ import { Input } from '../../components/ui/Input';
 import { ReceiveReturnModal } from '../../components/fulfillment/ReceiveReturnModal';
 import { RestockModal } from '../../components/fulfillment/RestockModal';
 import { QCReviewModal } from '../../components/fulfillment/QCReviewModal';
+import { BarcodeScannerModal } from '../../components/fulfillment/BarcodeScannerModal';
 import { STATUS_CONFIG } from './orders/types';
 
 interface ReturnItem {
@@ -141,10 +142,10 @@ export default function Returns() {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanNotFound, setScanNotFound] = useState<string | null>(null);
 
-  const [scanBarInput, setScanBarInput] = useState('');
-  const [scanBarError, setScanBarError] = useState('');
-  const scanBarRef = useRef<HTMLInputElement>(null);
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   const fetchReturns = useCallback(async () => {
     try {
@@ -255,80 +256,75 @@ export default function Returns() {
     }
   };
 
-  const handleScanBarSubmit = (value: string) => {
+  const matchReturn = (value: string): Return | undefined => {
     const trimmed = value.trim();
-    if (!trimmed) return;
-
-    const matched = returns.find(r =>
-      r.status === 'expected' && (
-        r.order?.woo_order_id?.toString() === trimmed ||
-        r.order?.order_number?.toLowerCase() === trimmed.toLowerCase() ||
-        r.return_number.toLowerCase() === trimmed.toLowerCase()
-      )
+    return returns.find(r =>
+      r.order?.woo_order_id?.toString() === trimmed ||
+      r.order?.order_number?.toLowerCase() === trimmed.toLowerCase() ||
+      r.return_number.toLowerCase() === trimmed.toLowerCase()
     );
-
-    if (matched) {
-      setScanBarError('');
-      setScanBarInput('');
-      setReceivingReturn(matched);
-    } else {
-      setScanBarError(`No expected return found matching "${trimmed}"`);
-      setScanBarInput('');
-    }
   };
 
-  const handleScanBarKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleScanBarSubmit(scanBarInput);
+  const handleCameraScan = (barcode: string) => {
+    setShowScanner(false);
+    setScanNotFound(null);
+
+    const matched = matchReturn(barcode);
+
+    if (!matched) {
+      setScanNotFound(`No return found matching "${barcode}"`);
+      setTimeout(() => setScanNotFound(null), 4000);
+      return;
+    }
+
+    const targetTab = matched.status as FilterStatus;
+    setActiveFilter(targetTab);
+    setSearchQuery('');
+
+    if (matched.status === 'expected') {
+      setReceivingReturn(matched);
+    } else {
+      setExpandedRows(prev => new Set(prev).add(matched.id));
+      setTimeout(() => {
+        const el = rowRefs.current.get(matched.id);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-2', 'ring-blue-400', 'ring-inset');
+          setTimeout(() => {
+            el.classList.remove('ring-2', 'ring-blue-400', 'ring-inset');
+          }, 2500);
+        }
+      }, 120);
     }
   };
 
   return (
     <div className="p-6 max-w-full">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Returns Management</h1>
-        <p className="text-sm text-gray-500 mt-1">Manage product returns, quality control, and restocking</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Returns Management</h1>
+          <p className="text-sm text-gray-500 mt-1">Manage product returns, quality control, and restocking</p>
+        </div>
+        <Button
+          variant="primary"
+          onClick={() => setShowScanner(true)}
+          className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          <Camera className="h-4 w-4 mr-2" />
+          <span className="hidden sm:inline">Open Barcode Scanner</span>
+          <span className="sm:hidden">Scan</span>
+        </Button>
       </div>
 
-      <div className="mb-5">
-        <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2 text-gray-400 shrink-0">
-            <ScanLine className="w-5 h-5 text-blue-500" />
-            <span className="text-sm font-medium text-gray-600">Scan to Receive</span>
-          </div>
-          <div className="w-px h-5 bg-gray-200 shrink-0" />
-          <input
-            ref={scanBarRef}
-            type="text"
-            value={scanBarInput}
-            onChange={e => { setScanBarInput(e.target.value); setScanBarError(''); }}
-            onKeyDown={handleScanBarKeyDown}
-            placeholder="Scan order barcode or enter order number to open receive modal..."
-            className="flex-1 text-sm bg-transparent border-none outline-none placeholder-gray-400 text-gray-800"
-          />
-          {scanBarInput && (
-            <button
-              onClick={() => { setScanBarInput(''); setScanBarError(''); }}
-              className="shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-          <button
-            onClick={() => handleScanBarSubmit(scanBarInput)}
-            disabled={!scanBarInput.trim()}
-            className="shrink-0 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-semibold rounded-lg transition-colors"
-          >
-            Open
+      {scanNotFound && (
+        <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          {scanNotFound}
+          <button onClick={() => setScanNotFound(null)} className="ml-auto p-0.5 hover:text-red-800 transition-colors">
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
-        {scanBarError && (
-          <p className="text-xs text-red-600 mt-1.5 pl-1 flex items-center gap-1">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            {scanBarError}
-          </p>
-        )}
-      </div>
+      )}
 
       <div className="grid grid-cols-6 gap-3 mb-6">
         {STATUS_CARDS.map(card => {
@@ -406,6 +402,10 @@ export default function Returns() {
                     <>
                       <tr
                         key={r.id}
+                        ref={el => {
+                          if (el) rowRefs.current.set(r.id, el);
+                          else rowRefs.current.delete(r.id);
+                        }}
                         className={`hover:bg-gray-50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-50' : ''}`}
                         onClick={() => itemCount > 0 && toggleExpand(r.id)}
                       >
@@ -630,6 +630,13 @@ export default function Returns() {
             setRestockingReturn(null);
             fetchReturns();
           }}
+        />
+      )}
+
+      {showScanner && (
+        <BarcodeScannerModal
+          onScan={handleCameraScan}
+          onClose={() => setShowScanner(false)}
         />
       )}
     </div>

@@ -1,5 +1,5 @@
 import { supabase } from '../../../lib/supabase';
-import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult } from './types';
+import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult, DuplicateInfo } from './types';
 import { resolvePaymentStatus } from './collectionResolver';
 
 const PROVIDER_LABEL: Record<ProviderType, string> = {
@@ -7,6 +7,122 @@ const PROVIDER_LABEL: Record<ProviderType, string> = {
   bkash: 'Bkash',
   ssl_commerz: 'SSL Commerz',
 };
+
+export async function checkDuplicateCollectionRecord(
+  matchedRows: MatchedRow[],
+  provider: ProviderType
+): Promise<DuplicateInfo | null> {
+  const deliveryRows = matchedRows.filter(r => r.invoice_type === 'delivery' && r.order_id);
+  if (deliveryRows.length === 0) return null;
+
+  const incomingOrderIds = [...new Set(deliveryRows.map(r => r.order_id).filter(Boolean))] as string[];
+
+  const { data: existingItems } = await supabase
+    .from('collection_line_items')
+    .select(`
+      order_id,
+      collection_record_id,
+      collection_records(
+        id,
+        invoice_date,
+        invoice_number,
+        provider_type
+      )
+    `)
+    .eq('invoice_type', 'delivery')
+    .eq('match_status', 'matched')
+    .in('order_id', incomingOrderIds);
+
+  if (!existingItems || existingItems.length === 0) return null;
+
+  const recordOverlap = new Map<string, { count: number; record: any }>();
+  for (const item of existingItems as any[]) {
+    const rec = Array.isArray(item.collection_records) ? item.collection_records[0] : item.collection_records;
+    if (!rec) continue;
+    if (rec.provider_type !== provider) continue;
+    const key = rec.id;
+    const existing = recordOverlap.get(key);
+    if (existing) {
+      existing.count++;
+    } else {
+      recordOverlap.set(key, { count: 1, record: rec });
+    }
+  }
+
+  if (recordOverlap.size === 0) return null;
+
+  let bestRecordId = '';
+  let bestCount = 0;
+  let bestRecord: any = null;
+  for (const [id, { count, record }] of recordOverlap) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestRecordId = id;
+      bestRecord = record;
+    }
+  }
+
+  const overlapPercent = (bestCount / incomingOrderIds.length) * 100;
+  if (overlapPercent < 50) return null;
+
+  return {
+    existingRecordId: bestRecordId,
+    existingInvoiceDate: bestRecord.invoice_date,
+    existingInvoiceNumber: bestRecord.invoice_number,
+    overlapCount: bestCount,
+    incomingCount: incomingOrderIds.length,
+    overlapPercent,
+  };
+}
+
+async function rollbackDeliveryLineItems(recordId: string, userId: string | null): Promise<void> {
+  const { data: lineItems } = await supabase
+    .from('collection_line_items')
+    .select('*')
+    .eq('collection_record_id', recordId)
+    .eq('invoice_type', 'delivery')
+    .eq('match_status', 'matched')
+    .eq('applied', true);
+
+  if (!lineItems || lineItems.length === 0) return;
+
+  const orderIds = [...new Set((lineItems as any[]).map(li => li.order_id).filter(Boolean))];
+
+  for (const orderId of orderIds) {
+    await supabase.from('order_courier_info').update({
+      collected_amount: 0,
+      delivery_charge: 0,
+      settlement_source: null,
+      updated_at: new Date().toISOString(),
+    }).eq('order_id', orderId);
+
+    await supabase.from('orders').update({
+      payment_status: 'unpaid',
+      updated_at: new Date().toISOString(),
+    }).eq('id', orderId).eq('payment_status', 'paid')
+      .in('cs_status', ['delivered', 'cancelled_cad', 'exchange', 'exchange_returnable', 'partial_delivery']);
+
+    await supabase.from('order_activity_log').insert({
+      order_id: orderId,
+      action: `Previous delivery settlement rolled back to allow re-upload with updated invoice.`,
+      performed_by: userId,
+    });
+  }
+
+  await supabase.from('collection_line_items')
+    .delete()
+    .eq('collection_record_id', recordId)
+    .eq('invoice_type', 'delivery');
+
+  const { data: remainingItems } = await supabase
+    .from('collection_line_items')
+    .select('id')
+    .eq('collection_record_id', recordId);
+
+  if (!remainingItems || remainingItems.length === 0) {
+    await supabase.from('collection_records').delete().eq('id', recordId);
+  }
+}
 
 export async function saveCollectionRecord(
   provider: ProviderType,
@@ -17,8 +133,14 @@ export async function saveCollectionRecord(
   unmatchedRows: MatchedRow[],
   createdBy: string | null,
   bankDepositAmount: number | null = null,
-  bankDepositReference: string | null = null
+  bankDepositReference: string | null = null,
+  replaceRecordId: string | null = null,
+  userId: string | null = null
 ): Promise<string> {
+  if (replaceRecordId) {
+    await rollbackDeliveryLineItems(replaceRecordId, userId);
+  }
+
   const totalDisbursed = parseResult.totalDisbursed;
   const totalMatched = matchedRows.length;
   const totalRows = parseResult.parsedRows;
@@ -141,6 +263,15 @@ export async function applyCollectionRecord(
     orderMap.set(o.id, o);
   }
 
+  const { data: record } = await supabase
+    .from('collection_records')
+    .select('provider_type, invoice_date')
+    .eq('id', recordId)
+    .maybeSingle();
+
+  const providerLabel = record?.provider_type ? PROVIDER_LABEL[record.provider_type as ProviderType] ?? record.provider_type : 'Invoice';
+  const dateStr = record?.invoice_date ?? new Date().toISOString().split('T')[0];
+
   const errors: string[] = [];
   let ordersUpdated = 0;
   let paidStatusSet = 0;
@@ -163,8 +294,15 @@ export async function applyCollectionRecord(
     const deliveryDiscount = courierInfo?.delivery_discount ?? 0;
     const totalReceivable = courierInfo?.total_receivable ?? order.total_amount;
 
-    const newCollected = existingCollected + (li.collected_amount ?? 0);
-    const newDelivery = existingDelivery + (li.delivery_charge ?? 0);
+    const isDelivery = li.invoice_type === 'delivery' || li.invoice_type == null;
+
+    const newCollected = isDelivery
+      ? (li.collected_amount ?? 0)
+      : existingCollected;
+
+    const newDelivery = isDelivery
+      ? (li.delivery_charge ?? 0)
+      : existingDelivery + (li.delivery_charge ?? 0);
 
     try {
       if (courierInfo?.id) {
@@ -203,18 +341,10 @@ export async function applyCollectionRecord(
         paidStatusSet++;
       }
 
-      const { data: record } = await supabase
-        .from('collection_records')
-        .select('provider_type, invoice_date')
-        .eq('id', recordId)
-        .maybeSingle();
-
-      const providerLabel = record?.provider_type ? PROVIDER_LABEL[record.provider_type as ProviderType] ?? record.provider_type : 'Invoice';
-      const dateStr = record?.invoice_date ?? new Date().toISOString().split('T')[0];
-
+      const typeLabel = isDelivery ? 'Delivery' : 'Return';
       await supabase.from('order_activity_log').insert({
         order_id: li.order_id,
-        action: `Settlement applied via ${providerLabel} invoice (${dateStr}). Collected: ৳${newCollected.toFixed(2)}, Delivery Charge: ৳${newDelivery.toFixed(2)}. ${resolverResult.reason}`,
+        action: `${typeLabel} settlement applied via ${providerLabel} invoice (${dateStr}). Collected: ৳${newCollected.toFixed(2)}, Delivery Charge: ৳${newDelivery.toFixed(2)}. ${resolverResult.reason}`,
         performed_by: userId,
       });
 

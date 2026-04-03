@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { X, Upload, FileText, AlertCircle, CheckCircle, ChevronRight, Loader2, Download } from 'lucide-react';
-import { ProviderType, ParseResult, MatchResult } from './types';
+import { X, Upload, FileText, AlertCircle, CheckCircle, ChevronRight, Loader2, Download, RefreshCw } from 'lucide-react';
+import { ProviderType, ParseResult, MatchResult, DuplicateInfo } from './types';
 import { detectProvider, parseInvoiceCSV } from './collectionParser';
 import { matchParsedRows } from './collectionMatcher';
-import { saveCollectionRecord, applyCollectionRecord } from './collectionService';
+import { saveCollectionRecord, applyCollectionRecord, checkDuplicateCollectionRecord } from './collectionService';
 import { useAuth } from '../../../contexts/AuthContext';
 
 type Step = 'upload' | 'preview' | 'matching' | 'done';
@@ -76,6 +76,9 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
   const [applyResult, setApplyResult] = useState<{ ordersUpdated: number; paidStatusSet: number; errors: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null);
+  const [duplicateDismissed, setDuplicateDismissed] = useState(false);
+
   const handleFile = useCallback((file: File) => {
     if (!file.name.endsWith('.csv')) {
       setError('Please upload a CSV file.');
@@ -121,9 +124,13 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
     if (!parseResult || !selectedProvider) return;
     setMatching(true);
     setError(null);
+    setDuplicateInfo(null);
+    setDuplicateDismissed(false);
     try {
       const result = await matchParsedRows(parseResult.rows);
       setMatchResult(result);
+      const dupInfo = await checkDuplicateCollectionRecord(result.matched, selectedProvider);
+      setDuplicateInfo(dupInfo);
       setStep('matching');
     } catch (err: any) {
       setError(err.message);
@@ -132,11 +139,14 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
     }
   };
 
+  const isUpdateMode = duplicateInfo !== null && !duplicateDismissed;
+
   const handleApply = async () => {
     if (!matchResult || !selectedProvider || !parseResult) return;
     setApplying(true);
     setError(null);
     try {
+      const replaceRecordId = isUpdateMode ? duplicateInfo!.existingRecordId : null;
       const recordId = await saveCollectionRecord(
         selectedProvider,
         invoiceDate,
@@ -146,7 +156,9 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
         matchResult.unmatched,
         user?.id ?? null,
         bankDepositAmount ? parseFloat(bankDepositAmount) : null,
-        bankDepositReference || null
+        bankDepositReference || null,
+        replaceRecordId,
+        user?.id ?? null
       );
       setCollectionRecordId(recordId);
       const result = await applyCollectionRecord(recordId, user?.id ?? null);
@@ -371,6 +383,37 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
 
           {step === 'matching' && matchResult && (
             <div className="space-y-4">
+              {duplicateInfo && !duplicateDismissed && (
+                <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-300 rounded-xl">
+                  <RefreshCw className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-amber-900">Duplicate invoice detected</p>
+                    <p className="text-xs text-amber-800 mt-1">
+                      {Math.round(duplicateInfo.overlapPercent)}% of the incoming delivery orders ({duplicateInfo.overlapCount} of {duplicateInfo.incomingCount}) already exist in a previous record from{' '}
+                      <span className="font-semibold">{duplicateInfo.existingInvoiceDate}</span>
+                      {duplicateInfo.existingInvoiceNumber ? ` (${duplicateInfo.existingInvoiceNumber})` : ''}.
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1.5">
+                      Clicking <span className="font-semibold">Update Existing</span> will remove the old delivery settlement data and replace it with this upload. Return records from other invoices are not affected.
+                    </p>
+                    <button
+                      onClick={() => setDuplicateDismissed(true)}
+                      className="mt-2 text-xs text-amber-700 underline hover:text-amber-900 transition-colors"
+                    >
+                      No, save as a new record instead
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {duplicateInfo && duplicateDismissed && (
+                <div className="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-600">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-gray-400" />
+                  Duplicate warning dismissed — this will be saved as a new collection record.
+                  <button onClick={() => setDuplicateDismissed(false)} className="ml-auto text-blue-600 hover:underline shrink-0">Undo</button>
+                </div>
+              )}
+
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-green-50 rounded-lg p-3 text-center">
                   <div className="text-xl font-bold text-green-700">{matchResult.totalMatched}</div>
@@ -549,10 +592,14 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
               <button
                 onClick={handleApply}
                 disabled={!matchResult || matchResult.totalMatched === 0 || applying}
-                className="flex items-center gap-2 px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:bg-green-300 transition-colors"
+                className={`flex items-center gap-2 px-5 py-2 text-white rounded-lg text-sm font-medium transition-colors ${
+                  isUpdateMode
+                    ? 'bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300'
+                    : 'bg-green-600 hover:bg-green-700 disabled:bg-green-300'
+                }`}
               >
-                {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                Apply & Save
+                {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : isUpdateMode ? <RefreshCw className="w-4 h-4" /> : null}
+                {isUpdateMode ? 'Update Existing' : 'Apply & Save'}
               </button>
             )}
 

@@ -110,6 +110,15 @@ export interface ApplyResult {
   errors: string[];
 }
 
+export interface DuplicateInfo {
+  existingRecordId: string;
+  existingInvoiceDate: string;
+  existingInvoiceNumber: string | null;
+  overlapCount: number;
+  incomingCount: number;
+  overlapPercent: number;
+}
+
 export interface OverdueOrder {
   id: string;
   order_number: string;

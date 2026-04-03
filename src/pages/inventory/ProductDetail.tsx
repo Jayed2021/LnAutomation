@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { loadBarcodeLabelSettings, downloadBarcodePNG, type BarcodeLabelSettings } from '../../lib/barcodeUtils';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
@@ -71,62 +72,6 @@ interface AllLocation {
   name: string;
 }
 
-function downloadBarcodeSVG(value: string, filename: string) {
-  const bars: boolean[] = [];
-  const code39Map: Record<string, string> = {
-    '0': '101001101101', '1': '110100101011', '2': '101100101011',
-    '3': '110110010101', '4': '101001101011', '5': '110100110101',
-    '6': '101100110101', '7': '101001011011', '8': '110100101101',
-    '9': '101100101101', 'A': '110101001011', 'B': '101101001011',
-    'C': '110110100101', 'D': '101011001011', 'E': '110101100101',
-    'F': '101101100101', 'G': '101010011011', 'H': '110101001101',
-    'I': '101101001101', 'J': '101011001101', 'K': '110101010011',
-    'L': '101101010011', 'M': '110110101001', 'N': '101011010011',
-    'O': '110101101001', 'P': '101101101001', 'Q': '101010110011',
-    'R': '110101011001', 'S': '101101011001', 'T': '101011011001',
-    'U': '110010101011', 'V': '100110101011', 'W': '110011010101',
-    'X': '100101101011', 'Y': '110010110101', 'Z': '100110110101',
-    '-': '100101011011', '.': '110010101101', ' ': '100110101101',
-    '*': '100101101101',
-  };
-
-  const encoded = '*' + value.toUpperCase().replace(/[^0-9A-Z\-. ]/g, '') + '*';
-  encoded.split('').forEach((char, i) => {
-    const pattern = code39Map[char];
-    if (!pattern) return;
-    pattern.split('').forEach((bit, j) => {
-      const wide = bit === '1';
-      const isBar = j % 2 === 0;
-      const count = wide ? 3 : 1;
-      for (let k = 0; k < count; k++) bars.push(isBar);
-    });
-    if (i < encoded.length - 1) bars.push(false);
-  });
-
-  const barWidth = 2;
-  const height = 80;
-  const totalWidth = bars.length * barWidth;
-  let rects = '';
-  bars.forEach((isBar, i) => {
-    if (isBar) {
-      rects += `<rect x="${i * barWidth}" y="0" width="${barWidth}" height="${height}" fill="black"/>`;
-    }
-  });
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${height + 20}">
-    <rect width="100%" height="100%" fill="white"/>
-    ${rects}
-    <text x="${totalWidth / 2}" y="${height + 14}" text-anchor="middle" font-family="monospace" font-size="12">${value}</text>
-  </svg>`;
-
-  const blob = new Blob([svg], { type: 'image/svg+xml' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename + '.svg';
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
@@ -162,6 +107,7 @@ export default function ProductDetail() {
   const [adjustForm, setAdjustForm] = useState({ lotId: '', delta: '', notes: '' });
   const [initialStockForm, setInitialStockForm] = useState({ quantity: '', landed_cost: '', location_id: '' });
   const [adjustSaving, setAdjustSaving] = useState(false);
+  const [barcodeSettings, setBarcodeSettings] = useState<BarcodeLabelSettings | null>(null);
   const [adjustError, setAdjustError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -222,6 +168,9 @@ export default function ProductDetail() {
       }));
       setProductLocations(mappedProdLocs);
       setAllLocations(allLocRes.data || []);
+
+      const labelSettings = await loadBarcodeLabelSettings();
+      setBarcodeSettings(labelSettings);
     } catch (err) {
       console.error(err);
     } finally {
@@ -804,9 +753,10 @@ export default function ProductDetail() {
                     </span>
                   )}
                   <button
-                    onClick={() => downloadBarcodeSVG(product.barcode || product.sku, product.sku)}
+                    onClick={() => barcodeSettings && downloadBarcodePNG(product.barcode || product.sku, product.sku, barcodeSettings)}
                     className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-500 hover:text-gray-700 transition-colors"
-                    title="Download barcode"
+                    title="Download barcode PNG"
+                    disabled={!barcodeSettings}
                   >
                     <Download className="w-4 h-4" />
                   </button>
@@ -1090,9 +1040,10 @@ export default function ProductDetail() {
                             {shipmentBarcode}
                           </span>
                           <button
-                            onClick={() => downloadBarcodeSVG(shipmentBarcode, lot.lot_number)}
+                            onClick={() => barcodeSettings && downloadBarcodePNG(shipmentBarcode, lot.lot_number, barcodeSettings)}
                             className="text-gray-400 hover:text-gray-600 transition-colors"
-                            title="Download barcode"
+                            title="Download barcode PNG"
+                            disabled={!barcodeSettings}
                           >
                             <Download className="w-3.5 h-3.5" />
                           </button>

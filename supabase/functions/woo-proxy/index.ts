@@ -262,7 +262,8 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
   const email = billing.email || "";
   const address = [billing.address_1, billing.address_2].filter(Boolean).join(", ");
   const city = billing.city || "";
-  const district = billing.state || billing.city || "";
+  const rawDistrict = billing.state || billing.city || "";
+  const district = rawDistrict.replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
   let customerId: string;
   const { data: existingCustomer } = await supabase
@@ -325,7 +326,7 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
       order_date: payload.date_created_gmt ? payload.date_created_gmt + "Z" : (payload.date_created || new Date().toISOString()),
       cs_status: csStatus,
       payment_method: paymentMethod,
-      payment_status: payload.payment_method === "cod" ? "unpaid" : "paid",
+      payment_status: "unpaid",
       subtotal,
       shipping_fee: shippingFee,
       discount_amount: discountAmount,
@@ -431,11 +432,12 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
     .limit(1)
     .maybeSingle();
 
-  const preferredCourier = storeProfile?.preferred_courier || "pathao";
+  const preferredCourier = storeProfile?.preferred_courier || "Pathao";
 
   await supabase.from("order_courier_info").insert({
     order_id: orderId,
     courier_company: preferredCourier,
+    total_receivable: totalAmount,
   });
 
   await supabase.from("order_activity_log").insert({

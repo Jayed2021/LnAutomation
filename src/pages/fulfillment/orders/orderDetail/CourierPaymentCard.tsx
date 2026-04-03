@@ -15,6 +15,7 @@ const CONFIRMATION_METHODS = [
 ];
 
 const FINAL_STATUSES = new Set(['delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery']);
+const POST_SHIPPED_STATUSES = new Set(['shipped', 'delivered', 'cancel_after_dispatch', 'exchange', 'partial_delivery']);
 
 const SOURCE_LABELS: Record<string, string> = {
   courier_api: 'Courier API',
@@ -37,9 +38,6 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const [retrying, setRetrying] = useState(false);
   const [settlementEditing, setSettlementEditing] = useState(false);
   const [settlementSaving, setSettlementSaving] = useState(false);
-  const [shipNoteModal, setShipNoteModal] = useState(false);
-  const [shipNote, setShipNote] = useState('');
-  const [pendingSave, setPendingSave] = useState<(() => Promise<void>) | null>(null);
 
   const isPartialPaidOrder = order.payment_method?.toLowerCase().startsWith('partial paid') ||
     order.payment_method?.toLowerCase().includes('+cod');
@@ -47,12 +45,15 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     ? order.total_amount - order.paid_amount
     : order.total_amount;
 
+  const isPostShipped = POST_SHIPPED_STATUSES.has(order.cs_status);
+
   const [edit, setEdit] = useState({
     courier_company: courier?.courier_company ?? '',
     tracking_number: courier?.tracking_number ?? '',
     courier_area: courier?.courier_area ?? '',
     total_receivable: courier?.total_receivable ?? expectedReceivable,
     cod_charge: courier?.cod_charge ?? 0,
+    delivery_discount: courier?.delivery_discount ?? 0,
   });
 
   const [settlementEdit, setSettlementEdit] = useState({
@@ -88,22 +89,15 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
 
   const officeDeliveryErrors = getOfficeDeliveryErrors();
 
-  const performSave = async (noteForShip?: string) => {
+  const performSave = async () => {
     if (courier) {
-      const prevReceivable = courier.total_receivable;
-      const newReceivable = edit.total_receivable;
-      const modifiedAfterShip = isShipped && newReceivable !== prevReceivable;
-
       await supabase.from('order_courier_info').update({
         courier_company: edit.courier_company,
         tracking_number: edit.tracking_number,
         courier_area: edit.courier_area,
-        total_receivable: newReceivable,
+        total_receivable: isPostShipped ? courier.total_receivable : edit.total_receivable,
         cod_charge: edit.cod_charge,
-        ...(modifiedAfterShip && {
-          total_receivable_modified_after_ship: true,
-          total_receivable_ship_note: noteForShip ?? '',
-        }),
+        delivery_discount: isPostShipped ? edit.delivery_discount : 0,
         updated_at: new Date().toISOString(),
       }).eq('id', courier.id);
     } else {
@@ -114,6 +108,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
         courier_area: edit.courier_area,
         total_receivable: edit.total_receivable,
         cod_charge: edit.cod_charge,
+        delivery_discount: 0,
       });
     }
     await logActivity(order.id, `Courier info updated`, userId);
@@ -123,26 +118,6 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
 
   const handleSaveCourier = async () => {
     if (officeDeliveryErrors.length > 0) return;
-
-    const prevReceivable = courier?.total_receivable ?? order.total_amount;
-    const modifiedAfterShip = isShipped && edit.total_receivable !== prevReceivable;
-
-    if (modifiedAfterShip) {
-      setPendingSave(() => async (note: string) => {
-        setSaving(true);
-        try {
-          await performSave(note);
-        } catch (err) {
-          console.error(err);
-        } finally {
-          setSaving(false);
-        }
-      });
-      setShipNote('');
-      setShipNoteModal(true);
-      return;
-    }
-
     setSaving(true);
     try {
       await performSave();
@@ -150,15 +125,6 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
       console.error(err);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleShipNoteConfirm = async () => {
-    if (!shipNote.trim()) return;
-    setShipNoteModal(false);
-    if (pendingSave) {
-      await pendingSave(shipNote);
-      setPendingSave(null);
     }
   };
 
@@ -312,6 +278,10 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const settlementSource = courier?.settlement_source ?? null;
   const hasPostShipFlag = courier?.total_receivable_modified_after_ship === true;
 
+  const deliveryDiscount = isPostShipped ? (editing ? edit.delivery_discount : (courier?.delivery_discount ?? 0)) : 0;
+  const displayReceivable = courier?.total_receivable ?? expectedReceivable;
+  const effectiveCollection = displayReceivable - deliveryDiscount;
+
   return (
     <>
       <div className="bg-white border border-gray-200 rounded-xl p-5">
@@ -325,6 +295,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                 courier_area: courier?.courier_area ?? '',
                 total_receivable: courier?.total_receivable ?? expectedReceivable,
                 cod_charge: courier?.cod_charge ?? 0,
+                delivery_discount: courier?.delivery_discount ?? 0,
               });
               setEditing(true);
             }} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium">
@@ -401,23 +372,47 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
 
           <div className="bg-green-50 border border-green-200 rounded-lg p-3">
             <div className="text-xs font-medium text-green-700 mb-0.5">Total Receivable (Courier Collection)</div>
-            {editing
+            {editing && !isPostShipped
               ? <input type="number" value={edit.total_receivable} onChange={e => setEdit(p => ({ ...p, total_receivable: parseFloat(e.target.value) || 0 }))} className={inputCls} />
-              : <div className="text-lg font-bold text-green-800">৳{(courier?.total_receivable ?? expectedReceivable).toLocaleString('en-BD', { minimumFractionDigits: 2 })}</div>}
+              : <div className="text-lg font-bold text-green-800">৳{displayReceivable.toLocaleString('en-BD', { minimumFractionDigits: 2 })}</div>}
             <div className="text-xs text-green-600 mt-0.5">Amount to collect from customer</div>
-            {editing && isShipped && edit.total_receivable !== (courier?.total_receivable ?? expectedReceivable) && (
-              <p className="text-xs text-amber-700 mt-1.5 font-medium">
-                Changing this on a shipped order will flag the amount for accounts review.
-              </p>
-            )}
-            {editing && isPartialPaidOrder && order.paid_amount != null && edit.total_receivable !== expectedReceivable && (
+            {editing && isPartialPaidOrder && order.paid_amount != null && !isPostShipped && edit.total_receivable !== expectedReceivable && (
               <p className="text-xs text-amber-700 mt-1 font-medium flex items-center gap-1">
                 Expected COD amount is ৳{expectedReceivable.toLocaleString('en-BD', { minimumFractionDigits: 2 })} based on paid amount.
               </p>
             )}
           </div>
 
-          {editing && (
+          {isPostShipped && (
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 space-y-2">
+              <div>
+                <div className="text-xs font-medium text-orange-700 mb-1">Discount During Delivery</div>
+                {editing
+                  ? <input
+                      type="number"
+                      value={edit.delivery_discount}
+                      onChange={e => setEdit(p => ({ ...p, delivery_discount: parseFloat(e.target.value) || 0 }))}
+                      className={inputCls}
+                      placeholder="0"
+                      min="0"
+                      step="0.01"
+                    />
+                  : <div className="text-sm font-semibold text-orange-800">
+                      ৳{(courier?.delivery_discount ?? 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                    </div>}
+              </div>
+              {(deliveryDiscount > 0 || editing) && (
+                <div className="pt-2 border-t border-orange-200">
+                  <div className="text-xs text-orange-600">Effective Collection</div>
+                  <div className="text-sm font-bold text-orange-900">
+                    ৳{effectiveCollection.toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {editing && !isPostShipped && (
             <div>
               <div className="text-xs font-medium text-gray-500 mb-1">Delivery Charge</div>
               <input type="number" value={edit.cod_charge} onChange={e => setEdit(p => ({ ...p, cod_charge: parseFloat(e.target.value) || 0 }))} className={inputCls} />
@@ -649,46 +644,6 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
           </div>
         )}
       </div>
-
-      {/* Post-ship remark modal */}
-      {shipNoteModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <div className="flex items-start gap-3 mb-4">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <h3 className="font-semibold text-gray-900 text-sm">Total Receivable Changed After Dispatch</h3>
-                <p className="text-xs text-gray-600 mt-1">
-                  This order is already shipped. Changing the receivable amount will flag it for accounts review.
-                  Please add a remark explaining the reason (e.g. discount given at doorstep).
-                </p>
-              </div>
-            </div>
-            <textarea
-              value={shipNote}
-              onChange={e => setShipNote(e.target.value)}
-              rows={3}
-              placeholder="e.g. Customer requested ৳50 discount at doorstep due to minor product issue..."
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none mb-4"
-            />
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => { setShipNoteModal(false); setPendingSave(null); }}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleShipNoteConfirm}
-                disabled={!shipNote.trim()}
-                className="px-4 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white rounded-lg transition-colors"
-              >
-                Save with Remark
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

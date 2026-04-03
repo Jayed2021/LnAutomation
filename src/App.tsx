@@ -45,6 +45,7 @@ const CourierSettings = lazy(() => import('./pages/settings/CourierSettings'));
 const SmsSettings = lazy(() => import('./pages/settings/SmsSettings'));
 const UserManagement = lazy(() => import('./pages/settings/UserManagement'));
 const CsAssignment = lazy(() => import('./pages/settings/CsAssignment'));
+const FraudAlertSettings = lazy(() => import('./pages/settings/FraudAlertSettings'));
 
 const ComingSoon = lazy(() => import('./pages/ComingSoon'));
 const Customers = lazy(() => import('./pages/customers/Customers'));
@@ -119,6 +120,7 @@ function App() {
               <Route path="settings/sms" element={<Suspense fallback={<PageLoader />}><SmsSettings /></Suspense>} />
               <Route path="settings/users" element={<Suspense fallback={<PageLoader />}><UserManagement /></Suspense>} />
               <Route path="settings/cs-assignment" element={<Suspense fallback={<PageLoader />}><CsAssignment /></Suspense>} />
+              <Route path="settings/fraud-alert" element={<Suspense fallback={<PageLoader />}><FraudAlertSettings /></Suspense>} />
             </Route>
           </Routes>
         </RefreshProvider>

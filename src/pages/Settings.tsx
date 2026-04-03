@@ -11,7 +11,8 @@ import {
   Lock,
   Bell,
   Package,
-  UserCheck
+  UserCheck,
+  ShieldAlert
 } from 'lucide-react';
 
 export default function Settings() {
@@ -73,6 +74,13 @@ export default function Settings() {
       icon: ShoppingCart,
       color: 'orange',
       route: '/settings/woocommerce'
+    },
+    {
+      title: 'Fraud Alert',
+      description: 'Check customer delivery success rates via FraudBD API',
+      icon: ShieldAlert,
+      color: 'red',
+      route: '/settings/fraud-alert'
     },
     {
       title: 'Security',

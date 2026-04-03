@@ -1,4 +1,4 @@
-import { ParsedRow, ParseResult, ProviderType, InvoiceType, MatchConfidence } from './types';
+import { ParsedRow, ParseResult, ProviderType, InvoiceType, MatchConfidence, BulkParseResult, BulkParseGroup } from './types';
 
 function parseCSV(text: string): Record<string, string>[] {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
@@ -51,8 +51,22 @@ function parseAmount(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
+function getFirstHeaderLine(text: string): string {
+  return text.split(/\r?\n/)[0] ?? '';
+}
+
+export function isBulkPathaoFormat(text: string): boolean {
+  const firstLine = getFirstHeaderLine(text);
+  return (
+    firstLine.includes('Consignment_ID') &&
+    firstLine.includes('Final_Fee') &&
+    firstLine.includes('Payment Reference') &&
+    firstLine.includes('Order Status')
+  );
+}
+
 export function detectProvider(text: string): ProviderType | null {
-  const firstLine = text.split(/\r?\n/)[0] ?? '';
+  const firstLine = getFirstHeaderLine(text);
   if (firstLine.includes('Consignment_ID') && firstLine.includes('Final_Fee')) return 'pathao';
   if (firstLine.includes('Transaction Type') && firstLine.includes('Charges')) return 'bkash';
   if (firstLine.includes('Store Credit Amount') && firstLine.includes('TDR')) return 'ssl_commerz';
@@ -74,8 +88,7 @@ function extractWooOrderIdFromReference(ref: string): { id: number | null; confi
   return { id: null, confidence: 'low' };
 }
 
-export function parsePathaoCSV(text: string): ParseResult {
-  const allRows = parseCSV(text);
+function buildPathaoParseResult(rows: Record<string, string>[]): ParseResult {
   const errors: string[] = [];
   let skippedRows = 0;
 
@@ -84,8 +97,9 @@ export function parsePathaoCSV(text: string): ParseResult {
     returns: Record<string, string>[];
   }>();
 
-  for (const row of allRows) {
-    const orderId = row['Merchant_Order_ID']?.trim();
+  for (const row of rows) {
+    const rawOrderId = row['Merchant_Order_ID']?.trim();
+    const orderId = rawOrderId?.replace(/,$/, '').trim();
     const invoiceType = row['Invoice type']?.toLowerCase().trim() as InvoiceType;
 
     if (!orderId) {
@@ -156,19 +170,80 @@ export function parsePathaoCSV(text: string): ParseResult {
     });
   }
 
-  const totalGatewayCharges = 0;
   const totalDisbursed = parsedRows.reduce((sum, r) => sum + r.payout, 0);
 
   return {
     rows: parsedRows,
-    totalRows: allRows.length,
+    totalRows: rows.length,
     parsedRows: parsedRows.length,
     skippedRows,
     errors,
     detectedProvider: 'pathao',
-    totalGatewayCharges,
+    totalGatewayCharges: 0,
     totalDisbursed,
   };
+}
+
+function parseDateString(val: string): Date | null {
+  if (!val) return null;
+  const d = new Date(val);
+  if (!isNaN(d.getTime())) return d;
+  const parts = val.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (parts) {
+    return new Date(`${parts[3]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`);
+  }
+  return null;
+}
+
+export function parsePathaoCSVBulk(text: string): BulkParseResult {
+  const allRows = parseCSV(text);
+
+  const groupOrder: string[] = [];
+  const groupRows = new Map<string, Record<string, string>[]>();
+
+  for (const row of allRows) {
+    const ref = row['Payment Reference']?.trim();
+    if (!ref) continue;
+    if (!groupRows.has(ref)) {
+      groupOrder.push(ref);
+      groupRows.set(ref, []);
+    }
+    groupRows.get(ref)!.push(row);
+  }
+
+  const groups: BulkParseGroup[] = [];
+
+  for (const invoiceNumber of groupOrder) {
+    const rows = groupRows.get(invoiceNumber)!;
+
+    let earliestDate: Date | null = null;
+    for (const row of rows) {
+      const d = parseDateString(row['Created_Date'] ?? '');
+      if (d && (!earliestDate || d < earliestDate)) {
+        earliestDate = d;
+      }
+    }
+
+    const suggestedDate = earliestDate
+      ? earliestDate.toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
+
+    const parseResult = buildPathaoParseResult(rows);
+
+    groups.push({ invoiceNumber, suggestedDate, parseResult });
+  }
+
+  return {
+    isBulk: true,
+    groups,
+    totalGroups: groups.length,
+    detectedProvider: 'pathao',
+  };
+}
+
+export function parsePathaoCSV(text: string): ParseResult {
+  const allRows = parseCSV(text);
+  return buildPathaoParseResult(allRows);
 }
 
 export function parseBkashCSV(text: string): ParseResult {
@@ -293,8 +368,9 @@ export function parseSSLCommerzCSV(text: string): ParseResult {
   };
 }
 
-export function parseInvoiceCSV(text: string, provider?: ProviderType): ParseResult {
+export function parseInvoiceCSV(text: string, provider?: ProviderType): ParseResult | BulkParseResult {
   const detected = provider ?? detectProvider(text);
+  if (detected === 'pathao' && isBulkPathaoFormat(text)) return parsePathaoCSVBulk(text);
   if (detected === 'pathao') return parsePathaoCSV(text);
   if (detected === 'bkash') return parseBkashCSV(text);
   if (detected === 'ssl_commerz') return parseSSLCommerzCSV(text);

@@ -1,5 +1,5 @@
 import { supabase } from '../../../lib/supabase';
-import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult, DuplicateInfo } from './types';
+import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult, DuplicateInfo, BulkApplyResult } from './types';
 import { resolvePaymentStatus } from './collectionResolver';
 
 const PROVIDER_LABEL: Record<ProviderType, string> = {
@@ -377,6 +377,83 @@ export async function applyCollectionRecord(
   }).eq('id', recordId);
 
   return { ordersUpdated, paidStatusSet, errors };
+}
+
+export async function checkBulkDuplicates(
+  invoiceNumbers: string[],
+  provider: ProviderType
+): Promise<Map<string, string>> {
+  if (invoiceNumbers.length === 0) return new Map();
+
+  const { data } = await supabase
+    .from('collection_records')
+    .select('id, invoice_number')
+    .eq('provider_type', provider)
+    .in('invoice_number', invoiceNumbers);
+
+  const result = new Map<string, string>();
+  for (const rec of (data ?? []) as any[]) {
+    if (rec.invoice_number) {
+      result.set(rec.invoice_number, rec.id);
+    }
+  }
+  return result;
+}
+
+export async function saveAndApplyBulkCollectionRecords(
+  groups: Array<{
+    invoiceNumber: string;
+    invoiceDate: string;
+    parseResult: ParseResult;
+    matchResult: { matched: MatchedRow[]; unmatched: MatchedRow[] };
+  }>,
+  provider: ProviderType,
+  userId: string | null
+): Promise<BulkApplyResult> {
+  let recordsCreated = 0;
+  let ordersUpdated = 0;
+  let paidStatusSet = 0;
+  const groupErrors: Array<{ invoiceNumber: string; error: string }> = [];
+  const allUnmatched: MatchedRow[] = [];
+
+  for (const group of groups) {
+    try {
+      const recordId = await saveCollectionRecord(
+        provider,
+        group.invoiceDate,
+        group.invoiceNumber,
+        group.parseResult,
+        group.matchResult.matched,
+        group.matchResult.unmatched,
+        userId,
+        null,
+        null,
+        null,
+        userId
+      );
+      recordsCreated++;
+
+      const applyResult = await applyCollectionRecord(recordId, userId);
+      ordersUpdated += applyResult.ordersUpdated;
+      paidStatusSet += applyResult.paidStatusSet;
+
+      if (applyResult.errors.length > 0) {
+        groupErrors.push({
+          invoiceNumber: group.invoiceNumber,
+          error: applyResult.errors.join('; '),
+        });
+      }
+    } catch (err: any) {
+      groupErrors.push({
+        invoiceNumber: group.invoiceNumber,
+        error: err.message ?? 'Unknown error',
+      });
+    }
+
+    allUnmatched.push(...group.matchResult.unmatched);
+  }
+
+  return { recordsCreated, ordersUpdated, paidStatusSet, groupErrors, allUnmatched };
 }
 
 export async function fetchCollectionRecords(): Promise<CollectionRecord[]> {

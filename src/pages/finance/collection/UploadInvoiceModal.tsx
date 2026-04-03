@@ -1,12 +1,12 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { X, Upload, FileText, AlertCircle, CheckCircle, ChevronRight, Loader2, Download, RefreshCw } from 'lucide-react';
-import { ProviderType, ParseResult, MatchResult, DuplicateInfo } from './types';
-import { detectProvider, parseInvoiceCSV } from './collectionParser';
+import { X, Upload, FileText, AlertCircle, CheckCircle, ChevronRight, Loader2, Download, RefreshCw, Layers } from 'lucide-react';
+import { ProviderType, ParseResult, MatchResult, DuplicateInfo, BulkParseResult, BulkApplyResult } from './types';
+import { detectProvider, parseInvoiceCSV, isBulkPathaoFormat } from './collectionParser';
 import { matchParsedRows } from './collectionMatcher';
-import { saveCollectionRecord, applyCollectionRecord, checkDuplicateCollectionRecord } from './collectionService';
+import { saveCollectionRecord, applyCollectionRecord, checkDuplicateCollectionRecord, checkBulkDuplicates, saveAndApplyBulkCollectionRecords } from './collectionService';
 import { useAuth } from '../../../contexts/AuthContext';
 
-type Step = 'upload' | 'preview' | 'matching' | 'done';
+type Step = 'upload' | 'preview' | 'matching' | 'bulk_preview' | 'bulk_matching' | 'done';
 
 const PROVIDER_LABELS: Record<ProviderType, string> = {
   pathao: 'Pathao',
@@ -25,8 +25,7 @@ interface Props {
   onSuccess: () => void;
 }
 
-function exportUnmatchedCSV(matchResult: MatchResult, provider: ProviderType) {
-  const rows = matchResult.unmatched;
+function exportUnmatchedCSV(rows: { transaction_id: string | null; consignment_id: string | null; woo_order_id: number | null; collected_amount: number; delivery_charge: number; gateway_charge: number; payout: number }[], provider: ProviderType) {
   if (rows.length === 0) return;
 
   const headers = ['identifier', 'woo_order_id', 'collected_amount', 'delivery_charge', 'gateway_charge', 'payout'];
@@ -65,10 +64,10 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [bankDepositAmount, setBankDepositAmount] = useState('');
   const [bankDepositReference, setBankDepositReference] = useState('');
+  const [isBulk, setIsBulk] = useState(false);
 
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
-  const [collectionRecordId, setCollectionRecordId] = useState<string | null>(null);
 
   const [parsing, setParsing] = useState(false);
   const [matching, setMatching] = useState(false);
@@ -78,6 +77,13 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
 
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null);
   const [duplicateDismissed, setDuplicateDismissed] = useState(false);
+
+  const [bulkParseResult, setBulkParseResult] = useState<BulkParseResult | null>(null);
+  const [bulkGroupDates, setBulkGroupDates] = useState<string[]>([]);
+  const [bulkMatchResults, setBulkMatchResults] = useState<MatchResult[]>([]);
+  const [bulkDuplicates, setBulkDuplicates] = useState<Map<string, string>>(new Map());
+  const [bulkApplyResult, setBulkApplyResult] = useState<BulkApplyResult | null>(null);
+  const [bulkMatchingProgress, setBulkMatchingProgress] = useState<number>(0);
 
   const handleFile = useCallback((file: File) => {
     if (!file.name.endsWith('.csv')) {
@@ -92,6 +98,7 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
       const detected = detectProvider(text);
       setDetectedProvider(detected);
       setSelectedProvider(detected);
+      setIsBulk(detected === 'pathao' && isBulkPathaoFormat(text));
       setError(null);
     };
     reader.readAsText(file);
@@ -111,8 +118,17 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
     setError(null);
     try {
       const result = parseInvoiceCSV(fileText, provider);
-      setParseResult(result);
-      setStep('preview');
+      if ('isBulk' in result) {
+        setBulkParseResult(result);
+        setBulkGroupDates(result.groups.map(g => g.suggestedDate));
+        setBulkMatchResults([]);
+        setBulkDuplicates(new Map());
+        setBulkApplyResult(null);
+        setStep('bulk_preview');
+      } else {
+        setParseResult(result);
+        setStep('preview');
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -132,6 +148,33 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
       const dupInfo = await checkDuplicateCollectionRecord(result.matched, selectedProvider);
       setDuplicateInfo(dupInfo);
       setStep('matching');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setMatching(false);
+    }
+  };
+
+  const handleBulkMatch = async () => {
+    if (!bulkParseResult || !selectedProvider) return;
+    setMatching(true);
+    setError(null);
+    setBulkMatchingProgress(0);
+    try {
+      const results: MatchResult[] = [];
+      for (let i = 0; i < bulkParseResult.groups.length; i++) {
+        const group = bulkParseResult.groups[i];
+        const result = await matchParsedRows(group.parseResult.rows);
+        results.push(result);
+        setBulkMatchingProgress(i + 1);
+      }
+      setBulkMatchResults(results);
+
+      const invoiceNumbers = bulkParseResult.groups.map(g => g.invoiceNumber);
+      const dupes = await checkBulkDuplicates(invoiceNumbers, selectedProvider);
+      setBulkDuplicates(dupes);
+
+      setStep('bulk_matching');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -160,9 +203,34 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
         replaceRecordId,
         user?.id ?? null
       );
-      setCollectionRecordId(recordId);
       const result = await applyCollectionRecord(recordId, user?.id ?? null);
       setApplyResult(result);
+      setStep('done');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const handleBulkApply = async () => {
+    if (!bulkParseResult || !selectedProvider || bulkMatchResults.length === 0) return;
+    setApplying(true);
+    setError(null);
+    try {
+      const groups = bulkParseResult.groups.map((g, i) => ({
+        invoiceNumber: g.invoiceNumber,
+        invoiceDate: bulkGroupDates[i] ?? g.suggestedDate,
+        parseResult: g.parseResult,
+        matchResult: bulkMatchResults[i],
+      }));
+      const result = await saveAndApplyBulkCollectionRecords(groups, selectedProvider, user?.id ?? null);
+      setBulkApplyResult(result);
+      setApplyResult({
+        ordersUpdated: result.ordersUpdated,
+        paidStatusSet: result.paidStatusSet,
+        errors: result.groupErrors.map(e => `${e.invoiceNumber}: ${e.error}`),
+      });
       setStep('done');
     } catch (err: any) {
       setError(err.message);
@@ -175,6 +243,25 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
 
   const effectiveProvider = selectedProvider;
 
+  const singleStepLabels: Step[] = ['upload', 'preview', 'matching', 'done'];
+  const bulkStepLabels: Step[] = ['upload', 'bulk_preview', 'bulk_matching', 'done'];
+  const activeStepList = isBulk ? bulkStepLabels : singleStepLabels;
+
+  const stepDisplayName = (s: Step) => {
+    if (s === 'bulk_preview') return 'Preview';
+    if (s === 'bulk_matching') return 'Match';
+    if (s === 'matching') return 'Match';
+    if (s === 'preview') return 'Preview';
+    if (s === 'upload') return 'Upload';
+    return 'Done';
+  };
+
+  const totalBulkMatched = bulkMatchResults.reduce((s, r) => s + r.totalMatched, 0);
+  const totalBulkUnmatched = bulkMatchResults.reduce((s, r) => s + r.totalUnmatched, 0);
+  const totalBulkMatchRate = totalBulkMatched + totalBulkUnmatched > 0
+    ? Math.round((totalBulkMatched / (totalBulkMatched + totalBulkUnmatched)) * 100)
+    : 0;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
@@ -185,6 +272,8 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
               {step === 'upload' && 'Select and configure your invoice file'}
               {step === 'preview' && 'Review parsed rows before matching'}
               {step === 'matching' && 'Review matched orders before applying'}
+              {step === 'bulk_preview' && 'Review grouped invoice batches — adjust dates if needed'}
+              {step === 'bulk_matching' && 'Review match results for all batches before applying'}
               {step === 'done' && 'Invoice applied successfully'}
             </p>
           </div>
@@ -195,20 +284,19 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
 
         <div className="px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
-            {(['upload', 'preview', 'matching', 'done'] as Step[]).map((s, idx) => {
-              const stepIndex = ['upload', 'preview', 'matching', 'done'].indexOf(step);
-              const thisIndex = idx;
+            {activeStepList.map((s, idx) => {
+              const currentIndex = activeStepList.indexOf(step);
               const isActive = s === step;
-              const isDone = thisIndex < stepIndex;
+              const isDone = idx < currentIndex;
               return (
                 <React.Fragment key={s}>
                   <div className={`flex items-center gap-1.5 text-xs font-medium ${isActive ? 'text-blue-600' : isDone ? 'text-green-600' : 'text-gray-400'}`}>
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${isActive ? 'bg-blue-600 text-white' : isDone ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400'}`}>
                       {isDone ? '✓' : idx + 1}
                     </div>
-                    <span className="capitalize hidden sm:inline">{s === 'matching' ? 'Match' : s === 'done' ? 'Done' : s === 'upload' ? 'Upload' : 'Preview'}</span>
+                    <span className="capitalize hidden sm:inline">{stepDisplayName(s)}</span>
                   </div>
-                  {idx < 3 && <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />}
+                  {idx < activeStepList.length - 1 && <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />}
                 </React.Fragment>
               );
             })}
@@ -250,6 +338,15 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
 
               {fileName && (
                 <>
+                  {isBulk && (
+                    <div className="flex items-start gap-2.5 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <Layers className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                      <p className="text-xs text-blue-800">
+                        <span className="font-semibold">Bulk format detected</span> — invoice numbers will be set automatically from the Payment Reference column. You can adjust the date for each batch in the next step.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1.5">Provider</label>
@@ -271,39 +368,46 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                         </select>
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Invoice Date</label>
-                      <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className={inputCls} />
-                    </div>
+                    {!isBulk && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1.5">Invoice Date</label>
+                        <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className={inputCls} />
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1.5">Invoice Number (optional)</label>
-                    <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className={inputCls} placeholder="e.g. 300326LBSNYBD" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Bank Deposit Amount (optional)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={bankDepositAmount}
-                        onChange={e => setBankDepositAmount(e.target.value)}
-                        className={inputCls}
-                        placeholder="e.g. 43825.95"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Bank Deposit Reference (optional)</label>
-                      <input
-                        type="text"
-                        value={bankDepositReference}
-                        onChange={e => setBankDepositReference(e.target.value)}
-                        className={inputCls}
-                        placeholder="e.g. TXN-XXXXXXXX"
-                      />
-                    </div>
-                  </div>
+
+                  {!isBulk && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1.5">Invoice Number (optional)</label>
+                        <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className={inputCls} placeholder="e.g. 300326LBSNYBD" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1.5">Bank Deposit Amount (optional)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={bankDepositAmount}
+                            onChange={e => setBankDepositAmount(e.target.value)}
+                            className={inputCls}
+                            placeholder="e.g. 43825.95"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1.5">Bank Deposit Reference (optional)</label>
+                          <input
+                            type="text"
+                            value={bankDepositReference}
+                            onChange={e => setBankDepositReference(e.target.value)}
+                            className={inputCls}
+                            placeholder="e.g. TXN-XXXXXXXX"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -381,6 +485,58 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
             </div>
           )}
 
+          {step === 'bulk_preview' && bulkParseResult && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <Layers className="w-4 h-4 text-blue-600 shrink-0" />
+                <p className="text-xs text-blue-800">
+                  <span className="font-semibold">{bulkParseResult.totalGroups} invoice batches</span> detected. Adjust the date for each batch if needed, then click Match All Orders.
+                </p>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="px-3 py-2 text-left font-semibold text-gray-600">Invoice (Payment Ref)</th>
+                      <th className="px-3 py-2 text-center font-semibold text-gray-600">Orders</th>
+                      <th className="px-3 py-2 text-right font-semibold text-gray-600">Payout</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-600">Invoice Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkParseResult.groups.map((group, i) => (
+                      <tr key={group.invoiceNumber} className="border-b border-gray-100 last:border-0">
+                        <td className="px-3 py-2 font-mono text-gray-800 font-medium">{group.invoiceNumber}</td>
+                        <td className="px-3 py-2 text-center text-gray-700">{group.parseResult.parsedRows}</td>
+                        <td className="px-3 py-2 text-right text-gray-900 font-medium">৳{group.parseResult.totalDisbursed.toFixed(2)}</td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="date"
+                            value={bulkGroupDates[i] ?? group.suggestedDate}
+                            onChange={e => {
+                              const updated = [...bulkGroupDates];
+                              updated[i] = e.target.value;
+                              setBulkGroupDates(updated);
+                            }}
+                            className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white w-36"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-3 flex justify-between text-sm">
+                <span className="text-gray-600">Total Payout (all batches)</span>
+                <span className="font-semibold text-gray-900">
+                  ৳{bulkParseResult.groups.reduce((s, g) => s + g.parseResult.totalDisbursed, 0).toFixed(2)}
+                </span>
+              </div>
+            </div>
+          )}
+
           {step === 'matching' && matchResult && (
             <div className="space-y-4">
               {duplicateInfo && !duplicateDismissed && (
@@ -394,7 +550,7 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                       {duplicateInfo.existingInvoiceNumber ? ` (${duplicateInfo.existingInvoiceNumber})` : ''}.
                     </p>
                     <p className="text-xs text-amber-700 mt-1.5">
-                      Clicking <span className="font-semibold">Update Existing</span> will remove the old delivery settlement data and replace it with this upload. Return records from other invoices are not affected.
+                      Clicking <span className="font-semibold">Update Existing</span> will remove the old delivery settlement data and replace it with this upload.
                     </p>
                     <button
                       onClick={() => setDuplicateDismissed(true)}
@@ -499,11 +655,84 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
             </div>
           )}
 
+          {step === 'bulk_matching' && bulkParseResult && bulkMatchResults.length > 0 && (
+            <div className="space-y-4">
+              {bulkDuplicates.size > 0 && (
+                <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-300 rounded-xl">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-amber-900">Duplicate invoice numbers detected</p>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      The following invoice numbers already exist and will create new records alongside the existing ones:{' '}
+                      <span className="font-mono font-semibold">{Array.from(bulkDuplicates.keys()).join(', ')}</span>
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-green-50 rounded-lg p-3 text-center">
+                  <div className="text-xl font-bold text-green-700">{totalBulkMatched}</div>
+                  <div className="text-xs text-green-600 mt-0.5">Total Matched</div>
+                </div>
+                <div className="bg-red-50 rounded-lg p-3 text-center">
+                  <div className="text-xl font-bold text-red-700">{totalBulkUnmatched}</div>
+                  <div className="text-xs text-red-600 mt-0.5">Total Unmatched</div>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-3 text-center">
+                  <div className="text-xl font-bold text-blue-700">{totalBulkMatchRate}%</div>
+                  <div className="text-xs text-blue-600 mt-0.5">Match Rate</div>
+                </div>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-600">Invoice</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-600">Date</th>
+                      <th className="px-3 py-2 text-center font-semibold text-gray-600">Matched</th>
+                      <th className="px-3 py-2 text-center font-semibold text-gray-600">Unmatched</th>
+                      <th className="px-3 py-2 text-center font-semibold text-gray-600">Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkParseResult.groups.map((group, i) => {
+                      const mr = bulkMatchResults[i];
+                      const rate = mr.totalMatched + mr.totalUnmatched > 0
+                        ? Math.round((mr.totalMatched / (mr.totalMatched + mr.totalUnmatched)) * 100)
+                        : 0;
+                      const isDupe = bulkDuplicates.has(group.invoiceNumber);
+                      return (
+                        <tr key={group.invoiceNumber} className="border-b border-gray-100 last:border-0">
+                          <td className="px-3 py-2 font-mono text-gray-800">
+                            {group.invoiceNumber}
+                            {isDupe && <span className="ml-1.5 text-amber-600 text-xs">(exists)</span>}
+                          </td>
+                          <td className="px-3 py-2 text-gray-600">{bulkGroupDates[i] ?? group.suggestedDate}</td>
+                          <td className="px-3 py-2 text-center text-green-700 font-medium">{mr.totalMatched}</td>
+                          <td className="px-3 py-2 text-center text-red-700">{mr.totalUnmatched}</td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={`font-medium ${rate >= 80 ? 'text-green-700' : rate >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                              {rate}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {step === 'done' && applyResult && (
             <div className="space-y-4">
               <div className="flex flex-col items-center py-4">
                 <CheckCircle className="w-12 h-12 text-green-500 mb-3" />
-                <h3 className="text-lg font-semibold text-gray-900">Invoice Applied</h3>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {bulkApplyResult ? `${bulkApplyResult.recordsCreated} Invoices Applied` : 'Invoice Applied'}
+                </h3>
                 <p className="text-sm text-gray-500 mt-1">Settlement data has been recorded and orders updated</p>
               </div>
 
@@ -518,6 +747,13 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                 </div>
               </div>
 
+              {bulkApplyResult && (
+                <div className="bg-gray-50 rounded-lg p-3 text-center">
+                  <div className="text-xl font-bold text-gray-700">{bulkApplyResult.recordsCreated}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Collection Records Created</div>
+                </div>
+              )}
+
               {applyResult.errors.length > 0 && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-xs font-semibold text-amber-800 mb-1">Some orders had errors</p>
@@ -527,9 +763,19 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              {matchResult && matchResult.unmatched.length > 0 && effectiveProvider && (
+              {bulkApplyResult && bulkApplyResult.allUnmatched.length > 0 && effectiveProvider && (
                 <button
-                  onClick={() => exportUnmatchedCSV(matchResult, effectiveProvider)}
+                  onClick={() => exportUnmatchedCSV(bulkApplyResult.allUnmatched, effectiveProvider)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Unmatched Report ({bulkApplyResult.allUnmatched.length} rows)
+                </button>
+              )}
+
+              {!bulkApplyResult && matchResult && matchResult.unmatched.length > 0 && effectiveProvider && (
+                <button
+                  onClick={() => exportUnmatchedCSV(matchResult.unmatched, effectiveProvider)}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   <Download className="w-4 h-4" />
@@ -565,6 +811,22 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                 Back
               </button>
             )}
+            {step === 'bulk_preview' && (
+              <button
+                onClick={() => setStep('upload')}
+                className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Back
+              </button>
+            )}
+            {step === 'bulk_matching' && (
+              <button
+                onClick={() => setStep('bulk_preview')}
+                className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Back
+              </button>
+            )}
 
             {step === 'upload' && (
               <button
@@ -588,6 +850,23 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
               </button>
             )}
 
+            {step === 'bulk_preview' && (
+              <button
+                onClick={handleBulkMatch}
+                disabled={!bulkParseResult || matching}
+                className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+              >
+                {matching ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Matching {bulkMatchingProgress}/{bulkParseResult?.totalGroups ?? 0}...
+                  </>
+                ) : (
+                  'Match All Orders'
+                )}
+              </button>
+            )}
+
             {step === 'matching' && (
               <button
                 onClick={handleApply}
@@ -600,6 +879,17 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
               >
                 {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : isUpdateMode ? <RefreshCw className="w-4 h-4" /> : null}
                 {isUpdateMode ? 'Update Existing' : 'Apply & Save'}
+              </button>
+            )}
+
+            {step === 'bulk_matching' && (
+              <button
+                onClick={handleBulkApply}
+                disabled={bulkMatchResults.length === 0 || totalBulkMatched === 0 || applying}
+                className="flex items-center gap-2 px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:bg-green-300 transition-colors"
+              >
+                {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {applying ? 'Applying...' : `Apply All (${bulkParseResult?.totalGroups ?? 0} Batches)`}
               </button>
             )}
 

@@ -119,6 +119,27 @@ export interface DuplicateInfo {
   overlapPercent: number;
 }
 
+export interface BulkParseGroup {
+  invoiceNumber: string;
+  suggestedDate: string;
+  parseResult: ParseResult;
+}
+
+export interface BulkParseResult {
+  isBulk: true;
+  groups: BulkParseGroup[];
+  totalGroups: number;
+  detectedProvider: ProviderType;
+}
+
+export interface BulkApplyResult {
+  recordsCreated: number;
+  ordersUpdated: number;
+  paidStatusSet: number;
+  groupErrors: Array<{ invoiceNumber: string; error: string }>;
+  allUnmatched: MatchedRow[];
+}
+
 export interface OverdueOrder {
   id: string;
   order_number: string;

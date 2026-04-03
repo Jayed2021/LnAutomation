@@ -26,6 +26,7 @@ import { SmsCard } from './SmsCard';
 import { ActivityLogCard } from './ActivityLogCard';
 import { CsActionPanel } from './CsActionPanel';
 import { CourierResponseCard } from './CourierResponseCard';
+import { FraudAlertCard } from './FraudAlertCard';
 import { buildInvoiceHtml, buildPackingSlipHtml } from './InvoiceTemplate';
 
 export default function OrderDetail() {
@@ -239,6 +240,11 @@ export default function OrderDetail() {
         onPrintPackingSlip={handlePrintPackingSlip}
         onDeleteOrder={() => setShowDeleteConfirm(true)}
         canDelete={canDeleteOrders}
+      />
+
+      <FraudAlertCard
+        customerId={order.customer.id}
+        defaultPhone={order.customer.phone_primary ?? ''}
       />
 
       {/* Three-column top section */}

@@ -63,6 +63,8 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
   const [selectedProvider, setSelectedProvider] = useState<ProviderType | null>(null);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [bankDepositAmount, setBankDepositAmount] = useState('');
+  const [bankDepositReference, setBankDepositReference] = useState('');
 
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
@@ -142,7 +144,9 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
         parseResult,
         matchResult.matched,
         matchResult.unmatched,
-        user?.id ?? null
+        user?.id ?? null,
+        bankDepositAmount ? parseFloat(bankDepositAmount) : null,
+        bankDepositReference || null
       );
       setCollectionRecordId(recordId);
       const result = await applyCollectionRecord(recordId, user?.id ?? null);
@@ -262,7 +266,31 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1.5">Invoice Number (optional)</label>
-                    <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className={inputCls} placeholder="e.g. INV-2026-001" />
+                    <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className={inputCls} placeholder="e.g. 300326LBSNYBD" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Bank Deposit Amount (optional)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={bankDepositAmount}
+                        onChange={e => setBankDepositAmount(e.target.value)}
+                        className={inputCls}
+                        placeholder="e.g. 43825.95"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Bank Deposit Reference (optional)</label>
+                      <input
+                        type="text"
+                        value={bankDepositReference}
+                        onChange={e => setBankDepositReference(e.target.value)}
+                        className={inputCls}
+                        placeholder="e.g. TXN-XXXXXXXX"
+                      />
+                    </div>
                   </div>
                 </>
               )}

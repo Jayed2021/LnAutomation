@@ -132,6 +132,7 @@ export function parsePathaoCSV(text: string): ParseResult {
 
     for (const ret of returns) {
       totalDeliveryCharge += parseAmount(ret['Final_Fee']);
+      payout += parseAmount(ret['Payout']);
       if (!mainConsignmentId) mainConsignmentId = ret['Consignment_ID'] ?? null;
     }
 

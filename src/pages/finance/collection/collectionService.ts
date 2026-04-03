@@ -15,7 +15,9 @@ export async function saveCollectionRecord(
   parseResult: ParseResult,
   matchedRows: MatchedRow[],
   unmatchedRows: MatchedRow[],
-  createdBy: string | null
+  createdBy: string | null,
+  bankDepositAmount: number | null = null,
+  bankDepositReference: string | null = null
 ): Promise<string> {
   const totalDisbursed = parseResult.totalDisbursed;
   const totalMatched = matchedRows.length;
@@ -36,6 +38,8 @@ export async function saveCollectionRecord(
       orders_total: totalRows,
       status: 'processing',
       created_by: createdBy,
+      bank_transfer_amount: bankDepositAmount,
+      bank_reference: bankDepositReference,
     })
     .select('id')
     .single();

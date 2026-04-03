@@ -23,6 +23,8 @@ const CS_STATUS_ON_COURIER: Record<string, string> = {
   "Paid Return": "cancelled_cad",
 };
 
+const PROTECTED_CS_STATUSES = new Set(["exchange", "exr", "reverse_pick"]);
+
 async function getPathaoToken(baseUrl: string, creds: {
   client_id: string;
   client_secret: string;
@@ -160,7 +162,7 @@ Deno.serve(async (req: Request) => {
 
     let eligibleQuery = supabase
       .from("order_courier_info")
-      .select("id, order_id, consignment_id, courier_status")
+      .select("id, order_id, consignment_id, courier_status, orders(cs_status)")
       .eq("courier_company", "Pathao")
       .not("consignment_id", "is", null);
 
@@ -249,18 +251,27 @@ Deno.serve(async (req: Request) => {
           }
         ];
 
+        const currentCsStatus = (row.orders as { cs_status: string } | null)?.cs_status ?? null;
         const newCsStatus = CS_STATUS_ON_COURIER[order_status];
         if (newCsStatus) {
-          await supabase
-            .from("orders")
-            .update({ cs_status: newCsStatus, updated_at: now })
-            .eq("id", row.order_id);
+          if (currentCsStatus && PROTECTED_CS_STATUSES.has(currentCsStatus)) {
+            activityLogs.push({
+              order_id: row.order_id,
+              action: `CS status update to "${newCsStatus}" skipped — order is in protected status "${currentCsStatus}" (Exchange/EXR/Reverse Pick)`,
+              performed_by: null,
+            });
+          } else {
+            await supabase
+              .from("orders")
+              .update({ cs_status: newCsStatus, updated_at: now })
+              .eq("id", row.order_id);
 
-          activityLogs.push({
-            order_id: row.order_id,
-            action: `CS status changed to "${newCsStatus}" via Pathao REST API sync`,
-            performed_by: null,
-          });
+            activityLogs.push({
+              order_id: row.order_id,
+              action: `CS status changed to "${newCsStatus}" via Pathao REST API sync`,
+              performed_by: null,
+            });
+          }
         }
 
         if (order_status === "Return" || order_status === "Paid Return") {

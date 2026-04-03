@@ -178,10 +178,20 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const hasTrackingNumber = !!(courier?.tracking_number?.trim());
   const isManualEntry = confirmEdit.courier_entry_method === 'manual';
 
+  const isCodPaymentMethod = (() => {
+    const pm = order.payment_method?.toLowerCase().trim() ?? '';
+    return !pm || pm === 'cod' || pm === 'cash on delivery' || pm === 'cash_on_delivery' ||
+      pm.startsWith('partial paid') || pm.includes('+cod');
+  })();
+
+  const currentReceivable = courier?.total_receivable ?? expectedReceivable;
+  const isReceivableZeroBlock = isCodPaymentMethod && (currentReceivable <= 0);
+
   const getManualMissingFields = () => {
     const missing: string[] = [];
     if (!hasCourierCompany) missing.push('Courier Company');
     if (!hasTrackingNumber) missing.push('Tracking Number');
+    if (isReceivableZeroBlock) missing.push('Total Receivable Amount');
     return missing;
   };
 
@@ -195,6 +205,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
       COURIERS_REQUIRING_AREA.includes(edit.courier_company) &&
       !edit.courier_area?.trim()
     ) missing.push('Area');
+    if (isReceivableZeroBlock) missing.push('Total Receivable Amount');
     return missing;
   };
 
@@ -573,7 +584,11 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                     </p>
                     <ul className="mt-0.5 space-y-0.5">
                       {missingConfirmFields.map((f, i) => (
-                        <li key={i} className="text-xs text-amber-700">• {f} — save above before confirming</li>
+                        <li key={i} className="text-xs text-amber-700">
+                          {f === 'Total Receivable Amount'
+                            ? '• Required Total Receivable Amount'
+                            : `• ${f} — save above before confirming`}
+                        </li>
                       ))}
                     </ul>
                   </div>

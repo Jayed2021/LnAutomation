@@ -762,7 +762,7 @@ export function OrderCollectionTab() {
                               <Edit2 className="w-4 h-4" />
                             </button>
                             <button
-                              onClick={() => navigate(`/fulfillment/orders/${row.id}`, { state: { from: '/finance/collection?tab=order_status' } })}
+                              onClick={() => window.open(`/fulfillment/orders/${row.id}`, '_blank')}
                               className="text-gray-400 hover:text-blue-600 transition-colors"
                               title="Open full order detail"
                             >

@@ -1,5 +1,5 @@
 import { supabase } from '../../../lib/supabase';
-import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult, DuplicateInfo, BulkApplyResult } from './types';
+import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult, DuplicateInfo, BulkApplyResult, OrderCollectionFilters, OrderCollectionResult, OrderCollectionRow } from './types';
 import { resolvePaymentStatus } from './collectionResolver';
 import { getEffectiveOrderDate } from '../../../lib/appSettings';
 
@@ -730,6 +730,122 @@ export async function bulkMarkHistoricalOrdersAsPaid(
   }
 
   return { markedCount, skippedCount, errors };
+}
+
+const PAGE_SIZE = 50;
+
+export const DEFAULT_CS_STATUSES = ['shipped', 'delivered', 'partial_delivery', 'exchange', 'exchange_returnable', 'cancelled_cad'];
+
+export async function fetchOrderCollectionStatus(
+  filters: OrderCollectionFilters
+): Promise<OrderCollectionResult> {
+  const offset = (filters.page - 1) * PAGE_SIZE;
+
+  let query = supabase
+    .from('orders')
+    .select(`
+      id,
+      order_number,
+      woo_order_id,
+      order_date,
+      cs_status,
+      payment_status,
+      payment_method,
+      paid_amount,
+      total_amount,
+      customers!inner(full_name, phone_primary),
+      order_courier_info(
+        courier_company,
+        tracking_number,
+        courier_status,
+        collected_amount,
+        delivery_charge,
+        delivery_discount,
+        total_receivable,
+        settlement_source,
+        cod_charge
+      )
+    `, { count: 'exact' })
+    .in('cs_status', filters.csStatuses.length > 0 ? filters.csStatuses : DEFAULT_CS_STATUSES)
+    .gte('order_date', filters.dateFrom)
+    .lte('order_date', filters.dateTo + 'T23:59:59')
+    .order('order_date', { ascending: false })
+    .range(offset, offset + PAGE_SIZE - 1);
+
+  if (filters.paymentStatus !== 'all') {
+    query = query.eq('payment_status', filters.paymentStatus);
+  }
+
+  if (filters.searchQuery) {
+    const q = filters.searchQuery.trim();
+    const asNum = parseInt(q, 10);
+    if (!isNaN(asNum)) {
+      query = query.or(`order_number.ilike.%${q}%,woo_order_id.eq.${asNum}`);
+    } else {
+      query = query.ilike('order_number', `%${q}%`);
+    }
+  }
+
+  const { data, count, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows: OrderCollectionRow[] = ((data ?? []) as any[]).map(o => {
+    const customer = Array.isArray(o.customers) ? o.customers[0] : o.customers;
+    const ci = Array.isArray(o.order_courier_info) ? o.order_courier_info[0] : o.order_courier_info;
+    return {
+      id: o.id,
+      order_number: o.order_number,
+      woo_order_id: o.woo_order_id,
+      order_date: o.order_date,
+      cs_status: o.cs_status,
+      payment_status: o.payment_status,
+      payment_method: o.payment_method,
+      paid_amount: o.paid_amount,
+      total_amount: o.total_amount,
+      customer_name: customer?.full_name ?? 'Unknown',
+      customer_phone: customer?.phone_primary ?? '',
+      courier_company: ci?.courier_company ?? null,
+      tracking_number: ci?.tracking_number ?? null,
+      courier_status: ci?.courier_status ?? null,
+      collected_amount: ci?.collected_amount ?? null,
+      delivery_charge: ci?.delivery_charge ?? null,
+      delivery_discount: ci?.delivery_discount ?? null,
+      total_receivable: ci?.total_receivable ?? null,
+      settlement_source: ci?.settlement_source ?? null,
+      cod_charge: ci?.cod_charge ?? null,
+    };
+  });
+
+  let filteredRows = rows;
+  if (filters.paymentMethod) {
+    filteredRows = rows.filter(r => {
+      const pm = (r.payment_method ?? '').toLowerCase();
+      const f = filters.paymentMethod.toLowerCase();
+      if (f === 'cod') return pm === 'cod' || pm === '' || pm == null;
+      if (f === 'prepaid') return pm.startsWith('prepaid');
+      if (f === 'partial paid') return pm.startsWith('partial paid');
+      return pm.includes(f);
+    });
+  }
+
+  if (filters.courierCompany) {
+    filteredRows = filteredRows.filter(r => r.courier_company === filters.courierCompany);
+  }
+
+  const totalCollected = filteredRows.reduce((s, r) => s + (r.collected_amount ?? 0), 0);
+  const totalOutstanding = filteredRows.reduce((s, r) => {
+    const receivable = r.total_receivable ?? r.total_amount;
+    const collected = r.collected_amount ?? 0;
+    const discount = r.delivery_discount ?? 0;
+    return s + Math.max(0, receivable - discount - collected);
+  }, 0);
+
+  return {
+    rows: filteredRows,
+    totalCount: count ?? 0,
+    totalCollected,
+    totalOutstanding,
+  };
 }
 
 export async function fetchCollectionStats(): Promise<{

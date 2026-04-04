@@ -158,3 +158,44 @@ export interface OverdueOrder {
   collected_amount: number | null;
   delivery_discount: number | null;
 }
+
+export interface OrderCollectionRow {
+  id: string;
+  order_number: string;
+  woo_order_id: number | null;
+  order_date: string;
+  cs_status: string;
+  payment_status: string;
+  payment_method: string | null;
+  paid_amount: number | null;
+  total_amount: number;
+  customer_name: string;
+  customer_phone: string;
+  courier_company: string | null;
+  tracking_number: string | null;
+  courier_status: string | null;
+  collected_amount: number | null;
+  delivery_charge: number | null;
+  delivery_discount: number | null;
+  total_receivable: number | null;
+  settlement_source: string | null;
+  cod_charge: number | null;
+}
+
+export interface OrderCollectionFilters {
+  dateFrom: string;
+  dateTo: string;
+  paymentStatus: 'all' | 'paid' | 'unpaid';
+  paymentMethod: string;
+  csStatuses: string[];
+  courierCompany: string;
+  searchQuery: string;
+  page: number;
+}
+
+export interface OrderCollectionResult {
+  rows: OrderCollectionRow[];
+  totalCount: number;
+  totalCollected: number;
+  totalOutstanding: number;
+}

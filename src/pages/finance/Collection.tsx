@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Upload, AlertTriangle, Search, Filter,
-  RefreshCw, ExternalLink, Clock
+  RefreshCw, ExternalLink, Clock, Truck
 } from 'lucide-react';
 import { CollectionRecord, OverdueOrder } from './collection/types';
 import { fetchCollectionRecords, fetchOverdueOrders, fetchCollectionStats } from './collection/collectionService';
@@ -9,6 +9,7 @@ import { UploadInvoiceModal } from './collection/UploadInvoiceModal';
 import { CollectionRecordDetail } from './collection/CollectionRecordDetail';
 import { FirstTimeOpsPanel } from './collection/FirstTimeOpsPanel';
 import { ManualRevenueTab } from './collection/ManualRevenueTab';
+import { OrderCollectionTab } from './collection/OrderCollectionTab';
 import { fetchManualRevenueTotalForMonth } from './collection/manualRevenueService';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -65,7 +66,7 @@ const CS_STATUS_LABELS: Record<string, string> = {
   partial_delivery: 'Partial Delivered',
 };
 
-type Tab = 'records' | 'overdue' | 'manual_revenue';
+type Tab = 'records' | 'overdue' | 'manual_revenue' | 'order_status';
 
 export default function Collection() {
   const { user } = useAuth();
@@ -223,6 +224,15 @@ export default function Collection() {
             }`}
           >
             Manual Revenue
+          </button>
+          <button
+            onClick={() => setTab('order_status')}
+            className={`flex items-center gap-1.5 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              tab === 'order_status' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Truck className="w-3.5 h-3.5" />
+            Order Status
           </button>
         </div>
 
@@ -498,6 +508,10 @@ export default function Collection() {
 
         {tab === 'manual_revenue' && (
           <ManualRevenueTab userId={user?.id ?? null} />
+        )}
+
+        {tab === 'order_status' && (
+          <OrderCollectionTab />
         )}
       </div>
 

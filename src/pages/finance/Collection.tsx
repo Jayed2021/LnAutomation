@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Upload, AlertTriangle, Search, Filter,
   RefreshCw, ExternalLink, Clock, Truck
@@ -70,7 +71,15 @@ type Tab = 'records' | 'overdue' | 'manual_revenue' | 'order_status';
 
 export default function Collection() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>('records');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as Tab | null;
+  const validTabs: Tab[] = ['records', 'overdue', 'manual_revenue', 'order_status'];
+  const [tab, setTabState] = useState<Tab>(validTabs.includes(tabParam as Tab) ? (tabParam as Tab) : 'records');
+
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    setSearchParams({ tab: t }, { replace: true });
+  };
   const [records, setRecords] = useState<CollectionRecord[]>([]);
   const [overdueOrders, setOverdueOrders] = useState<OverdueOrder[]>([]);
   const [stats, setStats] = useState({ totalCollectedMonth: 0, totalGatewayChargesMonth: 0, unmatchedCount: 0 });

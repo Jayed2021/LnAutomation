@@ -1,11 +1,18 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Search, RefreshCw, ExternalLink, ChevronLeft, ChevronRight, PackageCheck, X, ChevronDown } from 'lucide-react';
+import { Search, RefreshCw, ExternalLink, ChevronLeft, ChevronRight, PackageCheck, X, ChevronDown, CreditCard as Edit2, Check, Database } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { OrderCollectionFilters, OrderCollectionRow, OrderCollectionResult } from './types';
-import { fetchOrderCollectionStatus, DEFAULT_CS_STATUSES } from './collectionService';
+import {
+  fetchOrderCollectionStatus,
+  fetchOrderCollectionAggregates,
+  updateOrderSettlement,
+  DEFAULT_CS_STATUSES,
+  OrderCollectionAggregates,
+} from './collectionService';
 import { STATUS_CONFIG } from '../../fulfillment/orders/types';
 
 const PAGE_SIZE = 50;
+const BD_OFFSET_MS = 6 * 60 * 60 * 1000;
 
 const ALL_CS_STATUS_OPTIONS = [
   { value: 'shipped', label: 'Shipped' },
@@ -29,49 +36,77 @@ const ALL_CS_STATUS_OPTIONS = [
   { value: 'reverse_pick', label: 'Reverse Pick' },
 ];
 
+function toLocalDateStr(utcDate: Date): string {
+  const localMs = utcDate.getTime() + BD_OFFSET_MS;
+  const local = new Date(localMs);
+  const y = local.getUTCFullYear();
+  const m = String(local.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(local.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function localDateToUtcFrom(localDateStr: string): string {
+  return `${localDateStr}T00:00:00+06:00`;
+}
+
+function localDateToUtcTo(localDateStr: string): string {
+  return `${localDateStr}T23:59:59+06:00`;
+}
+
 function getLastMonthRange(): { dateFrom: string; dateTo: string } {
   const now = new Date();
-  const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastOfLastMonth = new Date(firstOfThisMonth.getTime() - 1);
-  const firstOfLastMonth = new Date(lastOfLastMonth.getFullYear(), lastOfLastMonth.getMonth(), 1);
+  const localMs = now.getTime() + BD_OFFSET_MS;
+  const local = new Date(localMs);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth();
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
   return {
-    dateFrom: firstOfLastMonth.toISOString().split('T')[0],
-    dateTo: lastOfLastMonth.toISOString().split('T')[0],
+    dateFrom: toLocalDateStr(new Date(Date.UTC(prevYear, prevMonth, 1))),
+    dateTo: toLocalDateStr(new Date(Date.UTC(prevYear, prevMonth + 1, 0))),
   };
 }
 
 function getThisMonthRange(): { dateFrom: string; dateTo: string } {
   const now = new Date();
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const localMs = now.getTime() + BD_OFFSET_MS;
+  const local = new Date(localMs);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth();
+  const firstMs = Date.UTC(year, month, 1);
+  const lastMs = Date.UTC(year, month + 1, 0);
   return {
-    dateFrom: first.toISOString().split('T')[0],
-    dateTo: last.toISOString().split('T')[0],
+    dateFrom: toLocalDateStr(new Date(firstMs)),
+    dateTo: toLocalDateStr(new Date(lastMs)),
   };
 }
 
 function getThisQuarterRange(): { dateFrom: string; dateTo: string } {
   const now = new Date();
-  const qStart = Math.floor(now.getMonth() / 3) * 3;
-  const first = new Date(now.getFullYear(), qStart, 1);
-  const last = new Date(now.getFullYear(), qStart + 3, 0);
+  const localMs = now.getTime() + BD_OFFSET_MS;
+  const local = new Date(localMs);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth();
+  const qStart = Math.floor(month / 3) * 3;
   return {
-    dateFrom: first.toISOString().split('T')[0],
-    dateTo: last.toISOString().split('T')[0],
+    dateFrom: toLocalDateStr(new Date(Date.UTC(year, qStart, 1))),
+    dateTo: toLocalDateStr(new Date(Date.UTC(year, qStart + 3, 0))),
   };
 }
 
 function getLastQuarterRange(): { dateFrom: string; dateTo: string } {
   const now = new Date();
-  const qStart = Math.floor(now.getMonth() / 3) * 3;
+  const localMs = now.getTime() + BD_OFFSET_MS;
+  const local = new Date(localMs);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth();
+  const qStart = Math.floor(month / 3) * 3;
   const prevQStart = qStart - 3;
-  const year = prevQStart < 0 ? now.getFullYear() - 1 : now.getFullYear();
-  const adjustedQStart = prevQStart < 0 ? 9 : prevQStart;
-  const first = new Date(year, adjustedQStart, 1);
-  const last = new Date(year, adjustedQStart + 3, 0);
+  const qYear = prevQStart < 0 ? year - 1 : year;
+  const adjQ = prevQStart < 0 ? 9 : prevQStart;
   return {
-    dateFrom: first.toISOString().split('T')[0],
-    dateTo: last.toISOString().split('T')[0],
+    dateFrom: toLocalDateStr(new Date(Date.UTC(qYear, adjQ, 1))),
+    dateTo: toLocalDateStr(new Date(Date.UTC(qYear, adjQ + 3, 0))),
   };
 }
 
@@ -80,12 +115,22 @@ type QuickRange = 'last_month' | 'this_month' | 'this_quarter' | 'last_quarter' 
 function formatDate(iso: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('en-BD', { day: '2-digit', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString('en-BD', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Dhaka' });
 }
 
 function formatMoney(v: number | null | undefined): string {
   if (v == null) return '—';
   return '৳' + v.toLocaleString('en-BD', { minimumFractionDigits: 0 });
+}
+
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 function CsStatusBadge({ status }: { status: string }) {
@@ -182,6 +227,141 @@ function CsStatusDropdown({ selected, onChange }: CsStatusDropdownProps) {
   );
 }
 
+interface QuickEditModalProps {
+  row: OrderCollectionRow;
+  onClose: () => void;
+  onSaved: (updated: Partial<OrderCollectionRow>) => void;
+}
+
+function QuickEditModal({ row, onClose, onSaved }: QuickEditModalProps) {
+  const [collectedAmount, setCollectedAmount] = useState(row.collected_amount ?? 0);
+  const [deliveryCharge, setDeliveryCharge] = useState(row.delivery_charge ?? 0);
+  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid'>(
+    row.payment_status === 'paid' ? 'paid' : 'unpaid'
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateOrderSettlement(row.id, collectedAmount, deliveryCharge, paymentStatus);
+      onSaved({
+        collected_amount: collectedAmount,
+        delivery_charge: deliveryCharge,
+        payment_status: paymentStatus,
+      });
+      onClose();
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const orderLabel = row.woo_order_id ? `#${row.woo_order_id}` : row.order_number;
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+      ref={backdropRef}
+      onClick={e => { if (e.target === backdropRef.current) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <div className="text-sm font-semibold text-gray-900">Quick Edit Settlement</div>
+            <div className="text-xs text-gray-400 mt-0.5">{orderLabel} &mdash; {row.customer_name}</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
+            <X className="w-4 h-4 text-gray-500" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Collected Amount</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">৳</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={collectedAmount}
+                onChange={e => setCollectedAmount(Number(e.target.value))}
+                className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Delivery Charge</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">৳</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={deliveryCharge}
+                onChange={e => setDeliveryCharge(Number(e.target.value))}
+                className="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Payment Status</label>
+            <select
+              value={paymentStatus}
+              onChange={e => setPaymentStatus(e.target.value as 'paid' | 'unpaid')}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="unpaid">Unpaid</option>
+              <option value="paid">Paid</option>
+            </select>
+          </div>
+
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-100 flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {saving ? (
+              <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Check className="w-4 h-4" />
+            )}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function OrderCollectionTab() {
   const navigate = useNavigate();
   const lastMonthRange = getLastMonthRange();
@@ -202,18 +382,47 @@ export function OrderCollectionTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [aggregates, setAggregates] = useState<OrderCollectionAggregates | null>(null);
+  const [aggLoading, setAggLoading] = useState(false);
+  const [aggError, setAggError] = useState<string | null>(null);
+
+  const [editingRow, setEditingRow] = useState<OrderCollectionRow | null>(null);
+
   const availableCouriers = [...new Set(result.rows.map(r => r.courier_company).filter(Boolean))] as string[];
 
   const load = useCallback(async (f: OrderCollectionFilters) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchOrderCollectionStatus(f);
+      const adjustedFilters = {
+        ...f,
+        dateFrom: localDateToUtcFrom(f.dateFrom),
+        dateTo: localDateToUtcTo(f.dateTo),
+      };
+      const res = await fetchOrderCollectionStatus(adjustedFilters);
       setResult(res);
     } catch (err: any) {
       setError(err.message ?? 'Failed to load');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const fetchAggregates = useCallback(async (f: OrderCollectionFilters) => {
+    setAggLoading(true);
+    setAggError(null);
+    try {
+      const adjustedFilters = {
+        ...f,
+        dateFrom: localDateToUtcFrom(f.dateFrom),
+        dateTo: localDateToUtcTo(f.dateTo),
+      };
+      const agg = await fetchOrderCollectionAggregates(adjustedFilters);
+      setAggregates(agg);
+    } catch (err: any) {
+      setAggError(err.message ?? 'Failed to fetch aggregates');
+    } finally {
+      setAggLoading(false);
     }
   }, []);
 
@@ -229,12 +438,14 @@ export function OrderCollectionTab() {
     else if (range === 'last_quarter') dr = getLastQuarterRange();
     const next = { ...filters, dateFrom: dr.dateFrom, dateTo: dr.dateTo, page: 1 };
     setFilters(next);
+    setAggregates(null);
     load(next);
   };
 
   const applyFilter = (partial: Partial<OrderCollectionFilters>) => {
     const next = { ...filters, ...partial, page: 1 };
     setFilters(next);
+    setAggregates(null);
     load(next);
   };
 
@@ -252,6 +463,14 @@ export function OrderCollectionTab() {
     load(next);
   };
 
+  const handleRowUpdated = (rowId: string, updated: Partial<OrderCollectionRow>) => {
+    setResult(prev => ({
+      ...prev,
+      rows: prev.rows.map(r => r.id === rowId ? { ...r, ...updated } : r),
+    }));
+    setAggregates(null);
+  };
+
   const totalPages = Math.max(1, Math.ceil(result.totalCount / PAGE_SIZE));
 
   const quickRangeOptions: { value: QuickRange; label: string }[] = [
@@ -264,6 +483,14 @@ export function OrderCollectionTab() {
 
   return (
     <div className="space-y-4">
+      {editingRow && (
+        <QuickEditModal
+          row={editingRow}
+          onClose={() => setEditingRow(null)}
+          onSaved={updated => handleRowUpdated(editingRow.id, updated)}
+        />
+      )}
+
       <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50">
@@ -298,7 +525,7 @@ export function OrderCollectionTab() {
                 className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
-                onClick={() => load(filters)}
+                onClick={() => { setAggregates(null); load(filters); }}
                 className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
               >
                 Apply
@@ -376,17 +603,50 @@ export function OrderCollectionTab() {
           <div className="text-xl font-bold text-gray-900">{result.totalCount.toLocaleString()}</div>
           <div className="text-xs text-gray-400 mt-0.5">Matching filters</div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="text-xs font-medium text-gray-500 mb-1">Total Collected</div>
-          <div className="text-xl font-bold text-green-700">{formatMoney(result.totalCollected)}</div>
-          <div className="text-xs text-gray-400 mt-0.5">From courier settlements</div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="text-xs font-medium text-gray-500 mb-1">Outstanding</div>
-          <div className={`text-xl font-bold ${result.totalOutstanding > 0 ? 'text-amber-700' : 'text-gray-400'}`}>
-            {formatMoney(result.totalOutstanding)}
+
+        <div className="bg-white rounded-xl border border-gray-200 p-4 relative">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-medium text-gray-500">Total Collected</div>
+            <button
+              onClick={() => fetchAggregates(filters)}
+              disabled={aggLoading}
+              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
+              title="Fetch aggregated totals"
+            >
+              <Database className={`w-3 h-3 ${aggLoading ? 'animate-pulse' : ''}`} />
+              {aggLoading ? 'Fetching...' : 'Fetch Data'}
+            </button>
           </div>
-          <div className="text-xs text-gray-400 mt-0.5">Remaining to collect</div>
+          {aggregates ? (
+            <>
+              <div className="text-xl font-bold text-green-700">{formatMoney(aggregates.totalCollected)}</div>
+              <div className="text-xs text-gray-400 mt-0.5">All orders &mdash; {formatTimeAgo(aggregates.fetchedAt)}</div>
+            </>
+          ) : (
+            <>
+              <div className="text-xl font-bold text-gray-300">—</div>
+              <div className="text-xs text-gray-400 mt-0.5">{aggError ?? 'Click "Fetch Data" to load'}</div>
+            </>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-4 relative">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-medium text-gray-500">Outstanding</div>
+          </div>
+          {aggregates ? (
+            <>
+              <div className={`text-xl font-bold ${aggregates.totalOutstanding > 0 ? 'text-amber-700' : 'text-gray-400'}`}>
+                {aggregates.totalOutstanding > 0 ? formatMoney(aggregates.totalOutstanding) : <span className="text-green-600">All Cleared</span>}
+              </div>
+              <div className="text-xs text-gray-400 mt-0.5">Remaining to collect</div>
+            </>
+          ) : (
+            <>
+              <div className="text-xl font-bold text-gray-300">—</div>
+              <div className="text-xs text-gray-400 mt-0.5">Fetch data to see totals</div>
+            </>
+          )}
         </div>
       </div>
 
@@ -491,12 +751,22 @@ export function OrderCollectionTab() {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => navigate(`/fulfillment/orders/${row.id}`)}
-                            className="text-gray-400 hover:text-blue-600 transition-colors"
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <button
+                              onClick={() => setEditingRow(row)}
+                              className="text-gray-400 hover:text-blue-600 transition-colors"
+                              title="Quick edit settlement"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => navigate(`/fulfillment/orders/${row.id}`, { state: { from: '/finance/collection?tab=order_status' } })}
+                              className="text-gray-400 hover:text-blue-600 transition-colors"
+                              title="Open full order detail"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

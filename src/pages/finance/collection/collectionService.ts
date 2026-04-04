@@ -848,6 +848,119 @@ export async function fetchOrderCollectionStatus(
   };
 }
 
+export interface OrderCollectionAggregates {
+  totalCollected: number;
+  totalOutstanding: number;
+  totalCount: number;
+  fetchedAt: string;
+}
+
+export async function fetchOrderCollectionAggregates(
+  filters: OrderCollectionFilters
+): Promise<OrderCollectionAggregates> {
+  const { dateFrom, dateTo, csStatuses, paymentStatus, searchQuery } = filters;
+
+  let query = supabase
+    .from('orders')
+    .select(`
+      id,
+      total_amount,
+      payment_status,
+      payment_method,
+      order_courier_info(
+        collected_amount,
+        delivery_charge,
+        delivery_discount,
+        total_receivable
+      )
+    `, { count: 'exact' })
+    .in('cs_status', csStatuses.length > 0 ? csStatuses : DEFAULT_CS_STATUSES)
+    .gte('order_date', dateFrom)
+    .lte('order_date', dateTo + 'T23:59:59');
+
+  if (paymentStatus !== 'all') {
+    query = query.eq('payment_status', paymentStatus);
+  }
+
+  if (searchQuery) {
+    const q = searchQuery.trim();
+    const asNum = parseInt(q, 10);
+    if (!isNaN(asNum)) {
+      query = query.or(`order_number.ilike.%${q}%,woo_order_id.eq.${asNum}`);
+    } else {
+      query = query.ilike('order_number', `%${q}%`);
+    }
+  }
+
+  const { data, count, error } = await query;
+  if (error) throw new Error(error.message);
+
+  let rows = (data ?? []) as any[];
+
+  if (filters.paymentMethod) {
+    rows = rows.filter(r => {
+      const pm = (r.payment_method ?? '').toLowerCase();
+      const f = filters.paymentMethod.toLowerCase();
+      if (f === 'cod') return pm === 'cod' || pm === '' || pm == null;
+      if (f === 'prepaid') return pm.startsWith('prepaid');
+      if (f === 'partial paid') return pm.startsWith('partial paid');
+      return pm.includes(f);
+    });
+  }
+
+  let totalCollected = 0;
+  let totalOutstanding = 0;
+
+  for (const o of rows) {
+    const ci = Array.isArray(o.order_courier_info) ? o.order_courier_info[0] : o.order_courier_info;
+    const collected = ci?.collected_amount ?? 0;
+    const receivable = ci?.total_receivable ?? o.total_amount;
+    const discount = ci?.delivery_discount ?? 0;
+    totalCollected += collected;
+    totalOutstanding += Math.max(0, receivable - discount - collected);
+  }
+
+  return {
+    totalCollected,
+    totalOutstanding,
+    totalCount: filters.paymentMethod ? rows.length : (count ?? 0),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+export async function updateOrderSettlement(
+  orderId: string,
+  collectedAmount: number,
+  deliveryCharge: number,
+  paymentStatus: 'paid' | 'unpaid'
+): Promise<void> {
+  const { data: existing } = await supabase
+    .from('order_courier_info')
+    .select('id')
+    .eq('order_id', orderId)
+    .maybeSingle();
+
+  if (existing) {
+    await supabase.from('order_courier_info').update({
+      collected_amount: collectedAmount,
+      delivery_charge: deliveryCharge,
+      settlement_source: 'manual',
+      updated_at: new Date().toISOString(),
+    }).eq('id', existing.id);
+  } else {
+    await supabase.from('order_courier_info').insert({
+      order_id: orderId,
+      collected_amount: collectedAmount,
+      delivery_charge: deliveryCharge,
+      settlement_source: 'manual',
+    });
+  }
+
+  await supabase.from('orders').update({
+    payment_status: paymentStatus,
+  }).eq('id', orderId);
+}
+
 export async function fetchCollectionStats(): Promise<{
   totalCollectedMonth: number;
   totalGatewayChargesMonth: number;

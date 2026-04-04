@@ -114,7 +114,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
         courier_company: edit.courier_company,
         tracking_number: edit.tracking_number,
         courier_area: edit.courier_area,
-        total_receivable: isPostShipped ? courier.total_receivable : edit.total_receivable,
+        total_receivable: edit.total_receivable,
         cod_charge: edit.cod_charge,
         delivery_discount: isPostShipped ? edit.delivery_discount : 0,
         updated_at: new Date().toISOString(),
@@ -402,11 +402,11 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
 
           <div className="bg-green-50 border border-green-200 rounded-lg p-3">
             <div className="text-xs font-medium text-green-700 mb-0.5">Total Receivable (Courier Collection)</div>
-            {editing && !isPostShipped
+            {editing
               ? <input type="number" value={edit.total_receivable} onChange={e => setEdit(p => ({ ...p, total_receivable: parseFloat(e.target.value) || 0 }))} className={inputCls} />
               : <div className="text-lg font-bold text-green-800">৳{displayReceivable.toLocaleString('en-BD', { minimumFractionDigits: 2 })}</div>}
             <div className="text-xs text-green-600 mt-0.5">Amount to collect from customer</div>
-            {editing && isPartialPaidOrder && order.paid_amount != null && !isPostShipped && edit.total_receivable !== expectedReceivable && (
+            {editing && isPartialPaidOrder && order.paid_amount != null && edit.total_receivable !== expectedReceivable && (
               <p className="text-xs text-amber-700 mt-1 font-medium flex items-center gap-1">
                 Expected COD amount is ৳{expectedReceivable.toLocaleString('en-BD', { minimumFractionDigits: 2 })} based on paid amount.
               </p>

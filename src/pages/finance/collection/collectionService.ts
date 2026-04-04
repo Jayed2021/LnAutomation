@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabase';
 import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult, DuplicateInfo, BulkApplyResult } from './types';
 import { resolvePaymentStatus } from './collectionResolver';
+import { getEffectiveOrderDate } from '../../../lib/appSettings';
 
 const PROVIDER_LABEL: Record<ProviderType, string> = {
   pathao: 'Pathao',
@@ -525,7 +526,9 @@ export async function fetchOverdueOrders(thresholdDays: number): Promise<Overdue
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - thresholdDays);
 
-  const { data } = await supabase
+  const effectiveDate = await getEffectiveOrderDate();
+
+  let query = supabase
     .from('orders')
     .select(`
       id,
@@ -549,6 +552,12 @@ export async function fetchOverdueOrders(thresholdDays: number): Promise<Overdue
     .in('cs_status', ['delivered', 'cancelled_cad', 'exchange', 'exchange_returnable', 'partial_delivery'])
     .eq('payment_status', 'unpaid')
     .lt('order_date', cutoffDate.toISOString());
+
+  if (effectiveDate) {
+    query = query.gte('order_date', effectiveDate);
+  }
+
+  const { data } = await query;
 
   const now = new Date();
   return ((data ?? []) as any[]).map(o => {

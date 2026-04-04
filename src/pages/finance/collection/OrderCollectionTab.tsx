@@ -382,7 +382,14 @@ export function OrderCollectionTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [aggregates, setAggregates] = useState<OrderCollectionAggregates | null>(null);
+  const [aggregates, setAggregates] = useState<OrderCollectionAggregates | null>(() => {
+    try {
+      const cached = localStorage.getItem('order_collection_aggregates');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [aggLoading, setAggLoading] = useState(false);
   const [aggError, setAggError] = useState<string | null>(null);
 
@@ -419,6 +426,9 @@ export function OrderCollectionTab() {
       };
       const agg = await fetchOrderCollectionAggregates(adjustedFilters);
       setAggregates(agg);
+      try {
+        localStorage.setItem('order_collection_aggregates', JSON.stringify(agg));
+      } catch {}
     } catch (err: any) {
       setAggError(err.message ?? 'Failed to fetch aggregates');
     } finally {
@@ -438,14 +448,12 @@ export function OrderCollectionTab() {
     else if (range === 'last_quarter') dr = getLastQuarterRange();
     const next = { ...filters, dateFrom: dr.dateFrom, dateTo: dr.dateTo, page: 1 };
     setFilters(next);
-    setAggregates(null);
     load(next);
   };
 
   const applyFilter = (partial: Partial<OrderCollectionFilters>) => {
     const next = { ...filters, ...partial, page: 1 };
     setFilters(next);
-    setAggregates(null);
     load(next);
   };
 
@@ -468,7 +476,6 @@ export function OrderCollectionTab() {
       ...prev,
       rows: prev.rows.map(r => r.id === rowId ? { ...r, ...updated } : r),
     }));
-    setAggregates(null);
   };
 
   const totalPages = Math.max(1, Math.ceil(result.totalCount / PAGE_SIZE));
@@ -609,12 +616,14 @@ export function OrderCollectionTab() {
           {aggregates ? (
             <>
               <div className="text-xl font-bold text-green-700">{formatMoney(aggregates.totalCollected)}</div>
-              <div className="text-xs text-gray-400 mt-0.5">All orders &mdash; {formatTimeAgo(aggregates.fetchedAt)}</div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                {aggError ? <span className="text-red-500">{aggError}</span> : <>Last fetched {formatTimeAgo(aggregates.fetchedAt)}</>}
+              </div>
             </>
           ) : (
             <>
               <div className="text-xl font-bold text-gray-300">—</div>
-              <div className="text-xs text-gray-400 mt-0.5">{aggError ? <span className="text-red-500">{aggError}</span> : 'Fetch data to see totals'}</div>
+              <div className="text-xs text-gray-400 mt-0.5">{aggError ? <span className="text-red-500">{aggError}</span> : 'Press Fetch Data to load'}</div>
             </>
           )}
         </div>
@@ -642,7 +651,7 @@ export function OrderCollectionTab() {
           ) : (
             <>
               <div className="text-xl font-bold text-gray-300">—</div>
-              <div className="text-xs text-gray-400 mt-0.5">Click "Fetch Data" to load</div>
+              <div className="text-xs text-gray-400 mt-0.5">Press Fetch Data to load</div>
             </>
           )}
         </div>

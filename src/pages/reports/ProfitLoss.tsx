@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { fetchManualRevenueTotalForRange, REVENUE_CATEGORY_LABELS, RevenueCategory } from '../finance/collection/manualRevenueService';
 import {
   TrendingUp,
   TrendingDown,
@@ -12,6 +13,7 @@ import {
   ChevronDown,
   ChevronsUpDown,
   RefreshCw,
+  PlusCircle,
 } from 'lucide-react';
 import {
   BarChart,
@@ -110,6 +112,7 @@ function ProfitLossContent() {
   const [loading, setLoading] = useState(false);
   const [sortField, setSortField] = useState<SortField>('order_date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [otherRevenue, setOtherRevenue] = useState<{ total: number; byCategory: Record<string, number> }>({ total: 0, byCategory: {} });
 
   const dateRange = preset === 'custom'
     ? { from: customFrom, to: customTo }
@@ -118,16 +121,20 @@ function ProfitLossContent() {
   const fetchData = useCallback(async () => {
     if (!dateRange.from || !dateRange.to) return;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('order_profit_summary')
-      .select('*')
-      .gte('order_date', dateRange.from)
-      .lte('order_date', dateRange.to)
-      .order('order_date', { ascending: false });
+    const [orderResult, manualResult] = await Promise.all([
+      supabase
+        .from('order_profit_summary')
+        .select('*')
+        .gte('order_date', dateRange.from)
+        .lte('order_date', dateRange.to)
+        .order('order_date', { ascending: false }),
+      fetchManualRevenueTotalForRange(dateRange.from, dateRange.to),
+    ]);
 
-    if (!error && data) {
-      setRows(data as OrderProfit[]);
+    if (!orderResult.error && orderResult.data) {
+      setRows(orderResult.data as OrderProfit[]);
     }
+    setOtherRevenue(manualResult);
     setLoading(false);
   }, [dateRange.from, dateRange.to]);
 
@@ -152,7 +159,7 @@ function ProfitLossContent() {
     return ((av as number) - (bv as number)) * dir;
   });
 
-  const totals = rows.reduce(
+  const orderTotals = rows.reduce(
     (acc, r) => {
       acc.revenue += r.revenue;
       acc.delivery_charge += r.delivery_charge;
@@ -164,6 +171,12 @@ function ProfitLossContent() {
     },
     { revenue: 0, delivery_charge: 0, product_cogs: 0, packaging_cost: 0, total_cogs: 0, gross_profit: 0 }
   );
+
+  const totals = {
+    ...orderTotals,
+    revenue: orderTotals.revenue + otherRevenue.total,
+    gross_profit: orderTotals.gross_profit + otherRevenue.total,
+  };
 
   const avgMargin = totals.revenue > 0
     ? (totals.gross_profit / totals.revenue) * 100
@@ -248,16 +261,32 @@ function ProfitLossContent() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
             <div className="p-1.5 bg-blue-100 rounded-lg">
               <DollarSign className="w-4 h-4 text-blue-600" />
             </div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Revenue</span>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Revenue</span>
           </div>
           <p className="text-xl font-bold text-gray-900">৳{fmt(totals.revenue)}</p>
-          <p className="text-xs text-gray-400 mt-1">{rows.length} orders</p>
+          <p className="text-xs text-gray-400 mt-1">{rows.length} orders + other</p>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="p-1.5 bg-emerald-100 rounded-lg">
+              <PlusCircle className="w-4 h-4 text-emerald-600" />
+            </div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Other Revenue</span>
+          </div>
+          <p className="text-xl font-bold text-emerald-700">৳{fmt(otherRevenue.total)}</p>
+          <div className="mt-1 space-y-0.5">
+            {(Object.keys(REVENUE_CATEGORY_LABELS) as RevenueCategory[]).filter(k => otherRevenue.byCategory[k]).map(k => (
+              <p key={k} className="text-xs text-gray-400">{REVENUE_CATEGORY_LABELS[k]}: ৳{fmt(otherRevenue.byCategory[k])}</p>
+            ))}
+            {otherRevenue.total === 0 && <p className="text-xs text-gray-400">No manual entries</p>}
+          </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-4">

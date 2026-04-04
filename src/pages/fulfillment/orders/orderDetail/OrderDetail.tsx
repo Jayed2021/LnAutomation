@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Trash2, AlertTriangle, X, Lock, PackageX } from 'lucide-react';
+import { Trash2, AlertTriangle, X, Lock, PackageX, Banknote } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { REVENUE_CATEGORY_LABELS } from '../../../finance/collection/manualRevenueService';
 import {
   OrderDetail as OrderDetailType, OrderItem, OrderCourierInfo,
   OrderPrescription, OrderNote, CallLog, ActivityLog, PackagingItem
@@ -44,6 +45,7 @@ export default function OrderDetail() {
   const [packagingItems, setPackagingItems] = useState<PackagingItem[]>([]);
   const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
+  const [manualRevenues, setManualRevenues] = useState<Array<{ id: string; amount: number; category: string; reference_number: string | null; bank_deposit_date: string | null }>>([]);
   const [loading, setLoading] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -74,6 +76,12 @@ export default function OrderDetail() {
       setCallLog(calls);
       setActivityLog(acts);
       setPackagingItems(pkg);
+
+      const { data: revData } = await supabase
+        .from('manual_revenue_entries')
+        .select('id, amount, category, reference_number, bank_deposit_date')
+        .eq('order_id', id);
+      setManualRevenues((revData ?? []) as any[]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -250,7 +258,46 @@ export default function OrderDetail() {
       {/* Three-column top section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <CustomerInfoCard order={order} onUpdated={load} />
-        <CourierPaymentCard order={order} courier={courier} userId={user?.id ?? null} onUpdated={load} />
+        <div className="space-y-3">
+          <CourierPaymentCard order={order} courier={courier} userId={user?.id ?? null} onUpdated={load} />
+          {manualRevenues.length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Banknote className="w-4 h-4 text-emerald-600" />
+                <span className="text-sm font-semibold text-emerald-800">Additional Revenue Recorded</span>
+              </div>
+              <div className="space-y-1.5">
+                {manualRevenues.map(r => (
+                  <div key={r.id} className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-medium text-emerald-700">
+                        {(REVENUE_CATEGORY_LABELS as Record<string, string>)[r.category] ?? r.category}
+                      </span>
+                      {r.reference_number && (
+                        <span className="text-xs text-emerald-600 ml-1">— Ref: {r.reference_number}</span>
+                      )}
+                      {r.bank_deposit_date && (
+                        <span className="text-xs text-emerald-600 ml-1">· Deposited {r.bank_deposit_date}</span>
+                      )}
+                      {!r.bank_deposit_date && (
+                        <span className="text-xs text-amber-600 ml-1">· Deposit pending</span>
+                      )}
+                    </div>
+                    <span className="text-sm font-bold text-emerald-800">৳{r.amount.toLocaleString('en-BD', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                ))}
+                {manualRevenues.length > 1 && (
+                  <div className="pt-1.5 border-t border-emerald-200 flex justify-between">
+                    <span className="text-xs font-semibold text-emerald-700">Total</span>
+                    <span className="text-sm font-bold text-emerald-800">
+                      ৳{manualRevenues.reduce((s, r) => s + r.amount, 0).toLocaleString('en-BD', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
         <div className="space-y-5">
           <OrderSourceCard
             order={order}

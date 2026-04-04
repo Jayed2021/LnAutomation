@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  Upload, AlertTriangle, TrendingDown, Search, Filter,
-  ChevronDown, RefreshCw, ExternalLink, Clock
+  Upload, AlertTriangle, Search, Filter,
+  RefreshCw, ExternalLink, Clock
 } from 'lucide-react';
 import { CollectionRecord, OverdueOrder } from './collection/types';
 import { fetchCollectionRecords, fetchOverdueOrders, fetchCollectionStats } from './collection/collectionService';
 import { UploadInvoiceModal } from './collection/UploadInvoiceModal';
 import { CollectionRecordDetail } from './collection/CollectionRecordDetail';
 import { FirstTimeOpsPanel } from './collection/FirstTimeOpsPanel';
+import { ManualRevenueTab } from './collection/ManualRevenueTab';
+import { fetchManualRevenueTotalForMonth } from './collection/manualRevenueService';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 
 /*
   ============================================================
@@ -62,13 +65,15 @@ const CS_STATUS_LABELS: Record<string, string> = {
   partial_delivery: 'Partial Delivered',
 };
 
-type Tab = 'records' | 'overdue';
+type Tab = 'records' | 'overdue' | 'manual_revenue';
 
 export default function Collection() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('records');
   const [records, setRecords] = useState<CollectionRecord[]>([]);
   const [overdueOrders, setOverdueOrders] = useState<OverdueOrder[]>([]);
   const [stats, setStats] = useState({ totalCollectedMonth: 0, totalGatewayChargesMonth: 0, unmatchedCount: 0 });
+  const [otherRevenueMonth, setOtherRevenueMonth] = useState(0);
   const [loading, setLoading] = useState(true);
   const [overdueLoading, setOverdueLoading] = useState(false);
   const [thresholdDays, setThresholdDays] = useState(14);
@@ -86,12 +91,15 @@ export default function Collection() {
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
-    const [recs, s] = await Promise.all([
+    const now = new Date();
+    const [recs, s, otherRev] = await Promise.all([
       fetchCollectionRecords(),
       fetchCollectionStats(),
+      fetchManualRevenueTotalForMonth(now.getFullYear(), now.getMonth() + 1),
     ]);
     setRecords(recs);
     setStats(s);
+    setOtherRevenueMonth(otherRev);
     setLoading(false);
   }, []);
 
@@ -150,11 +158,16 @@ export default function Collection() {
           </button>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <div className="text-xs font-medium text-gray-500 mb-1">Collected This Month</div>
             <div className="text-xl font-bold text-gray-900">৳{stats.totalCollectedMonth.toLocaleString('en-BD', { minimumFractionDigits: 0 })}</div>
             <div className="text-xs text-gray-400 mt-0.5">From verified invoices</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <div className="text-xs font-medium text-gray-500 mb-1">Other Revenue</div>
+            <div className="text-xl font-bold text-emerald-700">৳{otherRevenueMonth.toLocaleString('en-BD', { minimumFractionDigits: 0 })}</div>
+            <div className="text-xs text-gray-400 mt-0.5">Manual entries this month</div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <div className="text-xs font-medium text-gray-500 mb-1">Gateway Charges</div>
@@ -184,22 +197,33 @@ export default function Collection() {
         )}
 
         <div className="flex border-b border-gray-200 mb-5">
-          {(['records', 'overdue'] as Tab[]).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                tab === t
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {t === 'records' ? 'Invoice Records' : 'Overdue Orders'}
-              {t === 'overdue' && overdueFetched && overdueCount > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 text-xs font-bold bg-red-100 text-red-700 rounded-full">{overdueCount}</span>
-              )}
-            </button>
-          ))}
+          <button
+            onClick={() => setTab('records')}
+            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              tab === 'records' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Invoice Records
+          </button>
+          <button
+            onClick={() => setTab('overdue')}
+            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              tab === 'overdue' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Overdue Orders
+            {overdueFetched && overdueCount > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.5 text-xs font-bold bg-red-100 text-red-700 rounded-full">{overdueCount}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setTab('manual_revenue')}
+            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              tab === 'manual_revenue' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Manual Revenue
+          </button>
         </div>
 
         {tab === 'records' && (
@@ -470,6 +494,10 @@ export default function Collection() {
               </div>
             )}
           </div>
+        )}
+
+        {tab === 'manual_revenue' && (
+          <ManualRevenueTab userId={user?.id ?? null} />
         )}
       </div>
 

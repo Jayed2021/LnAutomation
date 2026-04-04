@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, RotateCcw, MapPin, Package, AlertTriangle, Check, ArrowRight } from 'lucide-react';
+import { X, RotateCcw, MapPin, Package, AlertTriangle, Check, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface ReturnItemData {
@@ -39,6 +39,12 @@ interface ItemRestockState {
   holdLocationCode: string;
 }
 
+interface WooSyncResult {
+  sku: string;
+  success: boolean;
+  error?: string;
+}
+
 interface Props {
   returnData: ReturnData;
   onClose: () => void;
@@ -50,7 +56,10 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
   const [locations, setLocations] = useState<WarehouseLocation[]>([]);
   const [itemStates, setItemStates] = useState<ItemRestockState[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [wooSyncing, setWooSyncing] = useState(false);
   const [error, setError] = useState('');
+  const [wooSyncResults, setWooSyncResults] = useState<WooSyncResult[]>([]);
+  const [wooSyncDone, setWooSyncDone] = useState(false);
 
   const items = (returnData.items ?? []).filter(
     i => i.qc_status === 'passed' && i.receive_status === 'received'
@@ -177,6 +186,64 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     ));
   };
 
+  const syncWooCommerceStock = async (): Promise<WooSyncResult[]> => {
+    const { data: wooConfig } = await supabase
+      .from('woocommerce_config')
+      .select('store_url, consumer_key, consumer_secret')
+      .limit(1)
+      .maybeSingle();
+
+    if (!wooConfig?.store_url || !wooConfig?.consumer_key || !wooConfig?.consumer_secret) {
+      return itemStates.map(s => ({
+        sku: s.item.product?.sku || s.item.sku,
+        success: false,
+        error: 'WooCommerce not configured',
+      }));
+    }
+
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    const results: WooSyncResult[] = [];
+
+    for (const state of itemStates) {
+      const productSku = state.item.product?.sku;
+      if (!productSku) {
+        results.push({ sku: state.item.sku, success: false, error: 'No product SKU found' });
+        continue;
+      }
+
+      try {
+        const res = await fetch(`${supabaseUrl}/functions/v1/woo-proxy`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'update-stock',
+            store_url: wooConfig.store_url,
+            consumer_key: wooConfig.consumer_key,
+            consumer_secret: wooConfig.consumer_secret,
+            product_sku: productSku,
+            quantity_to_add: state.item.quantity,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          results.push({ sku: productSku, success: false, error: data.error || `HTTP ${res.status}` });
+        } else {
+          results.push({ sku: productSku, success: true });
+        }
+      } catch (err: any) {
+        results.push({ sku: productSku, success: false, error: err?.message || 'Network error' });
+      }
+    }
+
+    return results;
+  };
+
   const handleConfirmRestock = async () => {
     try {
       setProcessing(true);
@@ -208,6 +275,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
         }
 
         let resolvedLotId: string | null = null;
+        let previousQty = 0;
 
         const { data: existingLot } = await supabase
           .from('inventory_lots')
@@ -218,11 +286,13 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
 
         if (existingLot) {
           resolvedLotId = existingLot.id;
+          previousQty = existingLot.remaining_quantity ?? 0;
           await supabase
             .from('inventory_lots')
             .update({ remaining_quantity: existingLot.remaining_quantity + item.quantity })
             .eq('id', existingLot.id);
         } else {
+          previousQty = 0;
           const lotNumber = `RET-STOCK-${returnData.return_number}-${barcode}`;
           const { data: newLot } = await supabase
             .from('inventory_lots')
@@ -252,6 +322,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
             from_location_id: holdLocationId,
             to_location_id: state.selectedLocationId,
             quantity: item.quantity,
+            previous_quantity: previousQty,
             reference_type: 'return',
             reference_id: returnData.id,
           });
@@ -268,12 +339,23 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
         .update({ status: 'restocked', updated_at: new Date().toISOString() })
         .eq('id', returnData.id);
 
-      onRestocked();
+      setProcessing(false);
+      setWooSyncing(true);
+
+      const syncResults = await syncWooCommerceStock();
+      setWooSyncResults(syncResults);
+      setWooSyncDone(true);
+      setWooSyncing(false);
+
+      const allSucceeded = syncResults.every(r => r.success);
+      if (allSucceeded) {
+        setTimeout(() => onRestocked(), 800);
+      }
     } catch (err) {
       console.error('Error restocking:', err);
       setError('Failed to restock. Please try again.');
-    } finally {
       setProcessing(false);
+      setWooSyncing(false);
     }
   };
 
@@ -285,6 +367,9 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     : returnData.order?.order_number ?? returnData.return_number;
 
   const allLocationsSelected = itemStates.every(s => s.selectedLocationId);
+  const isBlocked = processing || wooSyncing;
+
+  const failedSyncs = wooSyncResults.filter(r => !r.success);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -305,7 +390,8 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors ml-2 shrink-0"
+            disabled={isBlocked}
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors ml-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <X className="w-4 h-4" />
           </button>
@@ -346,7 +432,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                         <td className="px-4 py-3.5">
                           <div className="font-medium text-gray-900 text-sm">{getItemName(state.item)}</div>
                           <div className="text-xs text-gray-400 mt-0.5">
-                            SKU: {state.item.sku} &nbsp;|&nbsp; Qty: {state.item.quantity}
+                            SKU: {state.item.product?.sku || state.item.sku} &nbsp;|&nbsp; Qty: {state.item.quantity}
                           </div>
                           <div className="flex items-center gap-1.5 mt-1.5 text-xs text-blue-600">
                             <MapPin className="w-3 h-3" />
@@ -369,7 +455,8 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                           <select
                             value={state.selectedLocationId}
                             onChange={e => handleLocationChange(idx, e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-white"
+                            disabled={isBlocked}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <option value="">Select location...</option>
                             {locations.map(loc => (
@@ -390,6 +477,40 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
             </div>
           )}
 
+          {wooSyncing && (
+            <div className="mt-4 flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-sm">
+              <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+              <div>
+                <p className="font-medium">Syncing stock to WooCommerce...</p>
+                <p className="text-xs text-blue-600 mt-0.5">Please wait, do not close this window.</p>
+              </div>
+            </div>
+          )}
+
+          {wooSyncDone && failedSyncs.length === 0 && (
+            <div className="mt-4 flex items-center gap-2 p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-sm">
+              <Check className="w-4 h-4 shrink-0" />
+              <p className="font-medium">WooCommerce stock updated successfully.</p>
+            </div>
+          )}
+
+          {wooSyncDone && failedSyncs.length > 0 && (
+            <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+              <div className="flex items-center gap-2 text-amber-800 text-sm font-medium mb-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                Local inventory updated. WooCommerce sync failed for {failedSyncs.length} item{failedSyncs.length > 1 ? 's' : ''}:
+              </div>
+              <div className="space-y-1">
+                {failedSyncs.map(r => (
+                  <div key={r.sku} className="flex items-start gap-2 text-xs text-amber-700">
+                    <RefreshCw className="w-3 h-3 shrink-0 mt-0.5" />
+                    <span><span className="font-mono font-semibold">{r.sku}</span> — please update WooCommerce stock manually. ({r.error})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mt-3 flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
               <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -399,21 +520,47 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
         </div>
 
         <div className="flex items-center justify-between p-5 border-t border-gray-100 bg-gray-50 rounded-b-2xl gap-3">
-          <button
-            onClick={onClose}
-            disabled={processing}
-            className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-white transition-colors disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleConfirmRestock}
-            disabled={processing || loading || items.length === 0 || !allLocationsSelected}
-            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2"
-          >
-            <RotateCcw className="w-4 h-4" />
-            {processing ? 'Restocking...' : `Confirm Restock (${items.length} item${items.length !== 1 ? 's' : ''})`}
-          </button>
+          {wooSyncDone && failedSyncs.length > 0 ? (
+            <button
+              onClick={onRestocked}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2 ml-auto"
+            >
+              <Check className="w-4 h-4" />
+              Done
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onClose}
+                disabled={isBlocked}
+                className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmRestock}
+                disabled={isBlocked || loading || items.length === 0 || !allLocationsSelected || wooSyncDone}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2"
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Restocking...
+                  </>
+                ) : wooSyncing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Syncing to WooCommerce...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-4 h-4" />
+                    Confirm Restock ({items.length} item{items.length !== 1 ? 's' : ''})
+                  </>
+                )}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

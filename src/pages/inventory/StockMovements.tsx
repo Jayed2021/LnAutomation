@@ -45,14 +45,14 @@ export default function StockMovements() {
   useEffect(() => {
     loadMovements();
     return () => { abortRef.current?.abort(); };
-  }, [lastRefreshed]);
+  }, [lastRefreshed, typeFilter]);
 
   const loadMovements = async () => {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     setLoading(true);
     try {
-      const { data } = await supabase
+      let query = supabase
         .from('stock_movements')
         .select(`
           id, created_at, movement_type, quantity, reference_type, notes,
@@ -63,8 +63,15 @@ export default function StockMovements() {
           to_loc:warehouse_locations!to_location_id(code)
         `)
         .order('created_at', { ascending: false })
-        .limit(500)
         .abortSignal(abortRef.current.signal);
+
+      if (typeFilter !== 'all') {
+        query = query.eq('movement_type', typeFilter);
+      } else {
+        query = query.limit(500);
+      }
+
+      const { data } = await query;
 
       const mapped: Movement[] = (data || []).map((m: any) => ({
         id: m.id,
@@ -94,11 +101,10 @@ export default function StockMovements() {
     const matchSearch = m.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
       m.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (m.lot_number || '').toLowerCase().includes(searchTerm.toLowerCase());
-    const matchType = typeFilter === 'all' || m.movement_type === typeFilter;
     const date = m.created_at.slice(0, 10);
     const matchFrom = !dateFrom || date >= dateFrom;
     const matchTo = !dateTo || date <= dateTo;
-    return matchSearch && matchType && matchFrom && matchTo;
+    return matchSearch && matchFrom && matchTo;
   });
 
   const exportCSV = () => {

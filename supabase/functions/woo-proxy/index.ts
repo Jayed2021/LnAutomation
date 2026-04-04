@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 interface WooRequestBody {
-  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status" | "resync-order" | "sync-order-items" | "register-webhook" | "check-webhook" | "reactivate-webhook" | "delete-webhook";
+  action: "test-connection" | "fetch-products" | "fetch-products-page" | "fetch-orders" | "fetch-single-order" | "import-order" | "cancel-order" | "update-order-status" | "resync-order" | "sync-order-items" | "register-webhook" | "check-webhook" | "reactivate-webhook" | "delete-webhook" | "update-stock";
   store_url: string;
   consumer_key: string;
   consumer_secret: string;
@@ -26,6 +26,8 @@ interface WooRequestBody {
   removed_item_ids?: number[];
   webhook_url?: string;
   webhook_id?: number;
+  product_sku?: string;
+  quantity_to_add?: number;
 }
 
 function buildAuthHeader(consumerKey: string, consumerSecret: string): string {
@@ -972,6 +974,81 @@ Deno.serve(async (req: Request) => {
 
       return new Response(
         JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "update-stock") {
+      const { product_sku, quantity_to_add } = body;
+      if (!product_sku || quantity_to_add == null) {
+        return new Response(
+          JSON.stringify({ error: "product_sku and quantity_to_add are required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const searchRes = await wooFetch(store_url, consumer_key, consumer_secret, "products", { sku: product_sku, per_page: 1 });
+      if (!searchRes.ok) {
+        const errText = await searchRes.text();
+        return new Response(
+          JSON.stringify({ error: `WooCommerce product search failed (${searchRes.status}): ${errText}` }),
+          { status: searchRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const products: any[] = await searchRes.json();
+      let matchedId: number | null = null;
+      let endpoint = "";
+      let currentStock = 0;
+
+      if (products && products.length > 0) {
+        const product = products[0];
+        if (product.type === "variable") {
+          const varRes = await wooFetch(store_url, consumer_key, consumer_secret, `products/${product.id}/variations`, { sku: product_sku, per_page: 10 });
+          if (varRes.ok) {
+            const variations: any[] = await varRes.json();
+            const match = variations.find((v: any) => v.sku === product_sku);
+            if (match) {
+              matchedId = match.id;
+              currentStock = match.stock_quantity ?? 0;
+              endpoint = `products/${product.id}/variations/${match.id}`;
+            }
+          }
+        } else if (product.sku === product_sku) {
+          matchedId = product.id;
+          currentStock = product.stock_quantity ?? 0;
+          endpoint = `products/${product.id}`;
+        }
+      }
+
+      if (!matchedId || !endpoint) {
+        return new Response(
+          JSON.stringify({ error: `No WooCommerce product found with SKU: ${product_sku}` }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const newStock = currentStock + quantity_to_add;
+      const updateUrl = new URL(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/${endpoint}`);
+      const updateRes = await fetch(updateUrl.toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: buildAuthHeader(consumer_key, consumer_secret),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ stock_quantity: newStock, manage_stock: true }),
+      });
+
+      if (!updateRes.ok) {
+        const errText = await updateRes.text();
+        return new Response(
+          JSON.stringify({ error: `Failed to update WooCommerce stock (${updateRes.status}): ${errText}` }),
+          { status: updateRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, sku: product_sku, previous_stock: currentStock, new_stock: newStock }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

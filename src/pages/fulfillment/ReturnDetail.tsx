@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Package, User, Calendar, Check, X, Camera, Printer, DollarSign } from 'lucide-react';
+import { ArrowLeft, Package, User, Calendar, Check, X, Camera, DollarSign, RotateCcw, MapPin, TrendingUp } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -10,6 +10,7 @@ import { Label } from '../../components/ui/Label';
 import { Select } from '../../components/ui/Select';
 import { Textarea } from '../../components/ui/Textarea';
 import { ReturnReceiveModal } from '../../components/fulfillment/ReturnReceiveModal';
+import { RestockModal } from '../../components/fulfillment/RestockModal';
 
 interface ReturnDetail {
   id: string;
@@ -26,6 +27,7 @@ interface ReturnDetail {
   created_at: string;
   order: {
     order_number: string;
+    woo_order_id: number | null;
     total_amount: number;
   };
   customer: {
@@ -46,6 +48,10 @@ interface ReturnItemDetail {
   qc_notes: string | null;
   expected_barcode: string | null;
   product_id: string;
+  hold_location_id: string | null;
+  receive_status: string;
+  product: { name: string; sku: string } | null;
+  order_item: { product_name: string } | null;
 }
 
 interface ReturnPhoto {
@@ -55,13 +61,24 @@ interface ReturnPhoto {
   created_at: string;
 }
 
+interface RestockMovement {
+  id: string;
+  quantity: number;
+  previous_quantity: number | null;
+  to_location: string | null;
+  product_sku: string;
+  product_name: string;
+}
+
 export default function ReturnDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [returnData, setReturnData] = useState<ReturnDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [showReceiveModal, setShowReceiveModal] = useState(false);
+  const [showRestockModal, setShowRestockModal] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [restockMovements, setRestockMovements] = useState<RestockMovement[]>([]);
 
   const [refundForm, setRefundForm] = useState({
     amount: '',
@@ -83,7 +100,7 @@ export default function ReturnDetail() {
         .from('returns')
         .select(`
           *,
-          order:orders(order_number, total_amount),
+          order:orders(order_number, woo_order_id, total_amount),
           customer:customers(full_name, phone_primary, email),
           items:return_items(
             id,
@@ -93,7 +110,10 @@ export default function ReturnDetail() {
             qc_notes,
             expected_barcode,
             product_id,
-            product:products(name)
+            hold_location_id,
+            receive_status,
+            product:products(name, sku),
+            order_item:order_items(product_name)
           ),
           photos:return_photos(id, photo_url, notes, created_at)
         `)
@@ -106,7 +126,7 @@ export default function ReturnDetail() {
         ...data,
         items: data.items.map((item: any) => ({
           ...item,
-          product_name: item.product?.name || 'Unknown Product',
+          product_name: item.product?.name || item.order_item?.product_name || 'Unknown Product',
         })),
       };
 
@@ -115,11 +135,39 @@ export default function ReturnDetail() {
         ...prev,
         amount: data.refund_amount?.toString() || data.order?.total_amount?.toString() || '',
       }));
+
+      if (data.status === 'restocked') {
+        await fetchRestockMovements(data.id);
+      }
     } catch (error) {
       console.error('Error fetching return detail:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchRestockMovements = async (returnId: string) => {
+    const { data } = await supabase
+      .from('stock_movements')
+      .select(`
+        id, quantity, previous_quantity,
+        products(sku, name),
+        to_loc:warehouse_locations!to_location_id(code)
+      `)
+      .eq('reference_type', 'return')
+      .eq('reference_id', returnId)
+      .eq('movement_type', 'return_restock');
+
+    const mapped: RestockMovement[] = (data || []).map((m: any) => ({
+      id: m.id,
+      quantity: m.quantity,
+      previous_quantity: m.previous_quantity,
+      to_location: m.to_loc?.code || null,
+      product_sku: m.products?.sku || '?',
+      product_name: m.products?.name || 'Unknown',
+    }));
+
+    setRestockMovements(mapped);
   };
 
   const handleQCDecision = async (itemId: string, decision: 'passed' | 'failed', notes: string) => {
@@ -154,65 +202,6 @@ export default function ReturnDetail() {
       fetchReturnDetail();
     } catch (error) {
       console.error('Error updating QC status:', error);
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handleRestock = async () => {
-    if (!returnData) return;
-
-    try {
-      setProcessing(true);
-
-      for (const item of returnData.items.filter(i => i.qc_status === 'passed')) {
-        const { data: picks } = await supabase
-          .from('order_picks')
-          .select('lot_id, quantity')
-          .eq('order_id', returnData.order_id)
-          .eq('order_item_id', item.id)
-          .order('picked_at', { ascending: false });
-
-        if (picks && picks.length > 0) {
-          const lot = picks[0];
-
-          const { data: currentLot } = await supabase
-            .from('inventory_lots')
-            .select('remaining_quantity')
-            .eq('id', lot.lot_id)
-            .single();
-
-          if (currentLot) {
-            await supabase
-              .from('inventory_lots')
-              .update({
-                remaining_quantity: currentLot.remaining_quantity + item.quantity
-              })
-              .eq('id', lot.lot_id);
-
-            await supabase
-              .from('stock_movements')
-              .insert({
-                movement_type: 'return_restock',
-                product_id: item.product_id,
-                lot_id: lot.lot_id,
-                quantity: item.quantity,
-                reference_type: 'return',
-                reference_id: returnData.id,
-                notes: `Return #${returnData.return_number} - QC Passed`
-              });
-          }
-        }
-      }
-
-      await supabase
-        .from('returns')
-        .update({ status: 'restocked' })
-        .eq('id', id);
-
-      fetchReturnDetail();
-    } catch (error) {
-      console.error('Error restocking:', error);
     } finally {
       setProcessing(false);
     }
@@ -290,6 +279,27 @@ export default function ReturnDetail() {
   const canQC = returnData.status === 'received';
   const canRestock = returnData.status === 'qc_passed' && returnData.items.every(i => i.qc_status === 'passed');
   const canMarkDamaged = returnData.status === 'qc_failed';
+
+  const restockModalData = {
+    id: returnData.id,
+    return_number: returnData.return_number,
+    order_id: returnData.order_id,
+    order: returnData.order
+      ? { order_number: returnData.order.order_number, woo_order_id: returnData.order.woo_order_id ?? null }
+      : null,
+    items: returnData.items.map(item => ({
+      id: item.id,
+      sku: item.sku,
+      quantity: item.quantity,
+      qc_status: item.qc_status,
+      receive_status: item.receive_status,
+      hold_location_id: item.hold_location_id,
+      product_id: item.product_id,
+      order_item_id: null,
+      order_item: item.order_item,
+      product: item.product,
+    })),
+  };
 
   return (
     <div className="p-6">
@@ -389,7 +399,7 @@ export default function ReturnDetail() {
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <div className="font-medium text-gray-900">{item.product_name}</div>
-                      <div className="text-sm text-gray-600">SKU: {item.sku}</div>
+                      <div className="text-sm text-gray-600">SKU: {item.product?.sku || item.sku}</div>
                       <div className="text-sm text-gray-600">Quantity: {item.quantity}</div>
                     </div>
                     <Badge
@@ -452,7 +462,13 @@ export default function ReturnDetail() {
             </div>
 
             {canRestock && (
-              <Button className="w-full mt-4" variant="primary" onClick={handleRestock} disabled={processing}>
+              <Button
+                className="w-full mt-4"
+                variant="primary"
+                onClick={() => setShowRestockModal(true)}
+                disabled={processing}
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
                 Restock Items
               </Button>
             )}
@@ -463,6 +479,43 @@ export default function ReturnDetail() {
               </Button>
             )}
           </Card>
+
+          {returnData.status === 'restocked' && restockMovements.length > 0 && (
+            <Card className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <TrendingUp className="h-5 w-5 text-emerald-500" />
+                <h3 className="font-semibold text-gray-900">Restock Summary</h3>
+              </div>
+              <div className="space-y-3">
+                {restockMovements.map(m => (
+                  <div key={m.id} className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-100 rounded-lg">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{m.product_name}</p>
+                      <p className="text-xs text-gray-500 font-mono mt-0.5">{m.product_sku}</p>
+                      {m.to_location && (
+                        <div className="flex items-center gap-1 mt-1 text-xs text-gray-500">
+                          <MapPin className="w-3 h-3" />
+                          {m.to_location}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      {m.previous_quantity !== null ? (
+                        <>
+                          <div className="text-xs text-gray-400">
+                            {m.previous_quantity} &rarr; <span className="font-semibold text-emerald-700">{m.previous_quantity + m.quantity}</span>
+                          </div>
+                          <div className="text-xs text-emerald-600 font-medium mt-0.5">+{m.quantity} added</div>
+                        </>
+                      ) : (
+                        <div className="text-sm font-semibold text-emerald-700">+{m.quantity} units</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -589,6 +642,17 @@ export default function ReturnDetail() {
           returnData={returnData}
           onClose={() => {
             setShowReceiveModal(false);
+            fetchReturnDetail();
+          }}
+        />
+      )}
+
+      {showRestockModal && (
+        <RestockModal
+          returnData={restockModalData}
+          onClose={() => setShowRestockModal(false)}
+          onRestocked={() => {
+            setShowRestockModal(false);
             fetchReturnDetail();
           }}
         />

@@ -459,9 +459,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                   </span>
                 )}
               </div>
-              {settlementSource === 'invoice_upload' ? (
-                <span className="text-xs text-gray-400 italic">Set by Finance</span>
-              ) : !settlementEditing ? (
+              {!settlementEditing ? (
                 <button
                   onClick={() => {
                     setSettlementEdit({
@@ -491,17 +489,11 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                 </div>
               )}
             </div>
-            {settlementSource === 'invoice_upload' && (
-              <div className="mb-3 flex items-center gap-2 p-2.5 bg-blue-50 border border-blue-100 rounded-lg">
-                <AlertCircle className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                <p className="text-xs text-blue-700">These amounts were set by the Finance team via invoice upload and cannot be edited here.</p>
-              </div>
-            )}
 
             <div className="space-y-3">
               <div>
                 <div className="text-xs font-medium text-gray-500 mb-1">Collected Amount</div>
-                {settlementEditing && settlementSource !== 'invoice_upload'
+                {settlementEditing
                   ? <input
                       type="number"
                       value={settlementEdit.collected_amount}
@@ -518,7 +510,7 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
               </div>
               <div>
                 <div className="text-xs font-medium text-gray-500 mb-1">Delivery Charge</div>
-                {settlementEditing && settlementSource !== 'invoice_upload'
+                {settlementEditing
                   ? <input
                       type="number"
                       value={settlementEdit.delivery_charge}

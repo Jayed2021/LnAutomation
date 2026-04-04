@@ -19,75 +19,82 @@ interface OrderLookup {
   delivery_discount: number | null;
   settlement_source: string | null;
   courier_info_id: string | null;
+  payment_reference: string | null;
 }
 
 async function buildLookupMaps(rows: ParsedRow[]): Promise<{
   byConsignment: Map<string, OrderLookup>;
   byWooId: Map<number, OrderLookup>;
+  byPaymentReference: Map<string, OrderLookup>;
 }> {
   const consignmentIds = rows.map(r => r.consignment_id).filter(Boolean) as string[];
   const wooIds = rows.map(r => r.woo_order_id).filter(Boolean) as number[];
-
-  const { data } = await supabase
-    .from('orders')
-    .select(`
-      id,
-      order_number,
-      woo_order_id,
-      cs_status,
-      payment_method,
-      payment_status,
-      total_amount,
-      paid_amount,
-      customers!inner(full_name),
-      order_courier_info(
-        id,
-        tracking_number,
-        consignment_id,
-        total_receivable,
-        collected_amount,
-        delivery_charge,
-        delivery_discount,
-        settlement_source
-      )
-    `)
-    .or(
-      [
-        wooIds.length > 0 ? `woo_order_id.in.(${wooIds.join(',')})` : null,
-      ]
-        .filter(Boolean)
-        .join(',') || 'id.is.null'
-    );
+  const transactionIds = rows.map(r => r.transaction_id).filter(Boolean) as string[];
 
   const byConsignment = new Map<string, OrderLookup>();
   const byWooId = new Map<number, OrderLookup>();
+  const byPaymentReference = new Map<string, OrderLookup>();
 
-  if (data) {
-    for (const o of data as any[]) {
-      const courierInfo = Array.isArray(o.order_courier_info) ? o.order_courier_info[0] : o.order_courier_info;
-      const lookup: OrderLookup = {
-        id: o.id,
-        order_number: o.order_number,
-        woo_order_id: o.woo_order_id,
-        cs_status: o.cs_status,
-        payment_method: o.payment_method,
-        payment_status: o.payment_status,
-        total_amount: o.total_amount,
-        paid_amount: o.paid_amount,
-        customer_name: o.customers?.full_name ?? 'Unknown',
-        tracking_number: courierInfo?.tracking_number ?? null,
-        consignment_id: courierInfo?.consignment_id ?? null,
-        total_receivable: courierInfo?.total_receivable ?? null,
-        collected_amount: courierInfo?.collected_amount ?? null,
-        delivery_charge: courierInfo?.delivery_charge ?? null,
-        delivery_discount: courierInfo?.delivery_discount ?? null,
-        settlement_source: courierInfo?.settlement_source ?? null,
-        courier_info_id: courierInfo?.id ?? null,
-      };
+  const orClauses: string[] = [];
+  if (wooIds.length > 0) orClauses.push(`woo_order_id.in.(${wooIds.join(',')})`);
+  if (transactionIds.length > 0) orClauses.push(`payment_reference.in.(${transactionIds.map(t => `"${t}"`).join(',')})`);
 
-      if (o.woo_order_id) byWooId.set(o.woo_order_id, lookup);
-      if (courierInfo?.tracking_number) byConsignment.set(courierInfo.tracking_number, lookup);
-      if (courierInfo?.consignment_id) byConsignment.set(courierInfo.consignment_id, lookup);
+  if (orClauses.length > 0) {
+    const { data } = await supabase
+      .from('orders')
+      .select(`
+        id,
+        order_number,
+        woo_order_id,
+        cs_status,
+        payment_method,
+        payment_status,
+        total_amount,
+        paid_amount,
+        payment_reference,
+        customers!inner(full_name),
+        order_courier_info(
+          id,
+          tracking_number,
+          consignment_id,
+          total_receivable,
+          collected_amount,
+          delivery_charge,
+          delivery_discount,
+          settlement_source
+        )
+      `)
+      .or(orClauses.join(','));
+
+    if (data) {
+      for (const o of data as any[]) {
+        const courierInfo = Array.isArray(o.order_courier_info) ? o.order_courier_info[0] : o.order_courier_info;
+        const lookup: OrderLookup = {
+          id: o.id,
+          order_number: o.order_number,
+          woo_order_id: o.woo_order_id,
+          cs_status: o.cs_status,
+          payment_method: o.payment_method,
+          payment_status: o.payment_status,
+          total_amount: o.total_amount,
+          paid_amount: o.paid_amount,
+          payment_reference: o.payment_reference ?? null,
+          customer_name: o.customers?.full_name ?? 'Unknown',
+          tracking_number: courierInfo?.tracking_number ?? null,
+          consignment_id: courierInfo?.consignment_id ?? null,
+          total_receivable: courierInfo?.total_receivable ?? null,
+          collected_amount: courierInfo?.collected_amount ?? null,
+          delivery_charge: courierInfo?.delivery_charge ?? null,
+          delivery_discount: courierInfo?.delivery_discount ?? null,
+          settlement_source: courierInfo?.settlement_source ?? null,
+          courier_info_id: courierInfo?.id ?? null,
+        };
+
+        if (o.woo_order_id) byWooId.set(o.woo_order_id, lookup);
+        if (o.payment_reference) byPaymentReference.set(o.payment_reference, lookup);
+        if (courierInfo?.tracking_number) byConsignment.set(courierInfo.tracking_number, lookup);
+        if (courierInfo?.consignment_id) byConsignment.set(courierInfo.consignment_id, lookup);
+      }
     }
   }
 
@@ -113,6 +120,7 @@ async function buildLookupMaps(rows: ParsedRow[]): Promise<{
           payment_status,
           total_amount,
           paid_amount,
+          payment_reference,
           customers(full_name)
         )
       `)
@@ -135,6 +143,7 @@ async function buildLookupMaps(rows: ParsedRow[]): Promise<{
           payment_status: o.payment_status,
           total_amount: o.total_amount,
           paid_amount: o.paid_amount,
+          payment_reference: o.payment_reference ?? null,
           customer_name: o.customers?.full_name ?? 'Unknown',
           tracking_number: ci.tracking_number,
           consignment_id: ci.consignment_id,
@@ -149,11 +158,12 @@ async function buildLookupMaps(rows: ParsedRow[]): Promise<{
         if (ci.tracking_number) byConsignment.set(ci.tracking_number, lookup);
         if (ci.consignment_id) byConsignment.set(ci.consignment_id, lookup);
         if (o.woo_order_id && !byWooId.has(o.woo_order_id)) byWooId.set(o.woo_order_id, lookup);
+        if (o.payment_reference && !byPaymentReference.has(o.payment_reference)) byPaymentReference.set(o.payment_reference, lookup);
       }
     }
   }
 
-  return { byConsignment, byWooId };
+  return { byConsignment, byWooId, byPaymentReference };
 }
 
 function toMatchedRow(
@@ -179,7 +189,7 @@ function toMatchedRow(
 }
 
 export async function matchParsedRows(rows: ParsedRow[]): Promise<MatchResult> {
-  const { byConsignment, byWooId } = await buildLookupMaps(rows);
+  const { byConsignment, byWooId, byPaymentReference } = await buildLookupMaps(rows);
 
   const matched: MatchedRow[] = [];
   const unmatched: MatchedRow[] = [];
@@ -198,6 +208,11 @@ export async function matchParsedRows(rows: ParsedRow[]): Promise<MatchResult> {
       if (lookup) {
         confidence = row.match_confidence_hint === 'high' ? 'high' : row.match_confidence_hint;
       }
+    }
+
+    if (!lookup && row.transaction_id) {
+      lookup = byPaymentReference.get(row.transaction_id);
+      if (lookup) confidence = 'high';
     }
 
     if (lookup) {

@@ -328,11 +328,7 @@ export function parseSSLCommerzCSV(text: string): ParseResult {
     }
 
     const wooOrderIdNum = parseInt(transactionId, 10);
-    if (isNaN(wooOrderIdNum)) {
-      errors.push(`Transaction Id is not a valid order number: ${transactionId}`);
-      skippedRows++;
-      continue;
-    }
+    const wooOrderId = isNaN(wooOrderIdNum) ? null : wooOrderIdNum;
 
     const storeCreditStr = row['Store Credit Amount'] ?? row['Store Credited'] ?? '';
     const tdr = parseAmount(row['TDR']);
@@ -341,7 +337,7 @@ export function parseSSLCommerzCSV(text: string): ParseResult {
 
     parsedRows.push({
       transaction_id: transactionId,
-      woo_order_id: wooOrderIdNum,
+      woo_order_id: wooOrderId,
       consignment_id: null,
       invoice_type: null,
       collected_amount: txAmount || storeCredit,

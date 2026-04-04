@@ -768,7 +768,7 @@ export async function fetchOrderCollectionStatus(
     `, { count: 'exact' })
     .in('cs_status', filters.csStatuses.length > 0 ? filters.csStatuses : DEFAULT_CS_STATUSES)
     .gte('order_date', filters.dateFrom)
-    .lte('order_date', filters.dateTo + 'T23:59:59')
+    .lte('order_date', filters.dateTo)
     .order('order_date', { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
@@ -876,7 +876,7 @@ export async function fetchOrderCollectionAggregates(
     `, { count: 'exact' })
     .in('cs_status', csStatuses.length > 0 ? csStatuses : DEFAULT_CS_STATUSES)
     .gte('order_date', dateFrom)
-    .lte('order_date', dateTo + 'T23:59:59');
+    .lte('order_date', dateTo);
 
   if (paymentStatus !== 'all') {
     query = query.eq('payment_status', paymentStatus);

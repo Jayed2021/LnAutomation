@@ -604,19 +604,8 @@ export function OrderCollectionTab() {
           <div className="text-xs text-gray-400 mt-0.5">Matching filters</div>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-4 relative">
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-xs font-medium text-gray-500">Total Collected</div>
-            <button
-              onClick={() => fetchAggregates(filters)}
-              disabled={aggLoading}
-              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
-              title="Fetch aggregated totals"
-            >
-              <Database className={`w-3 h-3 ${aggLoading ? 'animate-pulse' : ''}`} />
-              {aggLoading ? 'Fetching...' : 'Fetch Data'}
-            </button>
-          </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="text-xs font-medium text-gray-500 mb-1">Total Collected</div>
           {aggregates ? (
             <>
               <div className="text-xl font-bold text-green-700">{formatMoney(aggregates.totalCollected)}</div>
@@ -625,26 +614,35 @@ export function OrderCollectionTab() {
           ) : (
             <>
               <div className="text-xl font-bold text-gray-300">—</div>
-              <div className="text-xs text-gray-400 mt-0.5">{aggError ?? 'Click "Fetch Data" to load'}</div>
+              <div className="text-xs text-gray-400 mt-0.5">{aggError ? <span className="text-red-500">{aggError}</span> : 'Fetch data to see totals'}</div>
             </>
           )}
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-4 relative">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-medium text-gray-500">Outstanding</div>
+            <button
+              onClick={() => fetchAggregates(filters)}
+              disabled={aggLoading}
+              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
+              title="Fetch totals for current filters"
+            >
+              <Database className={`w-3 h-3 ${aggLoading ? 'animate-pulse' : ''}`} />
+              {aggLoading ? 'Fetching...' : 'Fetch Data'}
+            </button>
           </div>
           {aggregates ? (
             <>
-              <div className={`text-xl font-bold ${aggregates.totalOutstanding > 0 ? 'text-amber-700' : 'text-gray-400'}`}>
-                {aggregates.totalOutstanding > 0 ? formatMoney(aggregates.totalOutstanding) : <span className="text-green-600">All Cleared</span>}
+              <div className={`text-xl font-bold ${aggregates.totalOutstanding > 0 ? 'text-amber-700' : 'text-green-600'}`}>
+                {aggregates.totalOutstanding > 0 ? formatMoney(aggregates.totalOutstanding) : 'All Cleared'}
               </div>
               <div className="text-xs text-gray-400 mt-0.5">Remaining to collect</div>
             </>
           ) : (
             <>
               <div className="text-xl font-bold text-gray-300">—</div>
-              <div className="text-xs text-gray-400 mt-0.5">Fetch data to see totals</div>
+              <div className="text-xs text-gray-400 mt-0.5">Click "Fetch Data" to load</div>
             </>
           )}
         </div>

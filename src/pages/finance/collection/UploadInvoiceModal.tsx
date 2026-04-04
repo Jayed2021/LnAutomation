@@ -262,6 +262,18 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
     ? Math.round((totalBulkMatched / (totalBulkMatched + totalBulkUnmatched)) * 100)
     : 0;
 
+  const isReturnOnlyBatch = bulkParseResult !== null &&
+    bulkParseResult.groups.every(g =>
+      g.parseResult.rows.every(r => r.invoice_type === 'return')
+    );
+
+  const totalReturnFees = bulkParseResult
+    ? bulkParseResult.groups.reduce(
+        (s, g) => s + g.parseResult.rows.reduce((rs, r) => rs + r.delivery_charge, 0),
+        0
+      )
+    : 0;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
@@ -487,12 +499,24 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
 
           {step === 'bulk_preview' && bulkParseResult && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <Layers className="w-4 h-4 text-blue-600 shrink-0" />
-                <p className="text-xs text-blue-800">
-                  <span className="font-semibold">{bulkParseResult.totalGroups} invoice batches</span> detected. Adjust the date for each batch if needed, then click Match All Orders.
-                </p>
-              </div>
+              {isReturnOnlyBatch ? (
+                <div className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-300 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-amber-900">Return Invoice — Additive Delivery Charges</p>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      All rows in this file are <span className="font-semibold">return type</span>. The <span className="font-mono font-semibold">Final_Fee</span> from each row will be <span className="font-semibold">added on top</span> of any existing delivery charge on the matched order. Collected amounts will not be changed. Total return fees across all batches: <span className="font-semibold">৳{totalReturnFees.toFixed(2)}</span>.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Layers className="w-4 h-4 text-blue-600 shrink-0" />
+                  <p className="text-xs text-blue-800">
+                    <span className="font-semibold">{bulkParseResult.totalGroups} invoice batches</span> detected. Adjust the date for each batch if needed, then click Match All Orders.
+                  </p>
+                </div>
+              )}
 
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <table className="w-full text-xs">
@@ -500,40 +524,58 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                     <tr className="bg-gray-50 border-b border-gray-200">
                       <th className="px-3 py-2 text-left font-semibold text-gray-600">Invoice (Payment Ref)</th>
                       <th className="px-3 py-2 text-center font-semibold text-gray-600">Orders</th>
-                      <th className="px-3 py-2 text-right font-semibold text-gray-600">Payout</th>
+                      {isReturnOnlyBatch ? (
+                        <th className="px-3 py-2 text-right font-semibold text-amber-700">Return Fee Added</th>
+                      ) : (
+                        <th className="px-3 py-2 text-right font-semibold text-gray-600">Payout</th>
+                      )}
                       <th className="px-3 py-2 text-left font-semibold text-gray-600">Invoice Date</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {bulkParseResult.groups.map((group, i) => (
-                      <tr key={group.invoiceNumber} className="border-b border-gray-100 last:border-0">
-                        <td className="px-3 py-2 font-mono text-gray-800 font-medium">{group.invoiceNumber}</td>
-                        <td className="px-3 py-2 text-center text-gray-700">{group.parseResult.parsedRows}</td>
-                        <td className="px-3 py-2 text-right text-gray-900 font-medium">৳{group.parseResult.totalDisbursed.toFixed(2)}</td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="date"
-                            value={bulkGroupDates[i] ?? group.suggestedDate}
-                            onChange={e => {
-                              const updated = [...bulkGroupDates];
-                              updated[i] = e.target.value;
-                              setBulkGroupDates(updated);
-                            }}
-                            className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white w-36"
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {bulkParseResult.groups.map((group, i) => {
+                      const batchReturnFee = group.parseResult.rows.reduce((s, r) => s + r.delivery_charge, 0);
+                      return (
+                        <tr key={group.invoiceNumber} className="border-b border-gray-100 last:border-0">
+                          <td className="px-3 py-2 font-mono text-gray-800 font-medium">{group.invoiceNumber}</td>
+                          <td className="px-3 py-2 text-center text-gray-700">{group.parseResult.parsedRows}</td>
+                          {isReturnOnlyBatch ? (
+                            <td className="px-3 py-2 text-right text-amber-800 font-medium">৳{batchReturnFee.toFixed(2)}</td>
+                          ) : (
+                            <td className="px-3 py-2 text-right text-gray-900 font-medium">৳{group.parseResult.totalDisbursed.toFixed(2)}</td>
+                          )}
+                          <td className="px-3 py-2">
+                            <input
+                              type="date"
+                              value={bulkGroupDates[i] ?? group.suggestedDate}
+                              onChange={e => {
+                                const updated = [...bulkGroupDates];
+                                updated[i] = e.target.value;
+                                setBulkGroupDates(updated);
+                              }}
+                              className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white w-36"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
 
-              <div className="bg-gray-50 rounded-lg p-3 flex justify-between text-sm">
-                <span className="text-gray-600">Total Payout (all batches)</span>
-                <span className="font-semibold text-gray-900">
-                  ৳{bulkParseResult.groups.reduce((s, g) => s + g.parseResult.totalDisbursed, 0).toFixed(2)}
-                </span>
-              </div>
+              {isReturnOnlyBatch ? (
+                <div className="bg-amber-50 rounded-lg p-3 flex justify-between text-sm border border-amber-100">
+                  <span className="text-amber-800">Total Return Fees to Add (all batches)</span>
+                  <span className="font-semibold text-amber-900">৳{totalReturnFees.toFixed(2)}</span>
+                </div>
+              ) : (
+                <div className="bg-gray-50 rounded-lg p-3 flex justify-between text-sm">
+                  <span className="text-gray-600">Total Payout (all batches)</span>
+                  <span className="font-semibold text-gray-900">
+                    ৳{bulkParseResult.groups.reduce((s, g) => s + g.parseResult.totalDisbursed, 0).toFixed(2)}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -657,6 +699,15 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
 
           {step === 'bulk_matching' && bulkParseResult && bulkMatchResults.length > 0 && (
             <div className="space-y-4">
+              {isReturnOnlyBatch && (
+                <div className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-300 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-900">
+                    <span className="font-semibold">Return Invoice:</span> Applying will add the return <span className="font-mono font-semibold">Final_Fee</span> on top of any existing delivery charge on matched orders. Collected amounts are unchanged. Total fees: <span className="font-semibold">৳{totalReturnFees.toFixed(2)}</span>
+                  </p>
+                </div>
+              )}
+
               {bulkDuplicates.size > 0 && (
                 <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-300 rounded-xl">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />

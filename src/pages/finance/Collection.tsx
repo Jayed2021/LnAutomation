@@ -7,7 +7,26 @@ import { CollectionRecord, OverdueOrder } from './collection/types';
 import { fetchCollectionRecords, fetchOverdueOrders, fetchCollectionStats } from './collection/collectionService';
 import { UploadInvoiceModal } from './collection/UploadInvoiceModal';
 import { CollectionRecordDetail } from './collection/CollectionRecordDetail';
+import { FirstTimeOpsPanel } from './collection/FirstTimeOpsPanel';
 import { supabase } from '../../lib/supabase';
+
+/*
+  ============================================================
+  FIRST-TIME OPERATION FLAG
+  ============================================================
+  Set SHOW_FIRST_TIME_OPS = false to hide the bulk historical
+  "Mark as Paid" panel once initial setup is complete.
+
+  To fully remove this feature:
+    1. Delete src/pages/finance/collection/FirstTimeOpsPanel.tsx
+    2. Remove this comment block and the SHOW_FIRST_TIME_OPS constant below
+    3. Remove the FirstTimeOpsPanel import line above
+    4. Remove the {SHOW_FIRST_TIME_OPS && <FirstTimeOpsPanel ... />} JSX block
+    5. Optionally remove the service functions previewBulkMarkHistoricalOrdersAsPaid
+       and bulkMarkHistoricalOrdersAsPaid from collectionService.ts
+  ============================================================
+*/
+const SHOW_FIRST_TIME_OPS = true;
 
 const PROVIDER_LABELS: Record<string, string> = {
   pathao: 'Pathao',
@@ -157,6 +176,12 @@ export default function Collection() {
             </div>
           </div>
         </div>
+
+        {SHOW_FIRST_TIME_OPS && (
+          <div className="mb-5">
+            <FirstTimeOpsPanel onComplete={loadRecords} />
+          </div>
+        )}
 
         <div className="flex border-b border-gray-200 mb-5">
           {(['records', 'overdue'] as Tab[]).map(t => (

@@ -576,6 +576,153 @@ export async function fetchOverdueOrders(thresholdDays: number): Promise<Overdue
   });
 }
 
+export interface BulkMarkPreviewResult {
+  eligibleCount: number;
+  byStatus: Record<string, number>;
+  nonCadWithCollected: number;
+  cadWithDeliveryCharge: number;
+  alreadyPaidCount: number;
+}
+
+export interface BulkMarkResult {
+  markedCount: number;
+  skippedCount: number;
+  errors: string[];
+}
+
+const HISTORICAL_FINAL_STATUSES = [
+  'delivered',
+  'exchange',
+  'exchange_returnable',
+  'partial_delivery',
+  'cancelled_cad',
+];
+
+const CAD_STATUS = 'cancelled_cad';
+
+export async function previewBulkMarkHistoricalOrdersAsPaid(
+  cutoffDate: string
+): Promise<BulkMarkPreviewResult> {
+  const { data: orders } = await supabase
+    .from('orders')
+    .select(`
+      id,
+      cs_status,
+      payment_status,
+      order_courier_info(collected_amount, delivery_charge)
+    `)
+    .in('cs_status', HISTORICAL_FINAL_STATUSES)
+    .eq('payment_status', 'unpaid')
+    .lt('order_date', cutoffDate);
+
+  const byStatus: Record<string, number> = {};
+  let nonCadWithCollected = 0;
+  let cadWithDeliveryCharge = 0;
+  let eligibleCount = 0;
+
+  for (const o of (orders ?? []) as any[]) {
+    const courierInfo = Array.isArray(o.order_courier_info)
+      ? o.order_courier_info[0]
+      : o.order_courier_info;
+    const collected = courierInfo?.collected_amount ?? 0;
+    const deliveryCharge = courierInfo?.delivery_charge ?? 0;
+    const isCAD = o.cs_status === CAD_STATUS;
+
+    const qualifies = isCAD ? deliveryCharge > 0 : collected > 0;
+    if (!qualifies) continue;
+
+    eligibleCount++;
+    byStatus[o.cs_status] = (byStatus[o.cs_status] ?? 0) + 1;
+    if (isCAD) {
+      cadWithDeliveryCharge++;
+    } else {
+      nonCadWithCollected++;
+    }
+  }
+
+  const { count: alreadyPaidCount } = await supabase
+    .from('orders')
+    .select('*', { count: 'exact', head: true })
+    .in('cs_status', HISTORICAL_FINAL_STATUSES)
+    .eq('payment_status', 'paid')
+    .lt('order_date', cutoffDate);
+
+  return {
+    eligibleCount,
+    byStatus,
+    nonCadWithCollected,
+    cadWithDeliveryCharge,
+    alreadyPaidCount: alreadyPaidCount ?? 0,
+  };
+}
+
+export async function bulkMarkHistoricalOrdersAsPaid(
+  cutoffDate: string,
+  userId: string | null
+): Promise<BulkMarkResult> {
+  const { data: orders } = await supabase
+    .from('orders')
+    .select(`
+      id,
+      order_number,
+      cs_status,
+      payment_status,
+      order_courier_info(collected_amount, delivery_charge)
+    `)
+    .in('cs_status', HISTORICAL_FINAL_STATUSES)
+    .eq('payment_status', 'unpaid')
+    .lt('order_date', cutoffDate);
+
+  let markedCount = 0;
+  let skippedCount = 0;
+  const errors: string[] = [];
+
+  const eligible = ((orders ?? []) as any[]).filter(o => {
+    const courierInfo = Array.isArray(o.order_courier_info)
+      ? o.order_courier_info[0]
+      : o.order_courier_info;
+    const collected = courierInfo?.collected_amount ?? 0;
+    const deliveryCharge = courierInfo?.delivery_charge ?? 0;
+    return o.cs_status === CAD_STATUS ? deliveryCharge > 0 : collected > 0;
+  });
+
+  skippedCount = ((orders ?? []) as any[]).length - eligible.length;
+
+  const chunkSize = 50;
+  for (let i = 0; i < eligible.length; i += chunkSize) {
+    const chunk = eligible.slice(i, i + chunkSize);
+    const chunkIds = chunk.map((o: any) => o.id);
+
+    try {
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({
+          payment_status: 'paid',
+          updated_at: new Date().toISOString(),
+        })
+        .in('id', chunkIds);
+
+      if (updateError) {
+        errors.push(`Batch ${i / chunkSize + 1}: ${updateError.message}`);
+        continue;
+      }
+
+      const logEntries = chunk.map((o: any) => ({
+        order_id: o.id,
+        action: `Marked as paid via bulk historical settlement operation (pre-${cutoffDate}). Order was in final status "${o.cs_status}" before the collection system was in place.`,
+        performed_by: userId,
+      }));
+
+      await supabase.from('order_activity_log').insert(logEntries);
+      markedCount += chunk.length;
+    } catch (err: any) {
+      errors.push(`Batch ${i / chunkSize + 1}: ${err.message ?? 'Unknown error'}`);
+    }
+  }
+
+  return { markedCount, skippedCount, errors };
+}
+
 export async function fetchCollectionStats(): Promise<{
   totalCollectedMonth: number;
   totalGatewayChargesMonth: number;

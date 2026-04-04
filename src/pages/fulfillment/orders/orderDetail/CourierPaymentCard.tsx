@@ -51,14 +51,14 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     courier_company: courier?.courier_company ?? '',
     tracking_number: courier?.tracking_number ?? '',
     courier_area: courier?.courier_area ?? '',
-    total_receivable: courier?.total_receivable ?? expectedReceivable,
-    cod_charge: courier?.cod_charge ?? 0,
-    delivery_discount: courier?.delivery_discount ?? 0,
+    total_receivable: Number(courier?.total_receivable ?? expectedReceivable),
+    cod_charge: Number(courier?.cod_charge ?? 0),
+    delivery_discount: Number(courier?.delivery_discount ?? 0),
   });
 
   const [settlementEdit, setSettlementEdit] = useState({
-    collected_amount: courier?.collected_amount ?? 0,
-    delivery_charge: courier?.delivery_charge ?? 0,
+    collected_amount: Number(courier?.collected_amount ?? 0),
+    delivery_charge: Number(courier?.delivery_charge ?? 0),
   });
 
   const [confirmEdit, setConfirmEdit] = useState({
@@ -289,8 +289,8 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
   const settlementSource = courier?.settlement_source ?? null;
   const hasPostShipFlag = courier?.total_receivable_modified_after_ship === true;
 
-  const deliveryDiscount = isPostShipped ? (editing ? edit.delivery_discount : (courier?.delivery_discount ?? 0)) : 0;
-  const displayReceivable = courier?.total_receivable ?? expectedReceivable;
+  const deliveryDiscount = isPostShipped ? (editing ? edit.delivery_discount : Number(courier?.delivery_discount ?? 0)) : 0;
+  const displayReceivable = Number(courier?.total_receivable ?? expectedReceivable);
   const effectiveCollection = displayReceivable - deliveryDiscount;
 
   return (
@@ -304,9 +304,9 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                 courier_company: courier?.courier_company ?? '',
                 tracking_number: courier?.tracking_number ?? '',
                 courier_area: courier?.courier_area ?? '',
-                total_receivable: courier?.total_receivable ?? expectedReceivable,
-                cod_charge: courier?.cod_charge ?? 0,
-                delivery_discount: courier?.delivery_discount ?? 0,
+                total_receivable: Number(courier?.total_receivable ?? expectedReceivable),
+                cod_charge: Number(courier?.cod_charge ?? 0),
+                delivery_discount: Number(courier?.delivery_discount ?? 0),
               });
               setEditing(true);
             }} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium">
@@ -463,8 +463,8 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
                 <button
                   onClick={() => {
                     setSettlementEdit({
-                      collected_amount: courier?.collected_amount ?? 0,
-                      delivery_charge: courier?.delivery_charge ?? 0,
+                      collected_amount: Number(courier?.collected_amount ?? 0),
+                      delivery_charge: Number(courier?.delivery_charge ?? 0),
                     });
                     setSettlementEditing(true);
                   }}

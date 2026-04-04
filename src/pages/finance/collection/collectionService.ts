@@ -297,8 +297,15 @@ export async function applyCollectionRecord(
 
     const isDelivery = li.invoice_type === 'delivery' || li.invoice_type == null;
 
+    const pm = (order.payment_method ?? '').toLowerCase().trim();
+    const isPrepaid = pm.startsWith('prepaid') || (pm !== '' && !pm.includes('cod') && !pm.includes('partial paid') && !pm.includes('+cod'));
+    const isPartialPaid = pm.startsWith('partial paid') || pm.includes('+cod');
+    const isAccumulativePayment = isPrepaid || isPartialPaid;
+
     const newCollected = isDelivery
-      ? (li.collected_amount ?? 0)
+      ? isAccumulativePayment
+        ? existingCollected + (li.collected_amount ?? 0)
+        : (li.collected_amount ?? 0)
       : existingCollected;
 
     const newDelivery = isDelivery

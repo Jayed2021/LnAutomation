@@ -310,6 +310,7 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/settings/StoreProfile.tsx` | ~200 | Store name, address, phone, logo, tax ID. |
 | `src/pages/settings/BarcodeSettings.tsx` | ~200 | Barcode label format and printer configuration. |
 | `src/pages/settings/PackagingSettings.tsx` | ~200 | Packaging materials list and default selections. |
+| `src/pages/settings/FraudAlertSettings.tsx` | ~548 | Fraud Alert External customer success rate checker service integration |
 
 ---
 

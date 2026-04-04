@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Building2, MapPin, Phone, Mail, Globe, Hash, ReceiptText, Upload, X, Save, Image as ImageIcon, Store, CheckCircle2, Truck } from 'lucide-react';
+import { Building2, MapPin, Phone, Mail, Globe, Hash, ReceiptText, Upload, X, Save, Image as ImageIcon, Store, CheckCircle2, Truck, CalendarDays } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { getEffectiveOrderDate, setAppSetting } from '../../lib/appSettings';
 
 interface StoreProfileData {
   id: string;
@@ -57,10 +58,12 @@ export default function StoreProfile() {
   const [saving, setSaving] = useState(false);
   const [logoUploading, setLogoUploading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [effectiveOrderDate, setEffectiveOrderDate] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadProfile();
+    loadAppSettings();
   }, []);
 
   const loadProfile = async () => {
@@ -72,6 +75,11 @@ export default function StoreProfile() {
       setDraft(vals);
       setSaved(vals);
     }
+  };
+
+  const loadAppSettings = async () => {
+    const date = await getEffectiveOrderDate();
+    setEffectiveOrderDate(date ?? '');
   };
 
   const set = (key: keyof typeof draft) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -118,6 +126,7 @@ export default function StoreProfile() {
         const { data } = await supabase.from('store_profile').insert({ ...draft }).select('id').maybeSingle();
         if (data) setProfileId(data.id);
       }
+      await setAppSetting('effective_order_date', effectiveOrderDate || null);
       setSaved(draft);
       setDirty(false);
       setSaveSuccess(true);
@@ -329,6 +338,27 @@ export default function StoreProfile() {
           </select>
           <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
             Automatically assigned to every new order imported from WooCommerce. Can be changed per-order after import.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
+          <CalendarDays className="w-4 h-4 text-gray-500" />
+          <h2 className="font-semibold text-gray-900">Operations</h2>
+        </div>
+        <div className="max-w-xs">
+          <label className={labelCls}>
+            <span className="flex items-center gap-1"><CalendarDays className="w-3 h-3" /> Effective Order Date</span>
+          </label>
+          <input
+            type="date"
+            value={effectiveOrderDate}
+            onChange={e => { setEffectiveOrderDate(e.target.value); setDirty(true); }}
+            className={inputCls}
+          />
+          <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
+            Orders placed before this date are excluded from overdue tracking and other date-sensitive calculations across all modules. Leave blank to include all orders.
           </p>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Save, X, CreditCard as Edit2, CheckCircle, AlertCircle, Zap, Pencil, DollarSign, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderDetail, OrderCourierInfo } from './types';
@@ -65,6 +65,25 @@ export function CourierPaymentCard({ order, courier, userId, onUpdated }: Props)
     confirmation_method: order.confirmation_type ?? '',
     courier_entry_method: order.courier_entry_method ?? 'manual',
   });
+
+  useEffect(() => {
+    if (!editing) {
+      setEdit({
+        courier_company: courier?.courier_company ?? '',
+        tracking_number: courier?.tracking_number ?? '',
+        courier_area: courier?.courier_area ?? '',
+        total_receivable: Number(courier?.total_receivable ?? expectedReceivable),
+        cod_charge: Number(courier?.cod_charge ?? 0),
+        delivery_discount: Number(courier?.delivery_discount ?? 0),
+      });
+    }
+    if (!settlementEditing) {
+      setSettlementEdit({
+        collected_amount: Number(courier?.collected_amount ?? 0),
+        delivery_charge: Number(courier?.delivery_charge ?? 0),
+      });
+    }
+  }, [courier]);
 
   const inputCls = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white";
 

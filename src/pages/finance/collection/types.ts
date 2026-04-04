@@ -171,6 +171,7 @@ export interface OrderCollectionRow {
   total_amount: number;
   customer_name: string;
   customer_phone: string;
+  customer_district: string | null;
   courier_company: string | null;
   tracking_number: string | null;
   courier_status: string | null;

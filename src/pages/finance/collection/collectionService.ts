@@ -753,7 +753,7 @@ export async function fetchOrderCollectionStatus(
       payment_method,
       paid_amount,
       total_amount,
-      customers!inner(full_name, phone_primary),
+      customers!inner(full_name, phone_primary, district),
       order_courier_info(
         courier_company,
         tracking_number,
@@ -804,6 +804,7 @@ export async function fetchOrderCollectionStatus(
       total_amount: o.total_amount,
       customer_name: customer?.full_name ?? 'Unknown',
       customer_phone: customer?.phone_primary ?? '',
+      customer_district: customer?.district ?? null,
       courier_company: ci?.courier_company ?? null,
       tracking_number: ci?.tracking_number ?? null,
       courier_status: ci?.courier_status ?? null,

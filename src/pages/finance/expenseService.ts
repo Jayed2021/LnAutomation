@@ -1,10 +1,13 @@
 import { supabase } from '../../lib/supabase';
 
+export type ExpenseType = 'operating' | 'investing' | 'financing';
+
 export interface ExpenseCategory {
   id: string;
   name: string;
   parent_id: string | null;
   affects_profit_default: boolean;
+  default_expense_type: ExpenseType | null;
   sort_order: number;
   is_active: boolean;
   created_at: string;
@@ -13,8 +16,6 @@ export interface ExpenseCategory {
 export interface CategoryNode extends ExpenseCategory {
   children: CategoryNode[];
 }
-
-export type ExpenseType = 'operating' | 'investing' | 'financing';
 
 export const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [
   { value: 'operating', label: 'Operating' },
@@ -45,6 +46,7 @@ export interface ExpenseFilters {
   amountMin?: number;
   amountMax?: number;
   affectsProfit?: boolean;
+  expenseType?: ExpenseType;
 }
 
 export interface MonthlySummary {
@@ -123,6 +125,7 @@ export async function fetchExpenses(filters: ExpenseFilters = {}): Promise<Expen
   if (filters.amountMin !== undefined) query = query.gte('amount', filters.amountMin);
   if (filters.amountMax !== undefined) query = query.lte('amount', filters.amountMax);
   if (filters.affectsProfit !== undefined) query = query.eq('affects_profit', filters.affectsProfit);
+  if (filters.expenseType !== undefined) query = query.eq('expense_type', filters.expenseType);
 
   const { data, error } = await query;
   if (error) throw error;

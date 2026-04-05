@@ -156,7 +156,7 @@ export default function Collection() {
       <div className="max-w-screen-xl mx-auto px-4 sm:px-6 py-6">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Collection</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Cash In</h1>
             <p className="text-sm text-gray-500 mt-0.5">Invoice reconciliation and payment collection tracking</p>
           </div>
           <button

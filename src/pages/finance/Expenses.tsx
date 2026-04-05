@@ -214,7 +214,7 @@ export default function Expenses() {
     <div className="space-y-6">
       <div className="flex flex-wrap justify-between items-start gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Expenses</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Cash Out</h1>
           <p className="text-sm text-gray-500 mt-0.5">Track and manage business operating expenses</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">

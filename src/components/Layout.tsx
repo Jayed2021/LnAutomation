@@ -122,8 +122,8 @@ export const Layout: React.FC = () => {
       icon: <DollarSign className="w-5 h-5" />,
       module: 'finance',
       children: [
-        { name: 'Expenses', path: '/finance/expenses', icon: null, module: 'finance_expenses' },
-        { name: 'Collection', path: '/finance/collection', icon: null, module: 'finance_collection' }
+        { name: 'Cash Out', path: '/finance/expenses', icon: null, module: 'finance_expenses' },
+        { name: 'Cash In', path: '/finance/collection', icon: null, module: 'finance_collection' }
       ]
     },
     {

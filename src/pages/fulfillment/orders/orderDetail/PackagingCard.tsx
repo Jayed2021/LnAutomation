@@ -15,7 +15,7 @@ interface PackagingProduct {
   id: string;
   sku: string;
   name: string;
-  selling_price: number;
+  avg_landed_cost: number;
 }
 
 interface GroupedPackagingItem {
@@ -64,14 +64,30 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
     }
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
-      const { data } = await supabase
+      const { data: products } = await supabase
         .from('products')
-        .select('id, sku, name, selling_price')
+        .select('id, sku, name')
         .eq('is_active', true)
         .or(`name.ilike.%${searchQuery.trim()}%,sku.ilike.%${searchQuery.trim()}%`)
         .order('name')
         .limit(20);
-      setSearchResults((data ?? []) as PackagingProduct[]);
+      const productList = products ?? [];
+      let costMap = new Map<string, number>();
+      if (productList.length > 0) {
+        const { data: costData } = await supabase
+          .from('product_avg_landed_cost')
+          .select('product_id, avg_landed_cost')
+          .in('product_id', productList.map(p => p.id));
+        for (const c of costData ?? []) {
+          costMap.set(c.product_id, Number(c.avg_landed_cost));
+        }
+      }
+      setSearchResults(productList.map(p => ({
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        avg_landed_cost: costMap.get(p.id) ?? 0,
+      })));
       setDropdownOpen(true);
       setSearching(false);
     }, 250);
@@ -97,14 +113,15 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
     setSaving(true);
     setSaveError(null);
     try {
-      const lineTotal = quantity * selectedProduct.selling_price;
+      const unitCost = selectedProduct.avg_landed_cost;
+      const lineTotal = quantity * unitCost;
       const { error } = await supabase.from('order_packaging_items').insert({
         order_id: orderId,
         product_id: selectedProduct.id,
         sku: selectedProduct.sku,
         product_name: selectedProduct.name,
         quantity,
-        unit_cost: selectedProduct.selling_price,
+        unit_cost: unitCost,
         line_total: lineTotal,
       });
       if (error) throw error;
@@ -255,7 +272,7 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
                         <span className="font-medium">{product.name}</span>
                         <span className="ml-2 text-xs opacity-70">{product.sku}</span>
                       </div>
-                      {product.selling_price > 0 && <span className="text-xs opacity-70 shrink-0">৳{product.selling_price}</span>}
+                      {product.avg_landed_cost > 0 && <span className="text-xs opacity-70 shrink-0">৳{product.avg_landed_cost}</span>}
                     </button>
                   ))}
                 </div>
@@ -273,7 +290,7 @@ export function PackagingCard({ orderId, items, userId, onUpdated }: Props) {
           {selectedProduct && (
             <div className="text-xs text-gray-500 flex items-center gap-2">
               <span className="font-medium text-gray-700">{selectedProduct.name}</span>
-              {selectedProduct.selling_price > 0 && <span>· ৳{selectedProduct.selling_price} / unit</span>}
+              {selectedProduct.avg_landed_cost > 0 && <span>· ৳{selectedProduct.avg_landed_cost} / unit</span>}
             </div>
           )}
           {saveError && (

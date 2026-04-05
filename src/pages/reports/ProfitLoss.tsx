@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -19,6 +19,7 @@ import {
   PlusCircle,
   Receipt,
   FileDown,
+  Layers,
 } from 'lucide-react';
 import {
   BarChart,
@@ -60,6 +61,18 @@ export interface OrderItemCogs {
   unit_price: number;
   item_revenue: number;
   adjusted_item_cogs: number;
+}
+
+export interface OrderItemLotCogs {
+  order_id: string;
+  order_item_id: string;
+  sku: string;
+  product_name: string;
+  lot_number: string | null;
+  lot_quantity: number;
+  landed_cost_per_unit: number;
+  line_cost: number;
+  is_fallback: boolean;
 }
 
 type SortField = 'order_date' | 'revenue' | 'product_cogs' | 'packaging_cost' | 'gross_profit' | 'gross_margin_pct';
@@ -150,7 +163,113 @@ function buildChartData(rows: OrderProfit[], expensesByMonth: Record<string, num
     });
 }
 
-function ItemCogsList({ items }: { items: OrderItemCogs[] }) {
+function LotBreakdown({
+  lots,
+  itemId,
+  expanded,
+  onToggle,
+}: {
+  lots: OrderItemLotCogs[];
+  itemId: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const lotCount = lots.length;
+  const totalCost = lots.reduce((s, l) => s + Number(l.line_cost), 0);
+  const isFallback = lots.length === 1 && lots[0].is_fallback;
+
+  return (
+    <>
+      <tr
+        className="border-t border-slate-100 cursor-pointer hover:bg-slate-100 transition-colors"
+        onClick={onToggle}
+      >
+        <td colSpan={6} className="px-3 py-1.5">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 text-[10px] text-slate-500">
+              {expanded ? (
+                <ChevronDown className="w-3 h-3 text-slate-400" />
+              ) : (
+                <ChevronRight className="w-3 h-3 text-slate-400" />
+              )}
+              <Layers className="w-3 h-3" />
+              <span>
+                {isFallback
+                  ? 'Avg cost estimate'
+                  : `${lotCount} lot${lotCount !== 1 ? 's' : ''}`}
+              </span>
+            </div>
+            <span className="text-[10px] text-slate-400">·</span>
+            <span className="text-[10px] font-semibold text-amber-700">৳{fmtCur(totalCost)}</span>
+            {isFallback && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-slate-200 text-slate-500 font-medium">est.</span>
+            )}
+          </div>
+        </td>
+      </tr>
+      {expanded && (
+        <tr key={`lot-rows-${itemId}`}>
+          <td colSpan={6} className="px-0 py-0">
+            <div className="ml-8 mr-3 mb-1.5">
+              <table className="w-full text-[10px]">
+                <thead>
+                  <tr className="bg-slate-200/60">
+                    <th className="px-2.5 py-1 text-left font-semibold text-slate-500 uppercase tracking-wider">Lot</th>
+                    <th className="px-2.5 py-1 text-right font-semibold text-slate-500 uppercase tracking-wider w-12">Qty</th>
+                    <th className="px-2.5 py-1 text-right font-semibold text-slate-500 uppercase tracking-wider w-24">Cost/Unit</th>
+                    <th className="px-2.5 py-1 text-right font-semibold text-slate-500 uppercase tracking-wider w-24">Line Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lots.map((lot, idx) => (
+                    <tr
+                      key={`${lot.order_item_id}-${lot.lot_number ?? 'fallback'}-${idx}`}
+                      className="border-t border-slate-200/70 hover:bg-slate-50"
+                    >
+                      <td className="px-2.5 py-1 font-mono text-slate-600">
+                        {lot.lot_number ?? (
+                          <span className="text-slate-400 italic">avg cost</span>
+                        )}
+                        {lot.is_fallback && (
+                          <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-slate-200 text-slate-500 font-medium">est.</span>
+                        )}
+                      </td>
+                      <td className="px-2.5 py-1 text-right text-slate-600">{lot.lot_quantity}</td>
+                      <td className="px-2.5 py-1 text-right text-slate-600">৳{fmtCur(Number(lot.landed_cost_per_unit))}</td>
+                      <td className="px-2.5 py-1 text-right font-semibold text-amber-700">৳{fmtCur(Number(lot.line_cost))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function ItemCogsList({
+  items,
+  lotCogs,
+}: {
+  items: OrderItemCogs[];
+  lotCogs: Record<string, OrderItemLotCogs[]>;
+}) {
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+
+  const toggleItem = (itemId: string) => {
+    setExpandedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
   return (
     <tr>
       <td colSpan={9} className="px-0 py-0">
@@ -172,17 +291,30 @@ function ItemCogsList({ items }: { items: OrderItemCogs[] }) {
                   ? ((item.item_revenue - item.adjusted_item_cogs) / item.item_revenue) * 100
                   : 0;
                 const profit = item.item_revenue - item.adjusted_item_cogs;
+                const lots = lotCogs[item.order_item_id] ?? [];
+                const isLotExpanded = expandedItems.has(item.order_item_id);
+
                 return (
-                  <tr key={item.order_item_id} className="hover:bg-slate-100 transition-colors">
-                    <td className="px-3 py-1.5 font-mono text-slate-600 text-[11px]">{item.sku}</td>
-                    <td className="px-3 py-1.5 text-slate-700">{item.product_name}</td>
-                    <td className="px-3 py-1.5 text-right text-slate-600">{item.quantity}</td>
-                    <td className="px-3 py-1.5 text-right text-slate-700">৳{fmtCur(item.item_revenue)}</td>
-                    <td className="px-3 py-1.5 text-right text-amber-700 font-medium">৳{fmtCur(item.adjusted_item_cogs)}</td>
-                    <td className={`px-3 py-1.5 text-right font-semibold ${profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                      {fmtPct(margin)}
-                    </td>
-                  </tr>
+                  <Fragment key={item.order_item_id}>
+                    <tr className="hover:bg-slate-100 transition-colors">
+                      <td className="px-3 py-1.5 font-mono text-slate-600 text-[11px]">{item.sku}</td>
+                      <td className="px-3 py-1.5 text-slate-700">{item.product_name}</td>
+                      <td className="px-3 py-1.5 text-right text-slate-600">{item.quantity}</td>
+                      <td className="px-3 py-1.5 text-right text-slate-700">৳{fmtCur(item.item_revenue)}</td>
+                      <td className="px-3 py-1.5 text-right text-amber-700 font-medium">৳{fmtCur(item.adjusted_item_cogs)}</td>
+                      <td className={`px-3 py-1.5 text-right font-semibold ${profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {fmtPct(margin)}
+                      </td>
+                    </tr>
+                    {lots.length > 0 && (
+                      <LotBreakdown
+                        lots={lots}
+                        itemId={item.order_item_id}
+                        expanded={isLotExpanded}
+                        onToggle={() => toggleItem(item.order_item_id)}
+                      />
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -199,6 +331,7 @@ function ProfitLossContent() {
   const [customTo, setCustomTo] = useState('');
   const [rows, setRows] = useState<OrderProfit[]>([]);
   const [itemCogs, setItemCogs] = useState<Record<string, OrderItemCogs[]>>({});
+  const [lotCogs, setLotCogs] = useState<Record<string, OrderItemLotCogs[]>>({});
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [sortField, setSortField] = useState<SortField>('order_date');
@@ -232,10 +365,11 @@ function ProfitLossContent() {
 
       const ids = orderResult.data.map(r => r.order_id);
       if (ids.length > 0) {
-        const itemResult = await supabase
-          .from('order_item_cogs_detail')
-          .select('*')
-          .in('order_id', ids);
+        const [itemResult, lotResult] = await Promise.all([
+          supabase.from('order_item_cogs_detail').select('*').in('order_id', ids),
+          supabase.from('order_item_lot_cogs_detail').select('*').in('order_id', ids),
+        ]);
+
         if (!itemResult.error && itemResult.data) {
           const byOrder: Record<string, OrderItemCogs[]> = {};
           for (const item of itemResult.data as OrderItemCogs[]) {
@@ -244,8 +378,18 @@ function ProfitLossContent() {
           }
           setItemCogs(byOrder);
         }
+
+        if (!lotResult.error && lotResult.data) {
+          const byItem: Record<string, OrderItemLotCogs[]> = {};
+          for (const lot of lotResult.data as OrderItemLotCogs[]) {
+            if (!byItem[lot.order_item_id]) byItem[lot.order_item_id] = [];
+            byItem[lot.order_item_id].push(lot);
+          }
+          setLotCogs(byItem);
+        }
       } else {
         setItemCogs({});
+        setLotCogs({});
       }
     }
 
@@ -566,7 +710,7 @@ function ProfitLossContent() {
             {rows.length > 0 && <span className="ml-2 text-gray-400 font-normal">({rows.length} orders)</span>}
           </h2>
           {Object.keys(itemCogs).length > 0 && (
-            <span className="text-xs text-gray-400">Click the arrow on multi-item orders to see item COGS</span>
+            <span className="text-xs text-gray-400">Click the arrow to expand COGS breakdown with lot-level detail</span>
           )}
         </div>
 
@@ -615,21 +759,20 @@ function ProfitLossContent() {
               <tbody className="divide-y divide-gray-50">
                 {sorted.map(row => {
                   const items = itemCogs[row.order_id] ?? [];
-                  const isMultiItem = items.length > 1;
+                  const hasItems = items.length > 0;
                   const isExpanded = expandedOrders.has(row.order_id);
 
                   return (
-                    <>
+                    <Fragment key={row.order_id}>
                       <tr
-                        key={row.order_id}
                         className={`hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-blue-50/40' : ''}`}
                       >
                         <td className="px-2 py-2.5 text-center">
-                          {isMultiItem ? (
+                          {hasItems ? (
                             <button
                               onClick={() => toggleExpand(row.order_id)}
                               className="p-0.5 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition-colors"
-                              title="Show item COGS breakdown"
+                              title="Show COGS breakdown"
                             >
                               {isExpanded
                                 ? <ChevronDown className="w-3.5 h-3.5" />
@@ -639,7 +782,6 @@ function ProfitLossContent() {
                           ) : null}
                         </td>
 
-                        {/* Merged Order column: date + WooID/order number + status pill */}
                         <td className="px-3 py-2.5 whitespace-nowrap">
                           <div className="flex flex-col gap-0.5">
                             <span className="text-[10px] text-gray-400 leading-none">
@@ -652,7 +794,6 @@ function ProfitLossContent() {
                           </div>
                         </td>
 
-                        {/* Customer column: name + phone */}
                         <td className="px-3 py-2.5 max-w-[160px]">
                           <div className="flex flex-col gap-0.5">
                             <span className="text-xs text-gray-800 truncate leading-none">
@@ -691,9 +832,9 @@ function ProfitLossContent() {
                       </tr>
 
                       {isExpanded && items.length > 0 && (
-                        <ItemCogsList key={`items-${row.order_id}`} items={items} />
+                        <ItemCogsList items={items} lotCogs={lotCogs} />
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>

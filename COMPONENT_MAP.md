@@ -61,7 +61,8 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Barcode picking workflow | `src/components/fulfillment/PickModal.tsx` |
 | Lab invoice modal | `src/components/fulfillment/LabInvoiceModal.tsx` |
 | Return orders list | `src/pages/fulfillment/Returns.tsx` |
-| Return order detail | `src/pages/fulfillment/ReturnDetail.tsx` |
+| Return order detail, restock summary | `src/pages/fulfillment/ReturnDetail.tsx` |
+| Restock returned items to warehouse, WooCommerce stock sync | `src/components/fulfillment/RestockModal.tsx` |
 | Bulk order status update via CSV | `src/pages/fulfillment/orders/bulkUpdate/BulkUpdateOrders.tsx` |
 | Product list, create product, filters | `src/pages/inventory/Products.tsx` |
 | Product detail, images, stock, suppliers | `src/pages/inventory/ProductDetail.tsx` |
@@ -190,8 +191,8 @@ The bad example forces the AI to search the entire codebase to find the right fi
 
 | File | Purpose |
 |------|---------|
-| `src/pages/fulfillment/Returns.tsx` | Return orders list with status filtering. |
-| `src/pages/fulfillment/ReturnDetail.tsx` | Return detail, edit, process refunds. |
+| `src/pages/fulfillment/Returns.tsx` | Return orders list with status filtering, barcode scanning, QC, and restock actions. |
+| `src/pages/fulfillment/ReturnDetail.tsx` | Return detail: QC decisions, refund processing, restock trigger, restock summary card with before/after stock counts. |
 
 **Fulfillment Modals (components)**
 
@@ -201,10 +202,10 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/components/fulfillment/LabInvoiceModal.tsx` | Generate and print lab invoices for prescriptions. |
 | `src/components/fulfillment/PackedExportModal.tsx` | Export packed orders list to file. |
 | `src/components/fulfillment/BarcodeScannerModal.tsx` | Camera barcode scanner modal. |
-| `src/components/fulfillment/QCReviewModal.tsx` | Quality check review modal. |
-| `src/components/fulfillment/ReceiveReturnModal.tsx` | Process returned goods (~545 lines). |
-| `src/components/fulfillment/ReturnReceiveModal.tsx` | Receive returns workflow. |
-| `src/components/fulfillment/RestockModal.tsx` | Restock products to warehouse. |
+| `src/components/fulfillment/QCReviewModal.tsx` | Quality check review modal for return items. |
+| `src/components/fulfillment/ReceiveReturnModal.tsx` | Process returned goods, assign to return hold location (~545 lines). |
+| `src/components/fulfillment/ReturnReceiveModal.tsx` | Receive returns workflow with barcode scanning. |
+| `src/components/fulfillment/RestockModal.tsx` | Restock QC-passed items: recommends best location based on stock history, records previous_quantity, syncs stock back to WooCommerce after restocking. |
 
 ---
 
@@ -215,7 +216,7 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/inventory/Products.tsx` | ~971 | Product catalog: search, filter, create, bulk import. |
 | `src/pages/inventory/ProductDetail.tsx` | ~1,348 | Product detail: images, form, locations, suppliers, stock, lots. |
 | `src/pages/inventory/Stock.tsx` | ~200 | Real-time stock levels by location. |
-| `src/pages/inventory/StockMovements.tsx` | ~300 | Stock transaction history. |
+| `src/pages/inventory/StockMovements.tsx` | ~300 | Stock transaction history. Type filter is server-side so return_restock movements are never hidden by the 500-row limit. |
 | `src/pages/inventory/WarehouseLocations.tsx` | ~780 | Manage warehouse locations (add, edit, deactivate). |
 | `src/pages/inventory/Shipments.tsx` | ~200 | Purchase shipment/lot tracking. |
 | `src/pages/inventory/InventoryAudit.tsx` | ~1,437 | Create audit sessions, count products, view flags. |
@@ -360,7 +361,7 @@ Supabase Edge Functions live in `supabase/functions/`. Each folder is one functi
 
 | Function | Purpose |
 |----------|---------|
-| `supabase/functions/woo-proxy/` | Proxies WooCommerce API calls (avoids CORS). |
+| `supabase/functions/woo-proxy/` | Proxies WooCommerce API calls (avoids CORS). Actions: `test-connection`, `fetch-products`, `fetch-products-page`, `fetch-orders`, `fetch-single-order`, `import-order`, `cancel-order`, `update-order-status`, `resync-order`, `sync-order-items`, `register-webhook`, `check-webhook`, `reactivate-webhook`, `delete-webhook`, `update-stock` (increments WooCommerce product stock by SKU, supports simple and variable products). |
 | `supabase/functions/woo-webhook/` | Receives WooCommerce order.created/updated webhooks. |
 | `supabase/functions/woo-auto-sync/` | Cron-triggered automatic WooCommerce sync. |
 | `supabase/functions/pathao-create-order/` | Creates shipment orders in Pathao API. |
@@ -375,6 +376,12 @@ Supabase Edge Functions live in `supabase/functions/`. Each folder is one functi
 ## Database Migrations
 
 All schema changes are in `supabase/migrations/`. Files are named by timestamp and description. Never edit existing migration files — always create a new one.
+
+### Notable Columns Added Recently
+
+| Table | Column | Type | Purpose |
+|-------|--------|------|---------|
+| `stock_movements` | `previous_quantity` | integer (nullable) | Stock level of the lot before the movement was applied. Populated by RestockModal for `return_restock` type. Enables before/after audit display on ReturnDetail. NULL on all historical records. |
 
 ---
 

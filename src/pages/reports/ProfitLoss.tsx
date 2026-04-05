@@ -36,6 +36,7 @@ export interface OrderProfit {
   order_date: string;
   customer_name: string | null;
   cs_status: string;
+  payment_status: string;
   fulfillment_status: string;
   revenue: number;
   delivery_charge: number;
@@ -240,7 +241,7 @@ function ProfitLossContent() {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Profit & Loss</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Final-status orders only — revenue from collected amounts, costs include COGS, packaging, and delivery</p>
+          <p className="text-sm text-gray-500 mt-0.5">Paid orders only — revenue from collected amounts, product COGS adjusted for returned items</p>
         </div>
         <div className="flex items-center gap-2">
           <button

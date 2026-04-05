@@ -3,6 +3,8 @@ import { Navigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchManualRevenueTotalForRange, REVENUE_CATEGORY_LABELS, RevenueCategory } from '../finance/collection/manualRevenueService';
+import { fetchExpenses, type Expense } from '../finance/expenseService';
+import { exportProfitLossExcel } from './plExportExcel';
 import {
   TrendingUp,
   TrendingDown,
@@ -14,6 +16,8 @@ import {
   ChevronsUpDown,
   RefreshCw,
   PlusCircle,
+  Receipt,
+  FileDown,
 } from 'lucide-react';
 import {
   BarChart,
@@ -26,7 +30,7 @@ import {
   Legend,
 } from 'recharts';
 
-interface OrderProfit {
+export interface OrderProfit {
   order_id: string;
   order_number: string;
   order_date: string;
@@ -70,7 +74,7 @@ function getPresetDates(preset: Preset): { from: string; to: string } {
   return { from: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), to: fmt(now) };
 }
 
-function fmt(n: number) {
+function fmtCur(n: number) {
   return n.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
@@ -85,7 +89,7 @@ const PRESETS: { value: Preset; label: string }[] = [
   { value: 'custom', label: 'Custom' },
 ];
 
-function buildChartData(rows: OrderProfit[]) {
+function buildChartData(rows: OrderProfit[], expensesByMonth: Record<string, number>) {
   const byMonth: Record<string, { revenue: number; cogs: number; profit: number }> = {};
   for (const r of rows) {
     const key = r.order_date?.slice(0, 7) ?? 'unknown';
@@ -94,14 +98,20 @@ function buildChartData(rows: OrderProfit[]) {
     byMonth[key].cogs += r.total_cogs;
     byMonth[key].profit += r.gross_profit;
   }
-  return Object.entries(byMonth)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, vals]) => ({
-      month,
-      Revenue: Math.round(vals.revenue),
-      COGS: Math.round(vals.cogs),
-      'Gross Profit': Math.round(vals.profit),
-    }));
+  const allMonths = new Set([...Object.keys(byMonth), ...Object.keys(expensesByMonth)]);
+  return Array.from(allMonths)
+    .sort()
+    .map(month => {
+      const vals = byMonth[month] ?? { revenue: 0, cogs: 0, profit: 0 };
+      const exp = expensesByMonth[month] ?? 0;
+      return {
+        month,
+        Revenue: Math.round(vals.revenue),
+        COGS: Math.round(vals.cogs),
+        'Gross Profit': Math.round(vals.profit),
+        'Net Profit': Math.round(vals.profit - exp),
+      };
+    });
 }
 
 function ProfitLossContent() {
@@ -110,9 +120,11 @@ function ProfitLossContent() {
   const [customTo, setCustomTo] = useState('');
   const [rows, setRows] = useState<OrderProfit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [sortField, setSortField] = useState<SortField>('order_date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [otherRevenue, setOtherRevenue] = useState<{ total: number; byCategory: Record<string, number> }>({ total: 0, byCategory: {} });
+  const [plExpenses, setPlExpenses] = useState<Expense[]>([]);
 
   const dateRange = preset === 'custom'
     ? { from: customFrom, to: customTo }
@@ -121,7 +133,7 @@ function ProfitLossContent() {
   const fetchData = useCallback(async () => {
     if (!dateRange.from || !dateRange.to) return;
     setLoading(true);
-    const [orderResult, manualResult] = await Promise.all([
+    const [orderResult, manualResult, expenseResult] = await Promise.all([
       supabase
         .from('order_profit_summary')
         .select('*')
@@ -129,12 +141,14 @@ function ProfitLossContent() {
         .lte('order_date', dateRange.to)
         .order('order_date', { ascending: false }),
       fetchManualRevenueTotalForRange(dateRange.from, dateRange.to),
+      fetchExpenses({ dateFrom: dateRange.from, dateTo: dateRange.to, affectsProfit: true }),
     ]);
 
     if (!orderResult.error && orderResult.data) {
       setRows(orderResult.data as OrderProfit[]);
     }
     setOtherRevenue(manualResult);
+    setPlExpenses(expenseResult);
     setLoading(false);
   }, [dateRange.from, dateRange.to]);
 
@@ -172,17 +186,37 @@ function ProfitLossContent() {
     { revenue: 0, delivery_charge: 0, product_cogs: 0, packaging_cost: 0, total_cogs: 0, gross_profit: 0 }
   );
 
-  const totals = {
-    ...orderTotals,
-    revenue: orderTotals.revenue + otherRevenue.total,
-    gross_profit: orderTotals.gross_profit + otherRevenue.total,
+  const totalRevenue = orderTotals.revenue + otherRevenue.total;
+  const grossProfit = orderTotals.gross_profit + otherRevenue.total;
+  const totalExpenses = plExpenses.reduce((s, e) => s + e.amount, 0);
+  const netProfit = grossProfit - totalExpenses;
+
+  const avgMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+  const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+  const expensesByMonth = plExpenses.reduce<Record<string, number>>((acc, e) => {
+    const key = e.expense_date?.slice(0, 7) ?? 'unknown';
+    acc[key] = (acc[key] ?? 0) + e.amount;
+    return acc;
+  }, {});
+
+  const chartData = buildChartData(rows, expensesByMonth);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await exportProfitLossExcel({
+        from: dateRange.from,
+        to: dateRange.to,
+        rows,
+        otherRevenue,
+        plExpenses,
+        orderTotals,
+      });
+    } finally {
+      setExporting(false);
+    }
   };
-
-  const avgMargin = totals.revenue > 0
-    ? (totals.gross_profit / totals.revenue) * 100
-    : 0;
-
-  const chartData = buildChartData(rows);
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return <ChevronsUpDown className="w-3.5 h-3.5 text-gray-400" />;
@@ -208,14 +242,24 @@ function ProfitLossContent() {
           <h1 className="text-2xl font-bold text-gray-900">Profit & Loss</h1>
           <p className="text-sm text-gray-500 mt-0.5">Final-status orders only — revenue from collected amounts, costs include COGS, packaging, and delivery</p>
         </div>
-        <button
-          onClick={fetchData}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={exporting || loading || rows.length === 0}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 rounded-lg transition-colors"
+          >
+            <FileDown className={`w-4 h-4 ${exporting ? 'animate-pulse' : ''}`} />
+            {exporting ? 'Exporting…' : 'Export Excel'}
+          </button>
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Date filters */}
@@ -260,8 +304,8 @@ function ProfitLossContent() {
         )}
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      {/* Summary cards — Row 1: Revenue + COGS */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
             <div className="p-1.5 bg-blue-100 rounded-lg">
@@ -269,7 +313,7 @@ function ProfitLossContent() {
             </div>
             <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Revenue</span>
           </div>
-          <p className="text-xl font-bold text-gray-900">৳{fmt(totals.revenue)}</p>
+          <p className="text-xl font-bold text-gray-900">৳{fmtCur(totalRevenue)}</p>
           <p className="text-xs text-gray-400 mt-1">{rows.length} orders + other</p>
         </div>
 
@@ -280,10 +324,10 @@ function ProfitLossContent() {
             </div>
             <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Other Revenue</span>
           </div>
-          <p className="text-xl font-bold text-emerald-700">৳{fmt(otherRevenue.total)}</p>
+          <p className="text-xl font-bold text-emerald-700">৳{fmtCur(otherRevenue.total)}</p>
           <div className="mt-1 space-y-0.5">
             {(Object.keys(REVENUE_CATEGORY_LABELS) as RevenueCategory[]).filter(k => otherRevenue.byCategory[k]).map(k => (
-              <p key={k} className="text-xs text-gray-400">{REVENUE_CATEGORY_LABELS[k]}: ৳{fmt(otherRevenue.byCategory[k])}</p>
+              <p key={k} className="text-xs text-gray-400">{REVENUE_CATEGORY_LABELS[k]}: ৳{fmtCur(otherRevenue.byCategory[k])}</p>
             ))}
             {otherRevenue.total === 0 && <p className="text-xs text-gray-400">No manual entries</p>}
           </div>
@@ -296,9 +340,9 @@ function ProfitLossContent() {
             </div>
             <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Product COGS</span>
           </div>
-          <p className="text-xl font-bold text-gray-900">৳{fmt(totals.product_cogs)}</p>
+          <p className="text-xl font-bold text-gray-900">৳{fmtCur(orderTotals.product_cogs)}</p>
           <p className="text-xs text-gray-400 mt-1">
-            {totals.revenue > 0 ? fmtPct(totals.product_cogs / totals.revenue * 100) : '—'} of revenue
+            {totalRevenue > 0 ? fmtPct(orderTotals.product_cogs / totalRevenue * 100) : '—'} of revenue
           </p>
         </div>
 
@@ -309,42 +353,71 @@ function ProfitLossContent() {
             </div>
             <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Packaging</span>
           </div>
-          <p className="text-xl font-bold text-gray-900">৳{fmt(totals.packaging_cost)}</p>
+          <p className="text-xl font-bold text-gray-900">৳{fmtCur(orderTotals.packaging_cost)}</p>
           <p className="text-xs text-gray-400 mt-1">
-            {totals.revenue > 0 ? fmtPct(totals.packaging_cost / totals.revenue * 100) : '—'} of revenue
+            {totalRevenue > 0 ? fmtPct(orderTotals.packaging_cost / totalRevenue * 100) : '—'} of revenue
           </p>
         </div>
+      </div>
 
+      {/* Summary cards — Row 2: Gross Profit → Expenses → Net Profit */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
-            <div className={`p-1.5 rounded-lg ${totals.gross_profit >= 0 ? 'bg-emerald-100' : 'bg-red-100'}`}>
-              {totals.gross_profit >= 0
+            <div className={`p-1.5 rounded-lg ${grossProfit >= 0 ? 'bg-emerald-100' : 'bg-red-100'}`}>
+              {grossProfit >= 0
                 ? <TrendingUp className="w-4 h-4 text-emerald-600" />
                 : <TrendingDown className="w-4 h-4 text-red-600" />
               }
             </div>
             <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Gross Profit</span>
           </div>
-          <p className={`text-xl font-bold ${totals.gross_profit >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
-            ৳{fmt(totals.gross_profit)}
+          <p className={`text-2xl font-bold ${grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+            ৳{fmtCur(grossProfit)}
           </p>
-          <p className="text-xs text-gray-400 mt-1">after COGS + packaging</p>
+          <div className="flex items-center justify-between mt-1">
+            <p className="text-xs text-gray-400">after COGS + packaging</p>
+            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${avgMargin >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+              {fmtPct(avgMargin)}
+            </span>
+          </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
-            <div className={`p-1.5 rounded-lg ${avgMargin >= 0 ? 'bg-emerald-100' : 'bg-red-100'}`}>
-              {avgMargin >= 0
-                ? <TrendingUp className="w-4 h-4 text-emerald-600" />
-                : <TrendingDown className="w-4 h-4 text-red-600" />
+            <div className="p-1.5 bg-rose-100 rounded-lg">
+              <Receipt className="w-4 h-4 text-rose-600" />
+            </div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Operating Expenses</span>
+          </div>
+          <p className="text-2xl font-bold text-rose-700">৳{fmtCur(totalExpenses)}</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {plExpenses.length} expense{plExpenses.length !== 1 ? 's' : ''} affecting P&L
+            {totalRevenue > 0 && ` · ${fmtPct(totalExpenses / totalRevenue * 100)} of revenue`}
+          </p>
+        </div>
+
+        <div className={`rounded-xl p-4 border-2 ${netProfit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-200' : 'bg-red-200'}`}>
+              {netProfit >= 0
+                ? <TrendingUp className="w-4 h-4 text-emerald-700" />
+                : <TrendingDown className="w-4 h-4 text-red-700" />
               }
             </div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Avg Margin</span>
+            <span className={`text-xs font-bold uppercase tracking-wide ${netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net Profit</span>
           </div>
-          <p className={`text-xl font-bold ${avgMargin >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
-            {fmtPct(avgMargin)}
+          <p className={`text-2xl font-bold ${netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
+            ৳{fmtCur(netProfit)}
           </p>
-          <p className="text-xs text-gray-400 mt-1">gross margin</p>
+          <div className="flex items-center justify-between mt-1">
+            <p className={`text-xs ${netProfit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+              Gross Profit minus Expenses
+            </p>
+            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${netProfit >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+              {fmtPct(netMargin)}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -352,25 +425,26 @@ function ProfitLossContent() {
       {chartData.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-xl p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">Monthly Breakdown</h2>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={chartData} barGap={4}>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={chartData} barGap={3}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="month" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `৳${(v / 1000).toFixed(0)}k`} />
               <Tooltip
-                formatter={(value: number) => [`৳${fmt(value)}`, undefined]}
+                formatter={(value: number) => [`৳${fmtCur(value)}`, undefined]}
                 contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="Revenue" fill="#3b82f6" radius={[3, 3, 0, 0]} />
               <Bar dataKey="COGS" fill="#f59e0b" radius={[3, 3, 0, 0]} />
               <Bar dataKey="Gross Profit" fill="#10b981" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="Net Profit" fill="#0f766e" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       )}
 
-      {/* Table */}
+      {/* Order Detail Table */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700">
@@ -436,21 +510,21 @@ function ProfitLossContent() {
                       {row.customer_name ?? '—'}
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-gray-900 whitespace-nowrap">
-                      ৳{fmt(row.revenue)}
+                      ৳{fmtCur(row.revenue)}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-600 whitespace-nowrap">
-                      ৳{fmt(row.delivery_charge)}
+                      ৳{fmtCur(row.delivery_charge)}
                     </td>
                     <td className="px-4 py-3 text-right text-amber-700 whitespace-nowrap">
-                      ৳{fmt(row.product_cogs)}
+                      ৳{fmtCur(row.product_cogs)}
                     </td>
                     <td className="px-4 py-3 text-right text-orange-600 whitespace-nowrap">
-                      ৳{fmt(row.packaging_cost)}
+                      ৳{fmtCur(row.packaging_cost)}
                     </td>
                     <td className={`px-4 py-3 text-right font-semibold whitespace-nowrap ${
                       row.gross_profit >= 0 ? 'text-emerald-700' : 'text-red-600'
                     }`}>
-                      ৳{fmt(row.gross_profit)}
+                      ৳{fmtCur(row.gross_profit)}
                     </td>
                     <td className={`px-4 py-3 text-right font-medium whitespace-nowrap ${
                       row.gross_margin_pct >= 0 ? 'text-emerald-600' : 'text-red-500'
@@ -463,29 +537,51 @@ function ProfitLossContent() {
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-200">
                   <td colSpan={3} className="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                    Total ({rows.length} orders)
+                    Orders Subtotal ({rows.length})
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-gray-900 whitespace-nowrap">
-                    ৳{fmt(totals.revenue)}
+                    ৳{fmtCur(orderTotals.revenue)}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-slate-600 whitespace-nowrap">
-                    ৳{fmt(totals.delivery_charge)}
+                    ৳{fmtCur(orderTotals.delivery_charge)}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-amber-700 whitespace-nowrap">
-                    ৳{fmt(totals.product_cogs)}
+                    ৳{fmtCur(orderTotals.product_cogs)}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-orange-600 whitespace-nowrap">
-                    ৳{fmt(totals.packaging_cost)}
+                    ৳{fmtCur(orderTotals.packaging_cost)}
                   </td>
                   <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${
-                    totals.gross_profit >= 0 ? 'text-emerald-700' : 'text-red-600'
+                    grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'
                   }`}>
-                    ৳{fmt(totals.gross_profit)}
+                    ৳{fmtCur(grossProfit)}
                   </td>
                   <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${
                     avgMargin >= 0 ? 'text-emerald-700' : 'text-red-600'
                   }`}>
                     {fmtPct(avgMargin)}
+                  </td>
+                </tr>
+                <tr className="bg-rose-50 border-t border-rose-100">
+                  <td colSpan={7} className="px-4 py-3 text-xs font-semibold text-rose-700 uppercase tracking-wide">
+                    Operating Expenses (Affects P&L)
+                  </td>
+                  <td className="px-4 py-3 text-right font-bold text-rose-700 whitespace-nowrap">
+                    −৳{fmtCur(totalExpenses)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-medium text-rose-600 whitespace-nowrap">
+                    {totalRevenue > 0 ? fmtPct(totalExpenses / totalRevenue * 100) : '—'}
+                  </td>
+                </tr>
+                <tr className={`border-t-2 ${netProfit >= 0 ? 'bg-emerald-50 border-emerald-300' : 'bg-red-50 border-red-300'}`}>
+                  <td colSpan={7} className={`px-4 py-3 text-sm font-bold uppercase tracking-wide ${netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
+                    Net Profit
+                  </td>
+                  <td className={`px-4 py-3 text-right text-base font-bold whitespace-nowrap ${netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
+                    ৳{fmtCur(netProfit)}
+                  </td>
+                  <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${netProfit >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                    {fmtPct(netMargin)}
                   </td>
                 </tr>
               </tfoot>

@@ -14,6 +14,14 @@ export interface CategoryNode extends ExpenseCategory {
   children: CategoryNode[];
 }
 
+export type ExpenseType = 'operating' | 'investing' | 'financing';
+
+export const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [
+  { value: 'operating', label: 'Operating' },
+  { value: 'investing', label: 'Investing' },
+  { value: 'financing', label: 'Financing' },
+];
+
 export interface Expense {
   id: string;
   expense_date: string;
@@ -21,6 +29,7 @@ export interface Expense {
   description: string;
   amount: number;
   affects_profit: boolean;
+  expense_type: ExpenseType;
   receipt_url: string | null;
   reference_number: string | null;
   created_by: string | null;
@@ -191,6 +200,7 @@ export interface CreateExpensePayload {
   description: string;
   amount: number;
   affects_profit: boolean;
+  expense_type: ExpenseType;
   reference_number?: string;
   receipt_file?: File;
   created_by: string;
@@ -203,6 +213,7 @@ export async function createExpense(payload: CreateExpensePayload): Promise<Expe
     description: payload.description,
     amount: payload.amount,
     affects_profit: payload.affects_profit,
+    expense_type: payload.expense_type,
     reference_number: payload.reference_number || null,
     created_by: payload.created_by,
   };
@@ -234,6 +245,7 @@ export interface UpdateExpensePayload {
   description?: string;
   amount?: number;
   affects_profit?: boolean;
+  expense_type?: ExpenseType;
   reference_number?: string;
   receipt_file?: File;
   clear_receipt?: boolean;
@@ -246,6 +258,7 @@ export async function updateExpense(id: string, payload: UpdateExpensePayload): 
   if (payload.description !== undefined) updateData.description = payload.description;
   if (payload.amount !== undefined) updateData.amount = payload.amount;
   if (payload.affects_profit !== undefined) updateData.affects_profit = payload.affects_profit;
+  if (payload.expense_type !== undefined) updateData.expense_type = payload.expense_type;
   if (payload.reference_number !== undefined) updateData.reference_number = payload.reference_number || null;
 
   if (payload.clear_receipt) {
@@ -311,10 +324,11 @@ export function exportExpensesToCsv(expenses: Expense[], categories: ExpenseCate
     return cat.name;
   };
 
-  const headers = ['Date', 'Category', 'Description', 'Reference', 'Amount (BDT)', 'Affects P&L'];
+  const headers = ['Date', 'Category', 'Type', 'Description', 'Reference', 'Amount (BDT)', 'Affects P&L'];
   const rows = expenses.map(e => [
     e.expense_date,
     getCategoryPath(e.category_id),
+    e.expense_type.charAt(0).toUpperCase() + e.expense_type.slice(1),
     `"${e.description.replace(/"/g, '""')}"`,
     e.reference_number ?? '',
     e.amount.toFixed(2),

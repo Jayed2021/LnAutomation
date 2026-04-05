@@ -13,9 +13,11 @@ import { cn } from '../../lib/utils';
 import {
   type Expense,
   type ExpenseCategory,
+  type ExpenseType,
   type CategoryNode,
   type CreateExpensePayload,
   type UpdateExpensePayload,
+  EXPENSE_TYPES,
   buildCategoryTree,
   createExpense,
   updateExpense,
@@ -44,6 +46,7 @@ interface EditFormState {
   reference_number: string;
   description: string;
   affects_profit: boolean;
+  expense_type: ExpenseType;
   receipt_file: File | null;
   existing_receipt_url: string | null;
   clear_receipt: boolean;
@@ -52,6 +55,7 @@ interface EditFormState {
 interface AddFormState {
   expense_date: string;
   affects_profit: boolean;
+  expense_type: ExpenseType;
   receipt_file: File | null;
   clear_receipt: boolean;
   lineItems: LineItem[];
@@ -67,6 +71,7 @@ function buildDefaultEditForm(expense: Expense): EditFormState {
     reference_number: expense.reference_number ?? '',
     description: expense.description,
     affects_profit: expense.affects_profit,
+    expense_type: expense.expense_type ?? 'operating',
     receipt_file: null,
     existing_receipt_url: expense.receipt_url ?? null,
     clear_receipt: false,
@@ -77,6 +82,7 @@ function buildDefaultAddForm(): AddFormState {
   return {
     expense_date: today(),
     affects_profit: true,
+    expense_type: 'operating',
     receipt_file: null,
     clear_receipt: false,
     lineItems: [],
@@ -296,6 +302,7 @@ export default function ExpenseModal({
           description: editForm.description.trim(),
           amount: Number(editForm.amount),
           affects_profit: editForm.affects_profit,
+          expense_type: editForm.expense_type,
           reference_number: editForm.reference_number.trim() || undefined,
           clear_receipt: editForm.clear_receipt,
           receipt_file: editForm.receipt_file ?? undefined,
@@ -322,6 +329,7 @@ export default function ExpenseModal({
             description: li.description.trim(),
             amount: Number(li.amount),
             affects_profit: addForm.affects_profit,
+            expense_type: addForm.expense_type,
             reference_number: li.reference_number.trim() || undefined,
             receipt_file: i === 0 ? addForm.receipt_file ?? undefined : undefined,
             created_by: userId,
@@ -426,7 +434,7 @@ export default function ExpenseModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Amount (BDT) <span className="text-red-500">*</span>
@@ -446,6 +454,21 @@ export default function ExpenseModal({
                 {editErrors.amount && (
                   <p className="text-xs text-red-500 mt-1">{editErrors.amount}</p>
                 )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Expense Type
+                </label>
+                <select
+                  value={editForm.expense_type}
+                  onChange={e => setEditForm(prev => ({ ...prev, expense_type: e.target.value as ExpenseType }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {EXPENSE_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -511,7 +534,7 @@ export default function ExpenseModal({
           </div>
         ) : (
           <div className="mt-2 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Date <span className="text-red-500">*</span>
@@ -528,6 +551,21 @@ export default function ExpenseModal({
                 {addErrors.expense_date && (
                   <p className="text-xs text-red-500 mt-1">{addErrors.expense_date}</p>
                 )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Expense Type
+                </label>
+                <select
+                  value={addForm.expense_type}
+                  onChange={e => setAddForm(prev => ({ ...prev, expense_type: e.target.value as ExpenseType }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {EXPENSE_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex items-end">

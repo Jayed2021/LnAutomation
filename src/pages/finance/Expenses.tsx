@@ -29,6 +29,7 @@ import {
   type Expense,
   type ExpenseCategory,
   type ExpenseFilters,
+  type ExpenseType,
   fetchCategories,
   fetchExpenses,
   fetchMonthlySummary,
@@ -499,6 +500,21 @@ export default function Expenses() {
   );
 }
 
+const EXPENSE_TYPE_STYLES: Record<ExpenseType, { label: string; className: string }> = {
+  operating: { label: 'Operating', className: 'bg-blue-50 text-blue-700 border border-blue-200' },
+  investing: { label: 'Investing', className: 'bg-amber-50 text-amber-700 border border-amber-200' },
+  financing: { label: 'Financing', className: 'bg-rose-50 text-rose-700 border border-rose-200' },
+};
+
+function ExpenseTypeBadge({ type }: { type: ExpenseType }) {
+  const style = EXPENSE_TYPE_STYLES[type] ?? EXPENSE_TYPE_STYLES.operating;
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${style.className}`}>
+      {style.label}
+    </span>
+  );
+}
+
 interface FlatListProps {
   expenses: Expense[];
   getCategoryPath: (id: string) => string;
@@ -514,6 +530,7 @@ function FlatList({ expenses, getCategoryPath, onEdit, onDelete }: FlatListProps
           <tr>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Date</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Category</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Type</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Description</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Reference</th>
             <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wide">Amount</th>
@@ -580,6 +597,7 @@ function GroupedView({ grouped, expandedGroups, onToggle, getCategoryPath, onEdi
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Date</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Subcategory</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Type</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Description</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Reference</th>
                       <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase tracking-wide">Amount</th>
@@ -602,7 +620,7 @@ function GroupedView({ grouped, expandedGroups, onToggle, getCategoryPath, onEdi
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-gray-200 bg-gray-50">
-                      <td colSpan={4} className="px-4 py-2 text-xs font-medium text-gray-500 text-right">
+                      <td colSpan={5} className="px-4 py-2 text-xs font-medium text-gray-500 text-right">
                         Subtotal
                       </td>
                       <td className="px-4 py-2 text-right text-sm font-bold text-gray-900">
@@ -638,12 +656,15 @@ function ExpenseRow({ expense, getCategoryPath, onEdit, onDelete, compact }: Exp
   return (
     <tr className="hover:bg-gray-50 transition-colors">
       <td className={`px-4 ${py} whitespace-nowrap text-sm text-gray-500`}>{dateStr}</td>
-      <td className={`px-4 ${py} max-w-[180px]`}>
+      <td className={`px-4 ${py} max-w-[160px]`}>
         <span className="text-sm text-gray-700 block truncate" title={getCategoryPath(expense.category_id)}>
           {getCategoryPath(expense.category_id)}
         </span>
       </td>
-      <td className={`px-4 ${py} max-w-[200px]`}>
+      <td className={`px-4 ${py} whitespace-nowrap`}>
+        <ExpenseTypeBadge type={expense.expense_type ?? 'operating'} />
+      </td>
+      <td className={`px-4 ${py} max-w-[180px]`}>
         <span className="text-sm text-gray-600 block truncate" title={expense.description}>
           {expense.description}
         </span>

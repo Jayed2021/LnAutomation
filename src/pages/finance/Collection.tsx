@@ -31,7 +31,7 @@ import { useAuth } from '../../contexts/AuthContext';
        and bulkMarkHistoricalOrdersAsPaid from collectionService.ts
   ============================================================
 */
-const SHOW_FIRST_TIME_OPS = true;
+const SHOW_FIRST_TIME_OPS = false;
 
 const PROVIDER_LABELS: Record<string, string> = {
   pathao: 'Pathao',

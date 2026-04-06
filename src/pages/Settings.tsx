@@ -12,7 +12,8 @@ import {
   Bell,
   Package,
   UserCheck,
-  ShieldAlert
+  ShieldAlert,
+  KeyRound
 } from 'lucide-react';
 
 export default function Settings() {
@@ -81,6 +82,13 @@ export default function Settings() {
       icon: ShieldAlert,
       color: 'red',
       route: '/settings/fraud-alert'
+    },
+    {
+      title: 'API Access',
+      description: 'Manage API secrets for external integrations and the order lookup endpoint',
+      icon: KeyRound,
+      color: 'blue',
+      route: '/settings/api-access'
     },
     {
       title: 'Security',

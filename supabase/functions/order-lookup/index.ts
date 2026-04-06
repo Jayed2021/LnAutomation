@@ -4,7 +4,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-API-Key",
 };
 
 Deno.serve(async (req: Request) => {
@@ -13,6 +13,34 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const { data: secretRow } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "order_lookup_api_secret")
+      .maybeSingle();
+
+    const storedSecret = secretRow?.value ? String(secretRow.value) : null;
+
+    if (storedSecret) {
+      const url = new URL(req.url);
+      const providedKey =
+        req.headers.get("X-API-Key") ??
+        req.headers.get("x-api-key") ??
+        url.searchParams.get("api_key");
+
+      if (!providedKey || providedKey !== storedSecret) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Unauthorized" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     const url = new URL(req.url);
     const orderId = url.searchParams.get("order_id") || url.searchParams.get("id");
 
@@ -34,11 +62,6 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     const { data: order, error } = await supabase
       .from("orders")

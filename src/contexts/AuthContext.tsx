@@ -7,6 +7,7 @@ import {
   canDoCSActions as _canDoCSActions,
   canEditOrderSource as _canEditOrderSource,
   canEditCourierPayment as _canEditCourierPayment,
+  canViewDetailedReports as _canViewDetailedReports,
 } from '../lib/permissions';
 
 interface AuthContextType {
@@ -20,6 +21,7 @@ interface AuthContextType {
   canDoCSActions: boolean;
   canEditOrderSource: boolean;
   canEditCourierPayment: boolean;
+  canViewDetailedReports: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -100,6 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const canDoCSActions = role ? _canDoCSActions(role, modulePerms) : false;
   const canEditOrderSource = role ? _canEditOrderSource(role, modulePerms) : false;
   const canEditCourierPayment = role ? _canEditCourierPayment(role, modulePerms) : false;
+  const canViewDetailedReports = role ? _canViewDetailedReports(role, modulePerms) : false;
 
   return (
     <AuthContext.Provider value={{
@@ -111,6 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       canDoCSActions,
       canEditOrderSource,
       canEditCourierPayment,
+      canViewDetailedReports,
     }}>
       {children}
     </AuthContext.Provider>

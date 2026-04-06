@@ -27,9 +27,8 @@ interface KpiData {
 }
 
 export default function Reports() {
-  const { user } = useAuth();
+  const { canViewDetailedReports } = useAuth();
   const navigate = useNavigate();
-  const isAdmin = user?.role === 'admin';
 
   const [kpi, setKpi] = useState<KpiData>({ revenue: 0, expenses: 0, grossProfit: 0, loading: true });
 
@@ -177,7 +176,7 @@ export default function Reports() {
       {/* Financial Reports — Live */}
       <Section title="Financial Reports" subtitle="Full financial visibility with live data" accent="emerald">
         {financialReports.map(r => {
-          const locked = r.adminOnly && !isAdmin;
+          const locked = r.adminOnly && !canViewDetailedReports;
           const clickable = !!r.route && !locked;
           return (
             <ReportRow
@@ -194,7 +193,7 @@ export default function Reports() {
       {/* Inventory Reports */}
       <Section title="Inventory Reports" subtitle="Stock levels, valuation, and movement tracking" accent="blue">
         {inventoryReports.map(r => {
-          const locked = r.adminOnly && !isAdmin;
+          const locked = r.adminOnly && !canViewDetailedReports;
           const clickable = !!r.route && !locked;
           return (
             <ReportRow
@@ -316,7 +315,7 @@ function ReportRow({ report, locked, clickable, onClick, compact }: {
               Live
             </span>
           ) : locked ? (
-            <span className="text-xs text-gray-400">Admin only</span>
+            <span className="text-xs text-gray-400">Restricted</span>
           ) : (
             <span className="text-xs bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full font-medium">
               Coming Soon

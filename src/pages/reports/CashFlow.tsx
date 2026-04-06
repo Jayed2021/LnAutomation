@@ -47,8 +47,8 @@ interface CollectionRow {
 }
 
 export default function CashFlow() {
-  const { user } = useAuth();
-  if (user?.role !== 'admin') return <Navigate to="/reports" replace />;
+  const { canViewDetailedReports } = useAuth();
+  if (!canViewDetailedReports) return <Navigate to="/reports" replace />;
 
   const navigate = useNavigate();
   const [period, setPeriod] = useState('this_month');

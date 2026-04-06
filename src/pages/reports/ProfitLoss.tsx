@@ -905,9 +905,10 @@ function ProfitLossContent() {
 }
 
 export default function ProfitLoss() {
-  const { user } = useAuth();
+  const { user, canViewDetailedReports } = useAuth();
 
   if (!user) return <Navigate to="/login" replace />;
+  if (!canViewDetailedReports) return <Navigate to="/reports" replace />;
 
   return <ProfitLossContent />;
 }

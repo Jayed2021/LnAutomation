@@ -87,3 +87,11 @@ export function canEditCourierPayment(
   if ('edit_courier_payment' in modulePermissions) return modulePermissions['edit_courier_payment'];
   return ['admin', 'operations_manager', 'warehouse_manager', 'customer_service', 'accounts'].includes(role);
 }
+
+export function canViewDetailedReports(
+  role: UserRole,
+  modulePermissions: Record<string, boolean>
+): boolean {
+  if ('detailed_reports' in modulePermissions) return modulePermissions['detailed_reports'];
+  return role === 'admin';
+}

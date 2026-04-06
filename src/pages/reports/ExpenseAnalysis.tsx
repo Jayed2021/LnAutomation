@@ -59,8 +59,8 @@ type SortField = 'expense_date' | 'amount' | 'category';
 type SortDir = 'asc' | 'desc';
 
 export default function ExpenseAnalysis() {
-  const { user } = useAuth();
-  if (user?.role !== 'admin') return <Navigate to="/reports" replace />;
+  const { canViewDetailedReports } = useAuth();
+  if (!canViewDetailedReports) return <Navigate to="/reports" replace />;
 
   const navigate = useNavigate();
   const [period, setPeriod] = useState('this_month');

@@ -33,6 +33,7 @@ const MODULE_OVERRIDES = [
   { key: 'finance_collection', label: 'Finance - Collection' },
   { key: 'customers', label: 'Customers' },
   { key: 'reports', label: 'Reports' },
+  { key: 'detailed_reports', label: 'Reports - Detailed Financial (P&L, Cash Flow, Expense Analysis)' },
   { key: 'cs_actions', label: 'CS Actions (order status changes)' },
   { key: 'warehouse_actions', label: 'Warehouse Actions (mark processed, ship)' },
   { key: 'edit_order_source', label: 'Edit Order Source & CS Assignment' },

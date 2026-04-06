@@ -21,12 +21,24 @@
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'expense_categories' AND column_name = 'default_expense_type'
+  -- Only proceed if column exists
+  IF EXISTS (
+    SELECT 1 
+    FROM information_schema.columns 
+    WHERE table_name = 'expense_categories'
+    AND column_name = 'default_expense_type'
   ) THEN
+
+    ALTER TABLE expense_categories 
+    DROP CONSTRAINT IF EXISTS expense_categories_default_expense_type_check;
+
+    UPDATE expense_categories 
+    SET default_expense_type = LOWER(default_expense_type)
+    WHERE default_expense_type IS NOT NULL;
+
     ALTER TABLE expense_categories
-      ADD COLUMN default_expense_type text
-      CHECK (default_expense_type IN ('Operating', 'Investing', 'Financing'));
+      ADD CONSTRAINT expense_categories_default_expense_type_check
+      CHECK (default_expense_type IN ('operating', 'investing', 'financing'));
+
   END IF;
 END $$;

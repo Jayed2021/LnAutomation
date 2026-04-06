@@ -27,11 +27,11 @@ Deno.serve(async (req: Request) => {
     const storedSecret = secretRow?.value ? String(secretRow.value) : null;
 
     if (storedSecret) {
-      const url = new URL(req.url);
+      const urlForAuth = new URL(req.url);
       const providedKey =
         req.headers.get("X-API-Key") ??
         req.headers.get("x-api-key") ??
-        url.searchParams.get("api_key");
+        urlForAuth.searchParams.get("api_key");
 
       if (!providedKey || providedKey !== storedSecret) {
         return new Response(
@@ -42,23 +42,68 @@ Deno.serve(async (req: Request) => {
     }
 
     const url = new URL(req.url);
-    const orderId = url.searchParams.get("order_id") || url.searchParams.get("id");
 
-    let bodyOrderId: string | null = null;
+    let bodyParams: Record<string, string | null> = {};
     if (req.method === "POST") {
       try {
         const body = await req.json();
-        bodyOrderId = body?.order_id ?? body?.id ?? null;
+        bodyParams = {
+          order_id: body?.order_id ?? body?.id ?? null,
+          woo_order_id: body?.woo_order_id ?? null,
+          order_number: body?.order_number ?? null,
+          phone: body?.phone ?? null,
+        };
       } catch {
-        // ignore
+        // ignore parse errors
       }
     }
 
-    const lookupId = orderId ?? bodyOrderId;
+    const phone =
+      url.searchParams.get("phone") ?? bodyParams.phone ?? null;
 
-    if (!lookupId) {
+    if (phone) {
+      return await handlePhoneLookup(supabase, phone);
+    }
+
+    const rawOrderId =
+      url.searchParams.get("order_id") ??
+      url.searchParams.get("id") ??
+      bodyParams.order_id ??
+      null;
+
+    const rawWooId =
+      url.searchParams.get("woo_order_id") ?? bodyParams.woo_order_id ?? null;
+
+    const rawOrderNumber =
+      url.searchParams.get("order_number") ?? bodyParams.order_number ?? null;
+
+    const isNumeric = (v: string) => /^\d+$/.test(v.trim());
+
+    let lookupField: "id" | "woo_order_id" | "order_number" | null = null;
+    let lookupValue: string | number | null = null;
+
+    if (rawWooId) {
+      lookupField = "woo_order_id";
+      lookupValue = parseInt(rawWooId, 10);
+    } else if (rawOrderNumber) {
+      lookupField = "order_number";
+      lookupValue = rawOrderNumber;
+    } else if (rawOrderId) {
+      if (isNumeric(rawOrderId)) {
+        lookupField = "woo_order_id";
+        lookupValue = parseInt(rawOrderId, 10);
+      } else {
+        lookupField = "id";
+        lookupValue = rawOrderId;
+      }
+    }
+
+    if (!lookupField || lookupValue === null) {
       return new Response(
-        JSON.stringify({ success: false, error: "order_id is required" }),
+        JSON.stringify({
+          success: false,
+          error: "A lookup parameter is required: order_id, woo_order_id, order_number, or phone",
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -71,11 +116,13 @@ Deno.serve(async (req: Request) => {
         woo_order_id,
         total_amount,
         cs_status,
+        payment_status,
+        order_date,
         customers(full_name, phone_primary),
         order_items(product_name, sku, quantity, unit_price),
         order_courier_info(courier_company, tracking_number, courier_status)
       `)
-      .eq("id", lookupId)
+      .eq(lookupField, lookupValue as string)
       .maybeSingle();
 
     if (error) {
@@ -104,13 +151,16 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: true,
+        type: "order",
         data: {
           order_id: order.id,
           order_number: order.order_number,
           woo_order_id: order.woo_order_id,
+          order_date: order.order_date,
           customer_name: customer?.full_name ?? null,
           phone: customer?.phone_primary ?? null,
           order_total: order.total_amount,
+          payment_status: order.payment_status,
           cs_status: order.cs_status,
           items: items.map(i => ({
             product_name: i.product_name,
@@ -133,3 +183,91 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
+
+async function handlePhoneLookup(
+  supabase: ReturnType<typeof createClient>,
+  phone: string
+) {
+  const normalised = phone.trim();
+
+  const { data: customers, error: custError } = await supabase
+    .from("customers")
+    .select("id, full_name, phone_primary, phone_secondary")
+    .or(`phone_primary.eq.${normalised},phone_secondary.eq.${normalised}`)
+    .limit(10);
+
+  if (custError) {
+    return new Response(
+      JSON.stringify({ success: false, error: custError.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  if (!customers || customers.length === 0) {
+    return new Response(
+      JSON.stringify({ success: false, error: "No customer found with that phone number" }),
+      { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  const customerIds = customers.map((c) => c.id);
+
+  const { data: orders, error: ordersError } = await supabase
+    .from("orders")
+    .select(`
+      id,
+      order_number,
+      woo_order_id,
+      order_date,
+      total_amount,
+      payment_status,
+      cs_status,
+      customer_id,
+      order_courier_info(courier_company, tracking_number, courier_status)
+    `)
+    .in("customer_id", customerIds)
+    .order("order_date", { ascending: false })
+    .limit(50);
+
+  if (ordersError) {
+    return new Response(
+      JSON.stringify({ success: false, error: ordersError.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  const customerMap = new Map(customers.map((c) => [c.id, c]));
+
+  const result = (orders ?? []).map((o) => {
+    const cust = customerMap.get(o.customer_id);
+    const courier = Array.isArray(o.order_courier_info)
+      ? o.order_courier_info[0]
+      : o.order_courier_info;
+    return {
+      order_id: o.id,
+      order_number: o.order_number,
+      woo_order_id: o.woo_order_id,
+      order_date: o.order_date,
+      order_total: o.total_amount,
+      payment_status: o.payment_status,
+      cs_status: o.cs_status,
+      customer_name: cust?.full_name ?? null,
+      phone_primary: cust?.phone_primary ?? null,
+      courier_company: courier?.courier_company ?? null,
+      tracking_number: courier?.tracking_number ?? null,
+      courier_status: courier?.courier_status ?? null,
+    };
+  });
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      type: "phone_lookup",
+      phone: normalised,
+      customer_count: customers.length,
+      order_count: result.length,
+      orders: result,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}

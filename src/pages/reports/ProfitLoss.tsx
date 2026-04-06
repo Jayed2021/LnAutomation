@@ -363,11 +363,18 @@ function ProfitLossContent() {
     if (!orderResult.error && orderResult.data) {
       setRows(orderResult.data as OrderProfit[]);
 
-      const ids = orderResult.data.map(r => r.order_id);
-      if (ids.length > 0) {
+      if (orderResult.data.length > 0) {
         const [itemResult, lotResult] = await Promise.all([
-          supabase.from('order_item_cogs_detail').select('*').in('order_id', ids),
-          supabase.from('order_item_lot_cogs_detail').select('*').in('order_id', ids),
+          supabase
+            .from('order_item_cogs_detail')
+            .select('*')
+            .gte('order_date', dateRange.from)
+            .lte('order_date', dateRange.to),
+          supabase
+            .from('order_item_lot_cogs_detail')
+            .select('*')
+            .gte('order_date', dateRange.from)
+            .lte('order_date', dateRange.to),
         ]);
 
         if (!itemResult.error && itemResult.data) {

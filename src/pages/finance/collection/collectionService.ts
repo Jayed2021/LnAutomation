@@ -13,12 +13,15 @@ export async function checkDuplicateCollectionRecord(
   matchedRows: MatchedRow[],
   provider: ProviderType
 ): Promise<DuplicateInfo | null> {
-  const deliveryRows = matchedRows.filter(r => r.invoice_type === 'delivery' && r.order_id);
-  if (deliveryRows.length === 0) return null;
+  const isBkashLike = provider === 'bkash' || provider === 'ssl_commerz';
+  const eligibleRows = isBkashLike
+    ? matchedRows.filter(r => r.order_id)
+    : matchedRows.filter(r => r.invoice_type === 'delivery' && r.order_id);
+  if (eligibleRows.length === 0) return null;
 
-  const incomingOrderIds = [...new Set(deliveryRows.map(r => r.order_id).filter(Boolean))] as string[];
+  const incomingOrderIds = [...new Set(eligibleRows.map(r => r.order_id).filter(Boolean))] as string[];
 
-  const { data: existingItems } = await supabase
+  let dupQuery = supabase
     .from('collection_line_items')
     .select(`
       order_id,
@@ -30,9 +33,14 @@ export async function checkDuplicateCollectionRecord(
         provider_type
       )
     `)
-    .eq('invoice_type', 'delivery')
     .eq('match_status', 'matched')
     .in('order_id', incomingOrderIds);
+
+  if (!isBkashLike) {
+    dupQuery = dupQuery.eq('invoice_type', 'delivery');
+  }
+
+  const { data: existingItems } = await dupQuery;
 
   if (!existingItems || existingItems.length === 0) return null;
 

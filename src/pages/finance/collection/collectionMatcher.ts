@@ -207,6 +207,9 @@ export async function matchParsedRows(rows: ParsedRow[]): Promise<MatchResult> {
       lookup = byWooId.get(row.woo_order_id);
       if (lookup) {
         confidence = row.match_confidence_hint === 'high' ? 'high' : row.match_confidence_hint;
+        if (row.transaction_id && byPaymentReference.get(row.transaction_id)?.id === lookup.id) {
+          confidence = 'high';
+        }
       }
     }
 

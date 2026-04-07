@@ -127,6 +127,9 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
         setStep('bulk_preview');
       } else {
         setParseResult(result);
+        if (result.suggestedBankDeposit != null && !bankDepositAmount) {
+          setBankDepositAmount(result.suggestedBankDeposit.toFixed(2));
+        }
         setStep('preview');
       }
     } catch (err: any) {
@@ -492,6 +495,12 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                 <div className="bg-amber-50 rounded-lg p-3 flex justify-between text-sm">
                   <span className="text-amber-700">Gateway Charges</span>
                   <span className="font-semibold text-amber-900">৳{parseResult.totalGatewayCharges.toFixed(2)}</span>
+                </div>
+              )}
+              {parseResult.suggestedBankDeposit != null && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex justify-between text-sm">
+                  <span className="text-green-700">Auto-calculated Bank Deposit <span className="font-normal text-green-600 text-xs">(from Settlement rows)</span></span>
+                  <span className="font-semibold text-green-900">৳{parseResult.suggestedBankDeposit.toFixed(2)}</span>
                 </div>
               )}
             </div>

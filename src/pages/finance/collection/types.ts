@@ -81,6 +81,7 @@ export interface ParseResult {
   detectedProvider: ProviderType | null;
   totalGatewayCharges: number;
   totalDisbursed: number;
+  suggestedBankDeposit?: number;
 }
 
 export interface MatchedRow extends ParsedRow {

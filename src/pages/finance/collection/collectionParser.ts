@@ -252,8 +252,22 @@ export function parseBkashCSV(text: string): ParseResult {
   const parsedRows: ParsedRow[] = [];
   let skippedRows = 0;
 
+  let settlementAmountSum = 0;
+  let settlementChargesSum = 0;
+
   for (const row of allRows) {
     const txType = row['Transaction Type']?.trim();
+
+    if (txType === 'Settlement') {
+      const status = row['Transaction Status']?.trim();
+      if (!status || status.toLowerCase() === 'success') {
+        settlementAmountSum += parseAmount(row['Amount after Coupon Discount\n(in BDT)'] ?? row['Amount after Coupon Discount'] ?? row['Amount after Coupon Discount(in BDT)']);
+        settlementChargesSum += parseAmount(row['Charges\n(in BDT)'] ?? row['Charges'] ?? row['Charges(in BDT)']);
+      }
+      skippedRows++;
+      continue;
+    }
+
     if (txType !== 'Payment') {
       skippedRows++;
       continue;
@@ -275,8 +289,8 @@ export function parseBkashCSV(text: string): ParseResult {
     const txRef = row['Transaction Reference']?.trim() ?? '';
     const { id: wooOrderId, confidence } = extractWooOrderIdFromReference(txRef);
 
-    const amount = parseAmount(row['Transaction Amount']);
-    const charges = parseAmount(row['Charges']);
+    const amount = parseAmount(row['Transaction Amount\n(in BDT)'] ?? row['Transaction Amount'] ?? row['Transaction Amount(in BDT)']);
+    const charges = parseAmount(row['Charges\n(in BDT)'] ?? row['Charges'] ?? row['Charges(in BDT)']);
 
     parsedRows.push({
       transaction_id: transactionId,
@@ -294,6 +308,7 @@ export function parseBkashCSV(text: string): ParseResult {
 
   const totalGatewayCharges = parsedRows.reduce((sum, r) => sum + r.gateway_charge, 0);
   const totalDisbursed = parsedRows.reduce((sum, r) => sum + r.payout, 0);
+  const suggestedBankDeposit = settlementAmountSum > 0 ? settlementAmountSum - settlementChargesSum : undefined;
 
   return {
     rows: parsedRows,
@@ -304,6 +319,7 @@ export function parseBkashCSV(text: string): ParseResult {
     detectedProvider: 'bkash',
     totalGatewayCharges,
     totalDisbursed,
+    suggestedBankDeposit,
   };
 }
 

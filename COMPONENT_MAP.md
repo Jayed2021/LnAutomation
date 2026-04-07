@@ -52,6 +52,7 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Order detail layout or cards | `src/pages/fulfillment/orders/orderDetail/OrderDetail.tsx` |
 | Order status transitions & CS actions | `src/pages/fulfillment/orders/orderDetail/CsActionPanel.tsx` |
 | Invoice or packing slip HTML template | `src/pages/fulfillment/orders/orderDetail/InvoiceTemplate.tsx` |
+| Fraud alert banner on order detail | `src/pages/fulfillment/orders/orderDetail/FraudAlertCard.tsx` |
 | Not Printed table (warehouse) | `src/pages/fulfillment/operations/NotPrintedTable.tsx` |
 | Printed / picking table (warehouse) | `src/pages/fulfillment/operations/PrintedTable.tsx` |
 | Packed table / mark as shipped | `src/pages/fulfillment/operations/PackedTable.tsx` |
@@ -73,6 +74,7 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Receive flow steps (quantity/quality/complete) | `src/pages/inventory/receive/` |
 | Inventory audit sessions | `src/pages/inventory/InventoryAudit.tsx` |
 | Audit detail and adjustments | `src/pages/inventory/AuditDetail.tsx` |
+| Cycle count scheduling | `src/pages/inventory/CycleCounts.tsx` |
 | Purchase order list | `src/pages/purchase/PurchaseOrders.tsx` |
 | Create or edit purchase order | `src/pages/purchase/CreatePurchaseOrder.tsx` |
 | Purchase order detail view | `src/pages/purchase/PurchaseOrderDetail.tsx` |
@@ -81,8 +83,17 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Expense tracking and list | `src/pages/finance/Expenses.tsx` |
 | Add/edit expense modal | `src/components/finance/ExpenseModal.tsx` |
 | Expense category management | `src/components/finance/CategoryManager.tsx` |
-| Payment collection tracking | `src/pages/finance/Collection.tsx` |
+| Payment collection hub (tabs) | `src/pages/finance/Collection.tsx` |
+| Collection order matching tab | `src/pages/finance/collection/OrderCollectionTab.tsx` |
+| Collection record detail view | `src/pages/finance/collection/CollectionRecordDetail.tsx` |
+| Manual revenue entries tab | `src/pages/finance/collection/ManualRevenueTab.tsx` |
+| Manual revenue add/edit modal | `src/pages/finance/collection/ManualRevenueModal.tsx` |
+| Upload courier invoice (collection) | `src/pages/finance/collection/UploadInvoiceModal.tsx` |
 | Profit & loss report | `src/pages/reports/ProfitLoss.tsx` |
+| Cash flow report | `src/pages/reports/CashFlow.tsx` |
+| Expense analysis report | `src/pages/reports/ExpenseAnalysis.tsx` |
+| Stock levels report | `src/pages/reports/StockLevels.tsx` |
+| P&L Excel export logic | `src/pages/reports/plExportExcel.ts` |
 | Customer list | `src/pages/customers/Customers.tsx` |
 | Customer detail and order history | `src/pages/customers/CustomerDetail.tsx` |
 | WooCommerce sync settings | `src/pages/settings/WooCommerceSettings.tsx` |
@@ -93,10 +104,15 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Packaging materials settings | `src/pages/settings/PackagingSettings.tsx` |
 | Store profile (name, logo, address) | `src/pages/settings/StoreProfile.tsx` |
 | CS team assignment rules | `src/pages/settings/CsAssignment.tsx` |
+| Fraud alert service settings | `src/pages/settings/FraudAlertSettings.tsx` |
+| API access / token management | `src/pages/settings/ApiAccessSettings.tsx` |
 | Sidebar navigation and layout | `src/components/Layout.tsx` |
 | Login page | `src/pages/Login.tsx` |
 | Dashboard KPIs and charts | `src/pages/Dashboard.tsx` |
 | Role/permission checks | `src/lib/permissions.ts` |
+| App-wide settings (cached) | `src/lib/appSettings.ts` |
+| Barcode decode/parse utilities | `src/lib/barcodeUtils.ts` |
+| Category tree parsing logic | `src/lib/categoryParser.ts` |
 | Shared Button component | `src/components/ui/Button.tsx` |
 | Shared Input component | `src/components/ui/Input.tsx` |
 | Shared Badge component | `src/components/ui/Badge.tsx` |
@@ -122,7 +138,10 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/contexts/RefreshContext.tsx` | Global data refresh trigger used across all modules. |
 | `src/lib/supabase.ts` | Supabase client singleton. |
 | `src/lib/permissions.ts` | Role-based access helper functions. |
-| `src/lib/utils.ts` | General utility functions. |
+| `src/lib/utils.ts` | General utility functions (formatting, currency, dates). |
+| `src/lib/appSettings.ts` | Cached app-wide settings fetched once from the database. |
+| `src/lib/barcodeUtils.ts` | Barcode decode, parse, and validation utilities. |
+| `src/lib/categoryParser.ts` | Parses and flattens category hierarchy trees. |
 
 ### Layout
 
@@ -155,6 +174,7 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/fulfillment/orders/orderDetail/CustomerInfoCard.tsx` | ~150 | Customer name, phone, address, email. |
 | `src/pages/fulfillment/orders/orderDetail/CourierPaymentCard.tsx` | ~680 | Courier charges and payment tracking modal. |
 | `src/pages/fulfillment/orders/orderDetail/CourierResponseCard.tsx` | ~150 | Courier tracking status from API. |
+| `src/pages/fulfillment/orders/orderDetail/FraudAlertCard.tsx` | ~150 | External fraud risk banner (courier success rate, address flags). |
 | `src/pages/fulfillment/orders/orderDetail/PrescriptionCard.tsx` | ~666 | Lens/prescription options editor. |
 | `src/pages/fulfillment/orders/orderDetail/PackagingCard.tsx` | ~200 | Packaging items selected for order. |
 | `src/pages/fulfillment/orders/orderDetail/SmsCard.tsx` | ~150 | SMS communication history and send panel. |
@@ -273,10 +293,9 @@ The bad example forces the AI to search the entire codebase to find the right fi
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/pages/finance/Expenses.tsx` | ~699 | Expense list with category/date filters, bulk actions, add expense. |
-| `src/pages/finance/Collection.tsx` | ~300 | Payment collection tracking for orders. |
+| `src/pages/finance/Expenses.tsx` | ~699 | Expense list with category/date/type filters, bulk actions, add expense. |
+| `src/pages/finance/Collection.tsx` | ~300 | Payment collection hub — hosts the Order Collection and Manual Revenue tabs. |
 | `src/pages/finance/expenseService.ts` | ~100 | API calls for expenses. |
-| `src/pages/reports/ProfitLoss.tsx` | ~479 | P&L report with revenue, COGS, expenses breakdown. |
 
 **Finance Modals (components)**
 
@@ -284,6 +303,36 @@ The bad example forces the AI to search the entire codebase to find the right fi
 |------|---------|
 | `src/components/finance/ExpenseModal.tsx` | Add/edit expense with receipt upload. |
 | `src/components/finance/CategoryManager.tsx` | Manage expense categories hierarchy. |
+
+**Collection Sub-module** (`src/pages/finance/collection/`)
+
+| File | Purpose |
+|------|---------|
+| `OrderCollectionTab.tsx` | Table of matched/unmatched courier remittance records per provider. |
+| `CollectionRecordDetail.tsx` | Drill-down view for a single collection record and its matched orders. |
+| `ManualRevenueTab.tsx` | Table of manual revenue entries (non-order income). |
+| `ManualRevenueModal.tsx` | Add/edit a manual revenue entry. |
+| `UploadInvoiceModal.tsx` | Upload and parse a courier remittance invoice CSV/Excel. |
+| `FirstTimeOpsPanel.tsx` | Onboarding panel shown when no collection data exists yet. |
+| `collectionService.ts` | API calls for fetching and saving collection records. |
+| `collectionMatcher.ts` | Logic for matching courier remittance rows to internal orders. |
+| `collectionParser.ts` | Parses uploaded courier invoice files into normalized rows. |
+| `collectionResolver.ts` | Resolves ambiguous matches and conflict resolution helpers. |
+| `manualRevenueService.ts` | API calls for manual revenue entries. |
+| `types.ts` | TypeScript types for the collection sub-module. |
+
+---
+
+### Reports Module
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/pages/Reports.tsx` | ~100 | Reports hub with links to all report pages. |
+| `src/pages/reports/ProfitLoss.tsx` | ~479 | P&L report: revenue, COGS, gross profit, expenses breakdown, net profit. |
+| `src/pages/reports/CashFlow.tsx` | ~300 | Cash flow statement by period and category type. |
+| `src/pages/reports/ExpenseAnalysis.tsx` | ~300 | Expense breakdown by category, trend charts. |
+| `src/pages/reports/StockLevels.tsx` | ~250 | Stock level report across all products and locations. |
+| `src/pages/reports/plExportExcel.ts` | ~200 | Excel export logic for P&L report using ExcelJS. |
 
 ---
 
@@ -308,10 +357,11 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/settings/SmsSettings.tsx` | ~567 | SMS gateway setup, templates, test SMS. |
 | `src/pages/settings/UserManagement.tsx` | ~616 | User accounts, roles, module permissions, password reset. |
 | `src/pages/settings/CsAssignment.tsx` | ~725 | CS team assignment rules and workload balancing. |
-| `src/pages/settings/StoreProfile.tsx` | ~200 | Store name, address, phone, logo, tax ID. |
+| `src/pages/settings/StoreProfile.tsx` | ~200 | Store name, address, phone, logo, tax ID, preferred courier. |
 | `src/pages/settings/BarcodeSettings.tsx` | ~200 | Barcode label format and printer configuration. |
 | `src/pages/settings/PackagingSettings.tsx` | ~200 | Packaging materials list and default selections. |
-| `src/pages/settings/FraudAlertSettings.tsx` | ~548 | Fraud Alert External customer success rate checker service integration |
+| `src/pages/settings/FraudAlertSettings.tsx` | ~548 | Fraud alert external service integration — success rate thresholds, API config. |
+| `src/pages/settings/ApiAccessSettings.tsx` | ~200 | API token management for external integrations. |
 
 ---
 
@@ -363,11 +413,13 @@ Supabase Edge Functions live in `supabase/functions/`. Each folder is one functi
 |----------|---------|
 | `supabase/functions/woo-proxy/` | Proxies WooCommerce API calls (avoids CORS). Actions: `test-connection`, `fetch-products`, `fetch-products-page`, `fetch-orders`, `fetch-single-order`, `import-order`, `cancel-order`, `update-order-status`, `resync-order`, `sync-order-items`, `register-webhook`, `check-webhook`, `reactivate-webhook`, `delete-webhook`, `update-stock` (increments WooCommerce product stock by SKU, supports simple and variable products). |
 | `supabase/functions/woo-webhook/` | Receives WooCommerce order.created/updated webhooks. |
-| `supabase/functions/woo-auto-sync/` | Cron-triggered automatic WooCommerce sync. |
+| `supabase/functions/woo-auto-sync/` | Cron-triggered automatic WooCommerce order sync. |
 | `supabase/functions/pathao-create-order/` | Creates shipment orders in Pathao API. |
 | `supabase/functions/pathao-sync-status/` | Syncs delivery status from Pathao. |
 | `supabase/functions/pathao-webhook/` | Receives Pathao delivery status webhooks. |
-| `supabase/functions/auto-distribute-orders/` | Cron-triggered auto CS assignment. |
+| `supabase/functions/auto-distribute-orders/` | Cron-triggered auto CS assignment for new orders. |
+| `supabase/functions/fraud-check/` | Calls external fraud alert service to score a customer/order. |
+| `supabase/functions/order-lookup/` | Public-facing order status lookup by order ID or phone number. |
 | `supabase/functions/image-proxy/` | Proxies external product images (fixes CORS for Excel export). |
 | `supabase/functions/migrate-product-images/` | Migrates product images to Supabase Storage. |
 
@@ -377,11 +429,23 @@ Supabase Edge Functions live in `supabase/functions/`. Each folder is one functi
 
 All schema changes are in `supabase/migrations/`. Files are named by timestamp and description. Never edit existing migration files — always create a new one.
 
-### Notable Columns Added Recently
+### Notable Columns & Features Added Recently
 
-| Table | Column | Type | Purpose |
-|-------|--------|------|---------|
+| Table | Column / Change | Type | Purpose |
+|-------|----------------|------|---------|
 | `stock_movements` | `previous_quantity` | integer (nullable) | Stock level of the lot before the movement was applied. Populated by RestockModal for `return_restock` type. Enables before/after audit display on ReturnDetail. NULL on all historical records. |
+| `orders` | `order_type` | text | Distinguishes order origin type (e.g., `woocommerce`, `manual`). |
+| `orders` | `paid_amount` | numeric | Amount already paid by the customer at time of order. |
+| `orders` | `cancellation_type` | text | Reason category for cancellations (e.g., `cad`, `customer_request`). |
+| `orders` | `packed_at`, `shipped_at` | timestamptz | Timestamps for when the order was packed and when it was shipped. |
+| `order_courier_info` | `settlement_source` | text | Which courier remittance batch this order was settled under. |
+| `order_courier_info` | `delivery_discount` | numeric | Discount applied to courier delivery charge. |
+| `expenses` | `expense_type` | text | Cash flow classification: `operating`, `investing`, `financing`. |
+| `expense_categories` | `default_expense_type` | text | Default `expense_type` pre-filled when creating an expense in this category. Values: `operating`, `investing`, `financing`. |
+| `customers` | `has_delivered_order` | boolean | True once the customer has at least one delivered order. Used for fraud heuristics. |
+| `customers` | `courier_success_rate` | numeric | Computed delivery success rate from courier history. |
+| `app_settings` | `fraud_alert_*` keys | jsonb | Configuration for the fraud alert integration (thresholds, API URL). |
+| `store_profile` | `preferred_courier` | text | Default courier provider for new shipments. |
 
 ---
 
@@ -390,3 +454,4 @@ All schema changes are in `supabase/migrations/`. Files are named by timestamp a
 - **Lazy loading** is active on all 30+ pages. Only the current page's JavaScript loads on first visit. Navigating to a new page loads that page's code on-demand.
 - **Dashboard** and **Login** are eagerly loaded (always needed immediately).
 - Each operations table (NotPrintedTable, PrintedTable, etc.) is now its own file — changing the picked table no longer requires loading the shipped table's code.
+- The Collection sub-module (`src/pages/finance/collection/`) is split across 12 files — reference the specific file for the tab or workflow you need.

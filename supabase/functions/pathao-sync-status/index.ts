@@ -163,7 +163,7 @@ Deno.serve(async (req: Request) => {
     let eligibleQuery = supabase
       .from("order_courier_info")
       .select("id, order_id, consignment_id, courier_status, orders(cs_status)")
-      .eq("courier_company", "Pathao")
+      .ilike("courier_company", "pathao")
       .not("consignment_id", "is", null);
 
     if (specificIdList) {

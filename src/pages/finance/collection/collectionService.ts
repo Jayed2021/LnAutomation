@@ -339,6 +339,7 @@ export async function applyCollectionRecord(
         total_receivable: totalReceivable,
         collected_amount: newCollected,
         delivery_discount: deliveryDiscount,
+        invoice_type: li.invoice_type ?? null,
       });
 
       if (resolverResult.shouldMarkPaid) {

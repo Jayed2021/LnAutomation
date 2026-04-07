@@ -6,6 +6,9 @@ const FINAL_STATUSES = new Set([
   'partial_delivery',
 ]);
 
+const CAD_COLLECTION_CEILING = 150;
+const AMOUNT_BUFFER = 100;
+
 interface ResolverInput {
   cs_status: string;
   payment_method: string | null;
@@ -15,6 +18,7 @@ interface ResolverInput {
   total_receivable: number | null;
   collected_amount: number;
   delivery_discount: number;
+  invoice_type: string | null;
 }
 
 interface ResolverResult {
@@ -23,10 +27,6 @@ interface ResolverResult {
 }
 
 export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
-  if (!FINAL_STATUSES.has(input.cs_status)) {
-    return { shouldMarkPaid: false, reason: 'Order not in a final status' };
-  }
-
   if (input.payment_status === 'paid') {
     return { shouldMarkPaid: false, reason: 'Already marked as paid' };
   }
@@ -36,17 +36,52 @@ export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
   const isPartialPaid = pm.startsWith('partial paid') || pm.includes('+cod');
   const isCOD = !isPrepaid && !isPartialPaid;
 
-  if (isCOD) {
-    const effectiveReceivable = (input.total_receivable ?? input.total_amount) - input.delivery_discount;
-    if (input.collected_amount >= effectiveReceivable && effectiveReceivable > 0) {
+  const isExchangeStatus = input.cs_status === 'exchange' || input.cs_status === 'exchange_returnable';
+  const isDeliveryOrMixed = input.invoice_type !== 'return';
+
+  if ((isCOD || isPartialPaid) && isDeliveryOrMixed && !isExchangeStatus) {
+    if (input.collected_amount >= 0 && input.collected_amount <= CAD_COLLECTION_CEILING) {
       return {
         shouldMarkPaid: true,
-        reason: `COD collected ৳${input.collected_amount} >= effective receivable ৳${effectiveReceivable}`,
+        reason: `CAD inferred from invoice: collected ৳${input.collected_amount} (≤৳${CAD_COLLECTION_CEILING}, delivery charge only — product returned to warehouse)`,
+      };
+    }
+  }
+
+  if ((isCOD || isPartialPaid) && isDeliveryOrMixed) {
+    const expectedReceivable = isCOD
+      ? (input.total_receivable ?? input.total_amount) - input.delivery_discount
+      : (input.total_receivable ?? (input.total_amount - (input.paid_amount ?? 0))) - input.delivery_discount;
+
+    if (
+      input.collected_amount > CAD_COLLECTION_CEILING &&
+      input.collected_amount >= expectedReceivable - AMOUNT_BUFFER &&
+      input.collected_amount <= expectedReceivable + AMOUNT_BUFFER
+    ) {
+      if (!FINAL_STATUSES.has(input.cs_status)) {
+        return {
+          shouldMarkPaid: true,
+          reason: `Delivered inferred from invoice: collected ৳${input.collected_amount} matches expected ৳${expectedReceivable.toFixed(2)} within ±৳${AMOUNT_BUFFER} (status "${input.cs_status}" not yet synced to delivered)`,
+        };
+      }
+    }
+  }
+
+  if (!FINAL_STATUSES.has(input.cs_status)) {
+    return { shouldMarkPaid: false, reason: 'Order not in a final status' };
+  }
+
+  if (isCOD) {
+    const effectiveReceivable = (input.total_receivable ?? input.total_amount) - input.delivery_discount;
+    if (input.collected_amount >= effectiveReceivable - AMOUNT_BUFFER && input.collected_amount > CAD_COLLECTION_CEILING && effectiveReceivable > 0) {
+      return {
+        shouldMarkPaid: true,
+        reason: `COD collected ৳${input.collected_amount} within ±৳${AMOUNT_BUFFER} of effective receivable ৳${effectiveReceivable.toFixed(2)}`,
       };
     }
     return {
       shouldMarkPaid: false,
-      reason: `COD collected ৳${input.collected_amount} < effective receivable ৳${effectiveReceivable}`,
+      reason: `COD collected ৳${input.collected_amount} < effective receivable ৳${effectiveReceivable.toFixed(2)} (outside ±৳${AMOUNT_BUFFER} buffer)`,
     };
   }
 
@@ -55,15 +90,15 @@ export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
     const expectedCOD = input.total_amount - prepaidAmount;
     const effectiveCOD = (input.total_receivable ?? expectedCOD) - input.delivery_discount;
 
-    if (input.collected_amount >= effectiveCOD && effectiveCOD > 0) {
+    if (input.collected_amount >= effectiveCOD - AMOUNT_BUFFER && input.collected_amount > CAD_COLLECTION_CEILING && effectiveCOD > 0) {
       return {
         shouldMarkPaid: true,
-        reason: `Partial+COD: courier collected ৳${input.collected_amount} >= remaining COD ৳${effectiveCOD}`,
+        reason: `Partial+COD: courier collected ৳${input.collected_amount} within ±৳${AMOUNT_BUFFER} of remaining COD ৳${effectiveCOD.toFixed(2)}`,
       };
     }
     return {
       shouldMarkPaid: false,
-      reason: `Partial+COD: courier collected ৳${input.collected_amount} < remaining COD ৳${effectiveCOD}`,
+      reason: `Partial+COD: courier collected ৳${input.collected_amount} < remaining COD ৳${effectiveCOD.toFixed(2)} (outside ±৳${AMOUNT_BUFFER} buffer)`,
     };
   }
 

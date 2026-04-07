@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { X, ExternalLink, CheckCircle, AlertCircle, Clock, Loader2, ChevronDown, ChevronUp, Save } from 'lucide-react';
+import { X, ExternalLink, CheckCircle, AlertCircle, Clock, Loader2, ChevronDown, ChevronUp, Save, RefreshCw, Info } from 'lucide-react';
 import { CollectionRecord, CollectionLineItem } from './types';
 import {
   fetchCollectionRecord,
   fetchCollectionLineItems,
   applyCollectionRecord,
+  reapplyCollectionRecord,
   updateCollectionRecordBank,
 } from './collectionService';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -47,7 +48,9 @@ export function CollectionRecordDetail({ recordId, onClose, onUpdated }: Props) 
   const [lineItems, setLineItems] = useState<CollectionLineItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
+  const [reapplying, setReapplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [reapplyResult, setReapplyResult] = useState<{ ordersUpdated: number; paidStatusSet: number } | null>(null);
   const [bankOpen, setBankOpen] = useState(false);
 
   const [bankRef, setBankRef] = useState('');
@@ -88,6 +91,22 @@ export function CollectionRecordDetail({ recordId, onClose, onUpdated }: Props) 
       setApplyError(err.message);
     } finally {
       setApplying(false);
+    }
+  };
+
+  const handleReapply = async () => {
+    setReapplying(true);
+    setApplyError(null);
+    setReapplyResult(null);
+    try {
+      const result = await reapplyCollectionRecord(recordId, user?.id ?? null);
+      setReapplyResult({ ordersUpdated: result.ordersUpdated, paidStatusSet: result.paidStatusSet });
+      await loadData();
+      onUpdated();
+    } catch (err: any) {
+      setApplyError(err.message);
+    } finally {
+      setReapplying(false);
     }
   };
 
@@ -191,17 +210,43 @@ export function CollectionRecordDetail({ recordId, onClose, onUpdated }: Props) 
             </div>
           </div>
 
-          {unappliedCount > 0 && (
-            <div className="px-6 py-3 border-b border-gray-100 flex items-center justify-between bg-blue-50">
-              <p className="text-sm text-blue-800 font-medium">{unappliedCount} matched orders not yet applied</p>
+          <div className="px-6 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+            <div className="text-sm text-gray-600">
+              {unappliedCount > 0 ? (
+                <span className="text-blue-800 font-medium">{unappliedCount} matched orders not yet applied</span>
+              ) : (
+                <span className="text-gray-500">All matched orders applied</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {unappliedCount > 0 && (
+                <button
+                  onClick={handleApplyAll}
+                  disabled={applying || reapplying}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+                >
+                  {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                  Apply All
+                </button>
+              )}
               <button
-                onClick={handleApplyAll}
-                disabled={applying}
-                className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+                onClick={handleReapply}
+                disabled={applying || reapplying}
+                title="Reset all applied flags and re-run the payment resolver with the latest logic"
+                className="flex items-center gap-1.5 px-4 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 disabled:opacity-50 transition-colors"
               >
-                {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                Apply All
+                {reapplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                Re-Apply
               </button>
+            </div>
+          </div>
+
+          {reapplyResult && (
+            <div className="mx-6 mt-4 flex items-start gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+              <p className="text-sm text-green-700">
+                Re-applied: {reapplyResult.ordersUpdated} orders updated, {reapplyResult.paidStatusSet} newly marked as Paid.
+              </p>
             </div>
           )}
 
@@ -277,11 +322,18 @@ export function CollectionRecordDetail({ recordId, onClose, onUpdated }: Props) 
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-center">
-                            {item.applied ? (
-                              <CheckCircle className="w-4 h-4 text-green-500 mx-auto" />
-                            ) : (
-                              <Clock className="w-4 h-4 text-amber-400 mx-auto" />
-                            )}
+                            <div className="flex items-center justify-center gap-1">
+                              {item.applied ? (
+                                <CheckCircle className="w-4 h-4 text-green-500" />
+                              ) : (
+                                <Clock className="w-4 h-4 text-amber-400" />
+                              )}
+                              {item.applied && item.not_paid_reason && (
+                                <span title={item.not_paid_reason} className="cursor-help">
+                                  <Info className="w-3.5 h-3.5 text-amber-500" />
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             {item.order && (

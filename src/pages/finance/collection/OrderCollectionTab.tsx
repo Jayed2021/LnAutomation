@@ -691,10 +691,13 @@ export function OrderCollectionTab() {
                   {result.rows.map(row => {
                     const receivable = row.total_receivable ?? row.total_amount;
                     const discount = row.delivery_discount ?? 0;
-                    const collected = row.collected_amount ?? 0;
-                    const outstanding = Math.max(0, receivable - discount - collected);
+                    const codCollected = row.collected_amount ?? 0;
+                    const gatewayCollected = row.prepaid_amount ?? 0;
+                    const collected = codCollected + gatewayCollected;
+                    const outstanding = Math.max(0, receivable - discount - codCollected);
                     const pm = row.payment_method ?? 'COD';
-                    const isPartialPaid = pm.toLowerCase().startsWith('partial paid');
+                    const isPrepaidOrder = pm.toLowerCase().startsWith('prepaid') || (pm !== '' && !pm.toLowerCase().includes('cod') && !pm.toLowerCase().includes('partial paid'));
+                    const isPartialPaid = pm.toLowerCase().startsWith('partial paid') || pm.toLowerCase().includes('+cod');
 
                     return (
                       <tr key={row.id} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
@@ -742,14 +745,18 @@ export function OrderCollectionTab() {
                         <td className="px-4 py-3 text-right">
                           <div className="text-xs text-gray-400">{formatMoney(row.total_amount)}</div>
                           <div className="text-sm font-semibold text-gray-900">{formatMoney(collected)}</div>
+                          {gatewayCollected > 0 && codCollected > 0 && (
+                            <>
+                              <div className="text-xs text-gray-400 mt-0.5">GW: {formatMoney(gatewayCollected)}</div>
+                              <div className="text-xs text-gray-400">COD: {formatMoney(codCollected)}</div>
+                            </>
+                          )}
+                          {gatewayCollected > 0 && codCollected === 0 && (isPrepaidOrder || isPartialPaid) && (
+                            <div className="text-xs text-gray-400 mt-0.5">Gateway: {formatMoney(gatewayCollected)}</div>
+                          )}
                           {(row.delivery_charge ?? 0) > 0 && (
                             <div className="text-xs text-gray-400 mt-0.5">
                               D/C: {formatMoney(row.delivery_charge)}
-                            </div>
-                          )}
-                          {isPartialPaid && (row.cod_charge ?? 0) > 0 && (
-                            <div className="text-xs text-gray-400 mt-0.5">
-                              COD: {formatMoney(row.cod_charge)}
                             </div>
                           )}
                         </td>
@@ -757,8 +764,9 @@ export function OrderCollectionTab() {
                           <div className={`text-sm font-semibold ${outstanding > 0 ? 'text-amber-700' : 'text-green-600'}`}>
                             {outstanding > 0 ? formatMoney(outstanding) : <span className="text-green-600">Cleared</span>}
                           </div>
+                          <div className="text-xs text-gray-400 mt-0.5">{formatMoney(receivable)}</div>
                           {discount > 0 && (
-                            <div className="text-xs text-gray-400 mt-0.5">Disc: {formatMoney(discount)}</div>
+                            <div className="text-xs text-gray-400">Disc: {formatMoney(discount)}</div>
                           )}
                         </td>
                         <td className="px-4 py-3">

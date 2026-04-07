@@ -44,6 +44,7 @@ export interface CollectionLineItem {
   match_status: MatchStatus;
   match_confidence: MatchConfidence | null;
   applied: boolean;
+  not_paid_reason: string | null;
   raw_data: Record<string, string> | null;
   created_at: string;
   order?: {
@@ -177,6 +178,7 @@ export interface OrderCollectionRow {
   tracking_number: string | null;
   courier_status: string | null;
   collected_amount: number | null;
+  prepaid_amount: number | null;
   delivery_charge: number | null;
   delivery_discount: number | null;
   total_receivable: number | null;

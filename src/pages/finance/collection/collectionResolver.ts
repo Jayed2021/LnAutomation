@@ -17,6 +17,7 @@ interface ResolverInput {
   paid_amount: number | null;
   total_receivable: number | null;
   collected_amount: number;
+  prepaid_amount: number;
   delivery_discount: number;
   invoice_type: string | null;
 }
@@ -67,6 +68,22 @@ export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
     }
   }
 
+  if (isPrepaid) {
+    const totalConfirmed = input.prepaid_amount + input.collected_amount;
+    const threshold = input.total_amount - AMOUNT_BUFFER;
+
+    if (totalConfirmed >= threshold) {
+      return {
+        shouldMarkPaid: true,
+        reason: `Prepaid: gateway credited ৳${input.prepaid_amount} + COD ৳${input.collected_amount} = ৳${totalConfirmed} >= order total ৳${input.total_amount} (threshold ৳${threshold.toFixed(2)})`,
+      };
+    }
+    return {
+      shouldMarkPaid: false,
+      reason: `Prepaid: total confirmed ৳${totalConfirmed} (gateway ৳${input.prepaid_amount} + COD ৳${input.collected_amount}) < threshold ৳${threshold.toFixed(2)} (order ৳${input.total_amount} - buffer ৳${AMOUNT_BUFFER})`,
+    };
+  }
+
   if (!FINAL_STATUSES.has(input.cs_status)) {
     return { shouldMarkPaid: false, reason: 'Order not in a final status' };
   }
@@ -86,8 +103,7 @@ export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
   }
 
   if (isPartialPaid) {
-    const prepaidAmount = input.paid_amount ?? 0;
-    const expectedCOD = input.total_amount - prepaidAmount;
+    const expectedCOD = input.total_amount - (input.paid_amount ?? 0);
     const effectiveCOD = (input.total_receivable ?? expectedCOD) - input.delivery_discount;
 
     if (input.collected_amount >= effectiveCOD - AMOUNT_BUFFER && input.collected_amount > CAD_COLLECTION_CEILING && effectiveCOD > 0) {
@@ -99,19 +115,6 @@ export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
     return {
       shouldMarkPaid: false,
       reason: `Partial+COD: courier collected ৳${input.collected_amount} < remaining COD ৳${effectiveCOD.toFixed(2)} (outside ±৳${AMOUNT_BUFFER} buffer)`,
-    };
-  }
-
-  if (isPrepaid) {
-    if (input.collected_amount >= input.total_amount) {
-      return {
-        shouldMarkPaid: true,
-        reason: `Prepaid: gateway credited ৳${input.collected_amount} >= order total ৳${input.total_amount}`,
-      };
-    }
-    return {
-      shouldMarkPaid: false,
-      reason: `Prepaid: gateway credited ৳${input.collected_amount} < order total ৳${input.total_amount}`,
     };
   }
 

@@ -261,6 +261,7 @@ export async function applyCollectionRecord(
         id,
         total_receivable,
         collected_amount,
+        prepaid_amount,
         delivery_charge,
         delivery_discount
       )
@@ -280,6 +281,7 @@ export async function applyCollectionRecord(
 
   const providerLabel = record?.provider_type ? PROVIDER_LABEL[record.provider_type as ProviderType] ?? record.provider_type : 'Invoice';
   const dateStr = record?.invoice_date ?? new Date().toISOString().split('T')[0];
+  const isGatewayProvider = record?.provider_type === 'bkash' || record?.provider_type === 'ssl_commerz';
 
   const errors: string[] = [];
   let ordersUpdated = 0;
@@ -299,6 +301,7 @@ export async function applyCollectionRecord(
       : order.order_courier_info;
 
     const existingCollected = courierInfo?.collected_amount ?? 0;
+    const existingPrepaid = courierInfo?.prepaid_amount ?? 0;
     const existingDelivery = courierInfo?.delivery_charge ?? 0;
     const deliveryDiscount = courierInfo?.delivery_discount ?? 0;
     const totalReceivable = courierInfo?.total_receivable ?? order.total_amount;
@@ -308,13 +311,27 @@ export async function applyCollectionRecord(
     const pm = (order.payment_method ?? '').toLowerCase().trim();
     const isPrepaid = pm.startsWith('prepaid') || (pm !== '' && !pm.includes('cod') && !pm.includes('partial paid') && !pm.includes('+cod'));
     const isPartialPaid = pm.startsWith('partial paid') || pm.includes('+cod');
-    const isAccumulativePayment = isPrepaid || isPartialPaid;
 
-    const newCollected = isDelivery
-      ? isAccumulativePayment
-        ? existingCollected + (li.collected_amount ?? 0)
-        : (li.collected_amount ?? 0)
-      : existingCollected;
+    const liAmount = li.collected_amount ?? 0;
+
+    let newCollected: number;
+    let newPrepaid: number;
+
+    if (isDelivery) {
+      if (isGatewayProvider) {
+        newPrepaid = existingPrepaid + liAmount;
+        newCollected = existingCollected;
+      } else if (isPrepaid || isPartialPaid) {
+        newCollected = existingCollected + liAmount;
+        newPrepaid = existingPrepaid;
+      } else {
+        newCollected = liAmount;
+        newPrepaid = existingPrepaid;
+      }
+    } else {
+      newCollected = existingCollected;
+      newPrepaid = existingPrepaid;
+    }
 
     const newDelivery = isDelivery
       ? (li.delivery_charge ?? 0)
@@ -323,15 +340,21 @@ export async function applyCollectionRecord(
     try {
       if (li.match_status === 'paid_no_collection') {
         if (courierInfo?.id) {
-          await supabase.from('order_courier_info').update({
-            collected_amount: li.collected_amount ?? 0,
+          const updatePayload: Record<string, any> = {
             settlement_source: 'invoice_upload',
             updated_at: new Date().toISOString(),
-          }).eq('id', courierInfo.id);
+          };
+          if (isGatewayProvider) {
+            updatePayload.prepaid_amount = existingPrepaid + liAmount;
+          } else {
+            updatePayload.collected_amount = liAmount;
+          }
+          await supabase.from('order_courier_info').update(updatePayload).eq('id', courierInfo.id);
         } else {
           await supabase.from('order_courier_info').insert({
             order_id: li.order_id,
-            collected_amount: li.collected_amount ?? 0,
+            collected_amount: isGatewayProvider ? 0 : liAmount,
+            prepaid_amount: isGatewayProvider ? liAmount : 0,
             delivery_charge: 0,
             settlement_source: 'invoice_upload',
             total_receivable: order.total_amount,
@@ -340,7 +363,7 @@ export async function applyCollectionRecord(
 
         await supabase.from('order_activity_log').insert({
           order_id: li.order_id,
-          action: `Collected amount backfilled from ${providerLabel} invoice (${dateStr}): ৳${(li.collected_amount ?? 0).toFixed(2)}. Payment status unchanged — order was already marked as paid.`,
+          action: `${isGatewayProvider ? 'Gateway' : 'Collected'} amount backfilled from ${providerLabel} invoice (${dateStr}): ৳${liAmount.toFixed(2)}. Payment status unchanged — order was already marked as paid.`,
           performed_by: userId,
         });
 
@@ -352,6 +375,7 @@ export async function applyCollectionRecord(
       if (courierInfo?.id) {
         await supabase.from('order_courier_info').update({
           collected_amount: newCollected,
+          prepaid_amount: newPrepaid,
           delivery_charge: newDelivery,
           settlement_source: 'invoice_upload',
           updated_at: new Date().toISOString(),
@@ -360,6 +384,7 @@ export async function applyCollectionRecord(
         await supabase.from('order_courier_info').insert({
           order_id: li.order_id,
           collected_amount: newCollected,
+          prepaid_amount: newPrepaid,
           delivery_charge: newDelivery,
           settlement_source: 'invoice_upload',
           total_receivable: order.total_amount,
@@ -374,6 +399,7 @@ export async function applyCollectionRecord(
         paid_amount: order.paid_amount,
         total_receivable: totalReceivable,
         collected_amount: newCollected,
+        prepaid_amount: newPrepaid,
         delivery_discount: deliveryDiscount,
         invoice_type: li.invoice_type ?? null,
       });
@@ -387,14 +413,19 @@ export async function applyCollectionRecord(
       }
 
       const typeLabel = isDelivery ? 'Delivery' : 'Return';
+      const paidLabel = resolverResult.shouldMarkPaid
+        ? 'Payment marked as Paid.'
+        : `Payment NOT updated — ${resolverResult.reason}`;
       await supabase.from('order_activity_log').insert({
         order_id: li.order_id,
-        action: `${typeLabel} settlement applied via ${providerLabel} invoice (${dateStr}). Collected: ৳${newCollected.toFixed(2)}, Delivery Charge: ৳${newDelivery.toFixed(2)}. ${resolverResult.reason}`,
+        action: `${typeLabel} settlement applied via ${providerLabel} invoice (${dateStr}). Collected: ৳${newCollected.toFixed(2)}, Gateway: ৳${newPrepaid.toFixed(2)}, Delivery Charge: ৳${newDelivery.toFixed(2)}. ${paidLabel}`,
         performed_by: userId,
       });
 
-      await supabase.from('collection_line_items').update({ applied: true })
-        .eq('id', li.id);
+      await supabase.from('collection_line_items').update({
+        applied: true,
+        not_paid_reason: resolverResult.shouldMarkPaid ? null : resolverResult.reason,
+      }).eq('id', li.id);
 
       ordersUpdated++;
     } catch (err: any) {
@@ -422,6 +453,19 @@ export async function applyCollectionRecord(
   }).eq('id', recordId);
 
   return { ordersUpdated, paidStatusSet, errors };
+}
+
+export async function reapplyCollectionRecord(
+  recordId: string,
+  userId: string | null
+): Promise<ApplyResult> {
+  await supabase
+    .from('collection_line_items')
+    .update({ applied: false, not_paid_reason: null })
+    .eq('collection_record_id', recordId)
+    .in('match_status', ['matched', 'paid_no_collection']);
+
+  return applyCollectionRecord(recordId, userId);
 }
 
 export async function checkBulkDuplicates(
@@ -803,6 +847,7 @@ export async function fetchOrderCollectionStatus(
         tracking_number,
         courier_status,
         collected_amount,
+        prepaid_amount,
         delivery_charge,
         delivery_discount,
         total_receivable,
@@ -853,6 +898,7 @@ export async function fetchOrderCollectionStatus(
       tracking_number: ci?.tracking_number ?? null,
       courier_status: ci?.courier_status ?? null,
       collected_amount: ci?.collected_amount ?? null,
+      prepaid_amount: ci?.prepaid_amount ?? null,
       delivery_charge: ci?.delivery_charge ?? null,
       delivery_discount: ci?.delivery_discount ?? null,
       total_receivable: ci?.total_receivable ?? null,
@@ -877,7 +923,7 @@ export async function fetchOrderCollectionStatus(
     filteredRows = filteredRows.filter(r => r.courier_company === filters.courierCompany);
   }
 
-  const totalCollected = filteredRows.reduce((s, r) => s + (r.collected_amount ?? 0), 0);
+  const totalCollected = filteredRows.reduce((s, r) => s + (r.collected_amount ?? 0) + (r.prepaid_amount ?? 0), 0);
   const totalOutstanding = filteredRows.reduce((s, r) => {
     const receivable = r.total_receivable ?? r.total_amount;
     const collected = r.collected_amount ?? 0;

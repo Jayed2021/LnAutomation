@@ -219,7 +219,19 @@ export async function matchParsedRows(rows: ParsedRow[]): Promise<MatchResult> {
     }
 
     if (lookup) {
-      matched.push(toMatchedRow(row, lookup, 'matched', confidence));
+      const pm = (lookup.payment_method ?? '').toLowerCase().trim();
+      const isPrepaid = pm.startsWith('prepaid') || (pm !== '' && !pm.includes('cod') && !pm.includes('partial paid') && !pm.includes('+cod'));
+
+      if (lookup.payment_status === 'paid' && isPrepaid) {
+        const existingCollected = lookup.collected_amount ?? 0;
+        if (existingCollected > 0) {
+          unmatched.push(toMatchedRow(row, lookup, 'paid_already_settled', confidence));
+        } else {
+          matched.push(toMatchedRow(row, lookup, 'paid_no_collection', confidence));
+        }
+      } else {
+        matched.push(toMatchedRow(row, lookup, 'matched', confidence));
+      }
     } else {
       unmatched.push(toMatchedRow(row, undefined, 'not_found', 'low'));
     }

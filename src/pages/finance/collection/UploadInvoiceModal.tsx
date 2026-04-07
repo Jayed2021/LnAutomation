@@ -621,88 +621,142 @@ export function UploadInvoiceModal({ onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-green-50 rounded-lg p-3 text-center">
-                  <div className="text-xl font-bold text-green-700">{matchResult.totalMatched}</div>
-                  <div className="text-xs text-green-600 mt-0.5">Matched</div>
-                </div>
-                <div className="bg-red-50 rounded-lg p-3 text-center">
-                  <div className="text-xl font-bold text-red-700">{matchResult.totalUnmatched}</div>
-                  <div className="text-xs text-red-600 mt-0.5">Unmatched</div>
-                </div>
-                <div className="bg-blue-50 rounded-lg p-3 text-center">
-                  <div className="text-xl font-bold text-blue-700">
-                    {matchResult.totalMatched + matchResult.totalUnmatched > 0
-                      ? Math.round((matchResult.totalMatched / (matchResult.totalMatched + matchResult.totalUnmatched)) * 100)
-                      : 0}%
-                  </div>
-                  <div className="text-xs text-blue-600 mt-0.5">Match Rate</div>
-                </div>
-              </div>
+              {(() => {
+                const paidBackfill = matchResult.matched.filter(r => r.match_status === 'paid_no_collection');
+                const paidSettled = matchResult.unmatched.filter(r => r.match_status === 'paid_already_settled');
+                const notFound = matchResult.unmatched.filter(r => r.match_status === 'not_found');
+                const totalAll = matchResult.totalMatched + matchResult.totalUnmatched;
+                const matchRate = totalAll > 0 ? Math.round((matchResult.totalMatched / totalAll) * 100) : 0;
+                return (
+                  <>
+                    <div className={`grid gap-3 ${paidBackfill.length > 0 || paidSettled.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                      <div className="bg-green-50 rounded-lg p-3 text-center">
+                        <div className="text-xl font-bold text-green-700">{matchResult.totalMatched}</div>
+                        <div className="text-xs text-green-600 mt-0.5">Matched</div>
+                      </div>
+                      <div className="bg-red-50 rounded-lg p-3 text-center">
+                        <div className="text-xl font-bold text-red-700">{notFound.length}</div>
+                        <div className="text-xs text-red-600 mt-0.5">Not Found</div>
+                      </div>
+                      {paidBackfill.length > 0 && (
+                        <div className="bg-amber-50 rounded-lg p-3 text-center">
+                          <div className="text-xl font-bold text-amber-700">{paidBackfill.length}</div>
+                          <div className="text-xs text-amber-600 mt-0.5">Already Paid</div>
+                        </div>
+                      )}
+                      {paidSettled.length > 0 && (
+                        <div className="bg-gray-50 rounded-lg p-3 text-center">
+                          <div className="text-xl font-bold text-gray-600">{paidSettled.length}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">Skip — Settled</div>
+                        </div>
+                      )}
+                      <div className="bg-blue-50 rounded-lg p-3 text-center">
+                        <div className="text-xl font-bold text-blue-700">{matchRate}%</div>
+                        <div className="text-xs text-blue-600 mt-0.5">Match Rate</div>
+                      </div>
+                    </div>
 
-              {matchResult.matched.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-700 mb-2">Matched Orders (preview)</p>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-semibold text-gray-600">Order</th>
-                          <th className="px-3 py-2 text-left font-semibold text-gray-600">Customer</th>
-                          <th className="px-3 py-2 text-right font-semibold text-gray-600">Collected</th>
-                          <th className="px-3 py-2 text-right font-semibold text-gray-600">Del. Charge</th>
-                          <th className="px-3 py-2 text-center font-semibold text-gray-600">Confidence</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {matchResult.matched.slice(0, 20).map((row, i) => (
-                          <tr key={i} className="border-b border-gray-100 last:border-0">
-                            <td className="px-3 py-2 font-medium text-gray-800">{row.order_number ?? row.woo_order_id ?? '—'}</td>
-                            <td className="px-3 py-2 text-gray-600 max-w-[120px] truncate">{row.customer_name ?? '—'}</td>
-                            <td className="px-3 py-2 text-right">৳{row.collected_amount.toFixed(2)}</td>
-                            <td className="px-3 py-2 text-right text-gray-600">৳{row.delivery_charge.toFixed(2)}</td>
-                            <td className="px-3 py-2 text-center">
-                              <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
-                                row.match_confidence === 'high' ? 'bg-green-100 text-green-700' :
-                                row.match_confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
-                                'bg-gray-100 text-gray-600'
-                              }`}>
-                                {row.match_confidence}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+                    {paidBackfill.length > 0 && (
+                      <div className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-800">
+                          <span className="font-semibold">{paidBackfill.length} prepaid order{paidBackfill.length > 1 ? 's' : ''} already marked as Paid with no collected amount recorded.</span>{' '}
+                          The collected amount will be backfilled from this invoice. Payment status will not change.
+                        </p>
+                      </div>
+                    )}
 
-              {matchResult.unmatched.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-red-700 mb-2">Unmatched Rows ({matchResult.unmatched.length})</p>
-                  <div className="border border-red-200 bg-red-50 rounded-lg overflow-hidden max-h-32 overflow-y-auto">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-red-100 border-b border-red-200">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-semibold text-red-700">Identifier</th>
-                          <th className="px-3 py-2 text-left font-semibold text-red-700">Order ID</th>
-                          <th className="px-3 py-2 text-right font-semibold text-red-700">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {matchResult.unmatched.slice(0, 10).map((row, i) => (
-                          <tr key={i} className="border-b border-red-100 last:border-0">
-                            <td className="px-3 py-2 font-mono text-red-800 max-w-[160px] truncate">{row.transaction_id ?? row.consignment_id ?? '—'}</td>
-                            <td className="px-3 py-2 text-red-700">{row.woo_order_id ?? 'Not extracted'}</td>
-                            <td className="px-3 py-2 text-right text-red-800">৳{row.collected_amount.toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+                    {paidSettled.length > 0 && (
+                      <div className="flex items-start gap-2.5 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                        <AlertCircle className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
+                        <p className="text-xs text-gray-600">
+                          <span className="font-semibold">{paidSettled.length} order{paidSettled.length > 1 ? 's' : ''} already fully settled</span> (Paid + collected amount already recorded). These rows will be saved but not re-processed.
+                        </p>
+                      </div>
+                    )}
+
+                    {matchResult.matched.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-700 mb-2">Matched Orders (preview)</p>
+                        <div className="border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-semibold text-gray-600">Order</th>
+                                <th className="px-3 py-2 text-left font-semibold text-gray-600">Customer</th>
+                                <th className="px-3 py-2 text-right font-semibold text-gray-600">Collected</th>
+                                <th className="px-3 py-2 text-center font-semibold text-gray-600">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {matchResult.matched.slice(0, 20).map((row, i) => (
+                                <tr key={i} className="border-b border-gray-100 last:border-0">
+                                  <td className="px-3 py-2 font-medium text-gray-800">{row.order_number ?? row.woo_order_id ?? '—'}</td>
+                                  <td className="px-3 py-2 text-gray-600 max-w-[110px] truncate">{row.customer_name ?? '—'}</td>
+                                  <td className="px-3 py-2 text-right">৳{row.collected_amount.toFixed(2)}</td>
+                                  <td className="px-3 py-2 text-center">
+                                    {row.match_status === 'paid_no_collection' ? (
+                                      <span className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
+                                        Backfill
+                                      </span>
+                                    ) : (
+                                      <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
+                                        row.match_confidence === 'high' ? 'bg-green-100 text-green-700' :
+                                        row.match_confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                        'bg-gray-100 text-gray-600'
+                                      }`}>
+                                        {row.match_confidence}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {(notFound.length > 0 || paidSettled.length > 0) && (
+                      <div>
+                        <p className="text-xs font-semibold text-red-700 mb-2">
+                          Unmatched / Skipped Rows ({notFound.length + paidSettled.length})
+                        </p>
+                        <div className="border border-red-200 bg-red-50 rounded-lg overflow-hidden max-h-32 overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 bg-red-100 border-b border-red-200">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-semibold text-red-700">Identifier</th>
+                                <th className="px-3 py-2 text-left font-semibold text-red-700">Order</th>
+                                <th className="px-3 py-2 text-center font-semibold text-red-700">Reason</th>
+                                <th className="px-3 py-2 text-right font-semibold text-red-700">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...notFound, ...paidSettled].slice(0, 10).map((row, i) => (
+                                <tr key={i} className="border-b border-red-100 last:border-0">
+                                  <td className="px-3 py-2 font-mono text-red-800 max-w-[130px] truncate">{row.transaction_id ?? row.consignment_id ?? '—'}</td>
+                                  <td className="px-3 py-2 text-red-700">{row.order_number ?? row.woo_order_id ?? '—'}</td>
+                                  <td className="px-3 py-2 text-center">
+                                    <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
+                                      row.match_status === 'paid_already_settled'
+                                        ? 'bg-gray-100 text-gray-600'
+                                        : 'bg-red-100 text-red-700'
+                                    }`}>
+                                      {row.match_status === 'paid_already_settled' ? 'Skip — Settled' : 'No match'}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-right text-red-800">৳{row.collected_amount.toFixed(2)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
 

@@ -193,14 +193,14 @@ export async function saveCollectionRecord(
       net_disbursed: r.payout,
       gateway_charge: r.gateway_charge,
       transaction_id: r.transaction_id,
-      match_status: 'matched' as const,
+      match_status: r.match_status,
       match_confidence: r.match_confidence,
       applied: false,
       raw_data: r.raw_data,
     })),
     ...unmatchedRows.map(r => ({
       collection_record_id: recordId,
-      order_id: null,
+      order_id: r.order_id,
       tracking_number: r.consignment_id ?? null,
       consignment_id: r.consignment_id,
       woo_order_id: r.woo_order_id,
@@ -211,8 +211,8 @@ export async function saveCollectionRecord(
       net_disbursed: r.payout,
       gateway_charge: r.gateway_charge,
       transaction_id: r.transaction_id,
-      match_status: 'not_found' as const,
-      match_confidence: null,
+      match_status: r.match_status,
+      match_confidence: r.match_confidence,
       applied: false,
       raw_data: r.raw_data,
     })),
@@ -237,7 +237,7 @@ export async function applyCollectionRecord(
     .from('collection_line_items')
     .select('*')
     .eq('collection_record_id', recordId)
-    .eq('match_status', 'matched')
+    .in('match_status', ['matched', 'paid_no_collection'])
     .eq('applied', false);
 
   if (error) throw new Error(error.message);
@@ -321,6 +321,34 @@ export async function applyCollectionRecord(
       : existingDelivery + (li.delivery_charge ?? 0);
 
     try {
+      if (li.match_status === 'paid_no_collection') {
+        if (courierInfo?.id) {
+          await supabase.from('order_courier_info').update({
+            collected_amount: li.collected_amount ?? 0,
+            settlement_source: 'invoice_upload',
+            updated_at: new Date().toISOString(),
+          }).eq('id', courierInfo.id);
+        } else {
+          await supabase.from('order_courier_info').insert({
+            order_id: li.order_id,
+            collected_amount: li.collected_amount ?? 0,
+            delivery_charge: 0,
+            settlement_source: 'invoice_upload',
+            total_receivable: order.total_amount,
+          });
+        }
+
+        await supabase.from('order_activity_log').insert({
+          order_id: li.order_id,
+          action: `Collected amount backfilled from ${providerLabel} invoice (${dateStr}): ৳${(li.collected_amount ?? 0).toFixed(2)}. Payment status unchanged — order was already marked as paid.`,
+          performed_by: userId,
+        });
+
+        await supabase.from('collection_line_items').update({ applied: true }).eq('id', li.id);
+        ordersUpdated++;
+        continue;
+      }
+
       if (courierInfo?.id) {
         await supabase.from('order_courier_info').update({
           collected_amount: newCollected,
@@ -379,9 +407,9 @@ export async function applyCollectionRecord(
     .select('match_status, applied')
     .eq('collection_record_id', recordId);
 
-  const matched = (allItems ?? []).filter((i: any) => i.match_status === 'matched').length;
-  const unmatched = (allItems ?? []).filter((i: any) => i.match_status === 'not_found').length;
-  const allApplied = (allItems ?? []).filter((i: any) => i.match_status === 'matched').every((i: any) => i.applied);
+  const matched = (allItems ?? []).filter((i: any) => ['matched', 'paid_no_collection'].includes(i.match_status)).length;
+  const unmatched = (allItems ?? []).filter((i: any) => ['not_found', 'paid_already_settled'].includes(i.match_status)).length;
+  const allApplied = (allItems ?? []).filter((i: any) => ['matched', 'paid_no_collection'].includes(i.match_status)).every((i: any) => i.applied);
 
   const newStatus = errors.length > 0 ? 'discrepancy' : unmatched > 0 ? 'discrepancy' : allApplied ? 'verified' : 'processing';
 

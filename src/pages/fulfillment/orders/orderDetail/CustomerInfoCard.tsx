@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Phone, Save, X, CreditCard as Edit2, MessageSquare, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
+import { useAuth } from '../../../../contexts/AuthContext';
 import { OrderDetail } from './types';
 
 const PRIMARY_METHODS = ['COD', 'Prepaid', 'Partial Paid'] as const;
@@ -99,6 +100,7 @@ interface EditState {
 }
 
 export function CustomerInfoCard({ order, onUpdated }: Props) {
+  const { canEditCourierPayment } = useAuth();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [districts, setDistricts] = useState<string[]>([]);
@@ -390,10 +392,23 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
 
             <div>
               <div className="text-xs font-medium text-gray-500 mb-1">Payment Status</div>
-              <select value={edit.payment_status} onChange={e => setEdit(p => ({ ...p, payment_status: e.target.value }))} className={selectCls}>
-                <option value="unpaid">Unpaid</option>
-                <option value="paid">Paid</option>
-              </select>
+              {canEditCourierPayment ? (
+                <select value={edit.payment_status} onChange={e => setEdit(p => ({ ...p, payment_status: e.target.value }))} className={selectCls}>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="paid">Paid</option>
+                </select>
+              ) : (
+                <div className="space-y-1">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${
+                    edit.payment_status === 'paid'
+                      ? 'bg-green-50 text-green-700 border-green-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {edit.payment_status === 'paid' ? 'Paid' : 'Unpaid'}
+                  </span>
+                  <p className="text-xs text-gray-400">Updated via invoice collection only</p>
+                </div>
+              )}
             </div>
           </div>
         ) : (

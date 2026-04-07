@@ -1,5 +1,5 @@
 export type ProviderType = 'pathao' | 'bkash' | 'ssl_commerz';
-export type MatchStatus = 'matched' | 'not_found' | 'already_updated';
+export type MatchStatus = 'matched' | 'not_found' | 'already_updated' | 'paid_no_collection' | 'paid_already_settled';
 export type MatchConfidence = 'high' | 'medium' | 'low';
 export type CollectionRecordStatus = 'pending' | 'processing' | 'verified' | 'discrepancy';
 export type InvoiceType = 'delivery' | 'return';

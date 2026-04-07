@@ -287,7 +287,10 @@ export function parseBkashCSV(text: string): ParseResult {
     }
 
     const txRef = row['Transaction Reference']?.trim() ?? '';
-    const { id: wooOrderId, confidence } = extractWooOrderIdFromReference(txRef);
+    const { id: wooOrderId, confidence: refConfidence } = extractWooOrderIdFromReference(txRef);
+
+    const hasReferenceColumn = 'Transaction Reference' in row;
+    const confidence: MatchConfidence = hasReferenceColumn ? refConfidence : 'high';
 
     const amount = parseAmount(row['Transaction Amount\n(in BDT)'] ?? row['Transaction Amount'] ?? row['Transaction Amount(in BDT)']);
     const charges = parseAmount(row['Charges\n(in BDT)'] ?? row['Charges'] ?? row['Charges(in BDT)']);

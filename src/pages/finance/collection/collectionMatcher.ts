@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase';
 import { ParsedRow, MatchedRow, MatchResult, MatchStatus, MatchConfidence } from './types';
+import { classifyPaymentMethod } from './paymentMethodClassifier';
 
 interface OrderLookup {
   id: string;
@@ -219,8 +220,7 @@ export async function matchParsedRows(rows: ParsedRow[]): Promise<MatchResult> {
     }
 
     if (lookup) {
-      const pm = (lookup.payment_method ?? '').toLowerCase().trim();
-      const isPrepaid = pm.startsWith('prepaid') || (pm !== '' && !pm.includes('cod') && !pm.includes('partial paid') && !pm.includes('+cod'));
+      const isPrepaid = classifyPaymentMethod(lookup.payment_method) === 'prepaid';
 
       if (lookup.payment_status === 'paid' && isPrepaid) {
         const existingCollected = lookup.collected_amount ?? 0;

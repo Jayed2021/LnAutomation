@@ -1,3 +1,5 @@
+import { classifyPaymentMethod } from './paymentMethodClassifier';
+
 const FINAL_STATUSES = new Set([
   'delivered',
   'cancelled_cad',
@@ -32,13 +34,20 @@ export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
     return { shouldMarkPaid: false, reason: 'Already marked as paid' };
   }
 
-  const pm = (input.payment_method ?? '').toLowerCase().trim();
-  const isPrepaid = pm.startsWith('prepaid') || (pm !== '' && !pm.includes('cod') && !pm.includes('partial paid') && !pm.includes('+cod'));
-  const isPartialPaid = pm.startsWith('partial paid') || pm.includes('+cod');
-  const isCOD = !isPrepaid && !isPartialPaid;
+  const pmType = classifyPaymentMethod(input.payment_method);
+  const isPrepaid = pmType === 'prepaid';
+  const isPartialPaid = pmType === 'partial_paid';
+  const isCOD = pmType === 'cod';
 
   const isExchangeStatus = input.cs_status === 'exchange' || input.cs_status === 'exchange_returnable';
   const isDeliveryOrMixed = input.invoice_type !== 'return';
+
+  if (input.cs_status === 'cancelled_cad' && isDeliveryOrMixed) {
+    return {
+      shouldMarkPaid: true,
+      reason: `CAD confirmed: order status is cancelled_cad — delivery charge collected ৳${input.collected_amount}, product returned to warehouse`,
+    };
+  }
 
   if ((isCOD || isPartialPaid) && isDeliveryOrMixed && !isExchangeStatus) {
     if (input.collected_amount >= 0 && input.collected_amount <= CAD_COLLECTION_CEILING) {

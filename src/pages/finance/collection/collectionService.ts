@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabase';
 import { MatchedRow, CollectionRecord, CollectionLineItem, ApplyResult, OverdueOrder, ProviderType, ParseResult, DuplicateInfo, BulkApplyResult, OrderCollectionFilters, OrderCollectionResult, OrderCollectionRow } from './types';
 import { resolvePaymentStatus } from './collectionResolver';
+import { classifyPaymentMethod } from './paymentMethodClassifier';
 import { getEffectiveOrderDate } from '../../../lib/appSettings';
 
 const PROVIDER_LABEL: Record<ProviderType, string> = {
@@ -308,9 +309,9 @@ export async function applyCollectionRecord(
 
     const isDelivery = li.invoice_type === 'delivery' || li.invoice_type == null;
 
-    const pm = (order.payment_method ?? '').toLowerCase().trim();
-    const isPrepaid = pm.startsWith('prepaid') || (pm !== '' && !pm.includes('cod') && !pm.includes('partial paid') && !pm.includes('+cod'));
-    const isPartialPaid = pm.startsWith('partial paid') || pm.includes('+cod');
+    const pmType = classifyPaymentMethod(order.payment_method);
+    const isPrepaid = pmType === 'prepaid';
+    const isPartialPaid = pmType === 'partial_paid';
 
     const liAmount = li.collected_amount ?? 0;
 

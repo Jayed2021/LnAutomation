@@ -276,12 +276,13 @@ export async function applyCollectionRecord(
 
   const { data: record } = await supabase
     .from('collection_records')
-    .select('provider_type, invoice_date')
+    .select('provider_type, invoice_date, invoice_number')
     .eq('id', recordId)
     .maybeSingle();
 
   const providerLabel = record?.provider_type ? PROVIDER_LABEL[record.provider_type as ProviderType] ?? record.provider_type : 'Invoice';
   const dateStr = record?.invoice_date ?? new Date().toISOString().split('T')[0];
+  const invoiceRef = record?.invoice_number ? ` #${record.invoice_number}` : '';
   const isGatewayProvider = record?.provider_type === 'bkash' || record?.provider_type === 'ssl_commerz';
 
   const errors: string[] = [];
@@ -419,7 +420,7 @@ export async function applyCollectionRecord(
         : `Payment NOT updated — ${resolverResult.reason}`;
       await supabase.from('order_activity_log').insert({
         order_id: li.order_id,
-        action: `${typeLabel} settlement applied via ${providerLabel} invoice (${dateStr}). Collected: ৳${newCollected.toFixed(2)}, Gateway: ৳${newPrepaid.toFixed(2)}, Delivery Charge: ৳${newDelivery.toFixed(2)}. ${paidLabel}`,
+        action: `${typeLabel} settlement applied via ${providerLabel} invoice${invoiceRef} (${dateStr}). Collected: ৳${newCollected.toFixed(2)}, Gateway: ৳${newPrepaid.toFixed(2)}, Delivery Charge: ৳${newDelivery.toFixed(2)}. ${paidLabel}`,
         performed_by: userId,
       });
 

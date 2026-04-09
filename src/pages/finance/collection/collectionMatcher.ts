@@ -223,8 +223,8 @@ export async function matchParsedRows(rows: ParsedRow[]): Promise<MatchResult> {
       const isPrepaid = classifyPaymentMethod(lookup.payment_method) === 'prepaid';
 
       if (lookup.payment_status === 'paid' && isPrepaid) {
-        const existingCollected = lookup.collected_amount ?? 0;
-        if (existingCollected > 0) {
+        const existingDeliveryCharge = lookup.delivery_charge ?? 0;
+        if (existingDeliveryCharge > 0) {
           unmatched.push(toMatchedRow(row, lookup, 'paid_already_settled', confidence));
         } else {
           matched.push(toMatchedRow(row, lookup, 'paid_no_collection', confidence));

@@ -341,6 +341,7 @@ export async function applyCollectionRecord(
 
     try {
       if (li.match_status === 'paid_no_collection') {
+        const incomingDeliveryCharge = li.delivery_charge ?? 0;
         if (courierInfo?.id) {
           const updatePayload: Record<string, any> = {
             settlement_source: 'invoice_upload',
@@ -351,21 +352,25 @@ export async function applyCollectionRecord(
           } else {
             updatePayload.collected_amount = liAmount;
           }
+          if (incomingDeliveryCharge > 0) {
+            updatePayload.delivery_charge = incomingDeliveryCharge;
+          }
           await supabase.from('order_courier_info').update(updatePayload).eq('id', courierInfo.id);
         } else {
           await supabase.from('order_courier_info').insert({
             order_id: li.order_id,
             collected_amount: isGatewayProvider ? 0 : liAmount,
             prepaid_amount: isGatewayProvider ? liAmount : 0,
-            delivery_charge: 0,
+            delivery_charge: incomingDeliveryCharge,
             settlement_source: 'invoice_upload',
             total_receivable: order.total_amount,
           });
         }
 
+        const chargeNote = incomingDeliveryCharge > 0 ? ` Delivery charge updated: ৳${incomingDeliveryCharge.toFixed(2)}.` : '';
         await supabase.from('order_activity_log').insert({
           order_id: li.order_id,
-          action: `${isGatewayProvider ? 'Gateway' : 'Collected'} amount backfilled from ${providerLabel} invoice (${dateStr}): ৳${liAmount.toFixed(2)}. Payment status unchanged — order was already marked as paid.`,
+          action: `${isGatewayProvider ? 'Gateway' : 'Collected'} amount backfilled from ${providerLabel} invoice (${dateStr}): ৳${liAmount.toFixed(2)}.${chargeNote} Payment status unchanged — order was already marked as paid.`,
           performed_by: userId,
         });
 

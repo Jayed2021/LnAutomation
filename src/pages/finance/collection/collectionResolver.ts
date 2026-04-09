@@ -42,7 +42,7 @@ export function resolvePaymentStatus(input: ResolverInput): ResolverResult {
   const isExchangeStatus = input.cs_status === 'exchange' || input.cs_status === 'exchange_returnable';
   const isDeliveryOrMixed = input.invoice_type !== 'return';
 
-  if (input.cs_status === 'cancelled_cad' && isDeliveryOrMixed) {
+  if (input.cs_status === 'cancelled_cad') {
     return {
       shouldMarkPaid: true,
       reason: `CAD confirmed: order status is cancelled_cad — delivery charge collected ৳${input.collected_amount}, product returned to warehouse`,

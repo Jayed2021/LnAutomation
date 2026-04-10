@@ -61,8 +61,8 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
 
     const [pkgProductsResult, movementsResult] = await Promise.all([
       supabase
-        .from('products')
-        .select('id, sku, name, default_landed_cost')
+        .from('product_avg_landed_cost')
+        .select('product_id, sku, name, avg_landed_cost')
         .eq('product_type', 'packaging_material')
         .order('sku'),
       supabase
@@ -96,12 +96,12 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
     }
 
     const skuRows: PackagingSkuRow[] = products.map(p => {
-      const existing = existingByProductId[p.id];
+      const existing = existingByProductId[p.product_id];
       const manualQty = existing?.manual_quantity ?? 0;
-      const cost = Number(p.default_landed_cost ?? 0);
-      const sysQty = dispatchQtyByProduct[p.id] ?? 0;
+      const cost = Number(p.avg_landed_cost ?? 0);
+      const sysQty = dispatchQtyByProduct[p.product_id] ?? 0;
       return {
-        product_id: p.id,
+        product_id: p.product_id,
         sku: p.sku,
         product_name: p.name,
         unit_cost: cost,
@@ -283,7 +283,8 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
                     <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">SKU</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Product</th>
                     <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-28">
-                      Cost/Unit
+                      Avg Cost
+                      <span className="block text-[10px] normal-case font-normal">(per unit)</span>
                     </th>
                     <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-32">
                       System

@@ -160,7 +160,7 @@ export default function CourierSettings() {
         supabase
           .from('order_courier_info')
           .select('id', { count: 'exact', head: true })
-          .eq('courier_company', 'Pathao')
+          .ilike('courier_company', 'pathao')
           .not('consignment_id', 'is', null)
           .or(`courier_status.is.null,courier_status.not.in.(Delivered,Return,Delivery Failed,Paid Return,Exchange,Partial Delivery)`)
           .gte('created_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()),

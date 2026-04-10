@@ -99,9 +99,9 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     late_delivery_reason: '',
     expected_delivery_date: '',
     exchange_return_id: '',
-    partial_items: [] as string[],
-    reverse_pick_items: [] as string[],
-    exchange_selected_items: [] as string[],
+    partial_items: {} as Record<string, number>,
+    reverse_pick_items: {} as Record<string, number>,
+    exchange_selected_items: {} as Record<string, number>,
     refund_amount: '',
   });
 
@@ -141,9 +141,9 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       late_delivery_reason: '',
       expected_delivery_date: '',
       exchange_return_id: '',
-      partial_items: [],
-      reverse_pick_items: [],
-      exchange_selected_items: [],
+      partial_items: {},
+      reverse_pick_items: {},
+      exchange_selected_items: {},
       refund_amount: '',
     }));
     setExchangeItems([]);
@@ -253,7 +253,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
     setExchangeFetchLoading(true);
     setExchangeItems([]);
     setExchangeItemsFetched(false);
-    setForm(p => ({ ...p, exchange_selected_items: [] }));
+    setForm(p => ({ ...p, exchange_selected_items: {} }));
     try {
       const isNumeric = /^\d+$/.test(returnOrderNumber);
       let retOrder: { id: string } | null = null;
@@ -391,7 +391,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           setSaving(false);
           return;
         }
-        if (form.exchange_selected_items.length === 0) {
+        if (Object.keys(form.exchange_selected_items).length === 0) {
           alert('Please fetch the returnable order\'s items and select at least one item to return.');
           setSaving(false);
           return;
@@ -444,7 +444,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         }).select('id').single();
         if (newReturn) {
           updates.exchange_return_id = newReturn.id;
-          for (const itemId of form.exchange_selected_items) {
+          for (const [itemId, qty] of Object.entries(form.exchange_selected_items)) {
             const item = exchangeItems.find(i => i.id === itemId);
             if (item) {
               await supabase.from('return_items').insert({
@@ -452,7 +452,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
                 order_item_id: itemId,
                 product_id: item.product_id,
                 sku: item.sku,
-                quantity: item.quantity,
+                quantity: qty,
                 qc_status: 'pending',
               });
             }
@@ -531,7 +531,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       }
 
       if (selectedAction === 'partial_delivery') {
-        if (form.partial_items.length === 0) {
+        if (Object.keys(form.partial_items).length === 0) {
           alert('Please select items that were not received.');
           setSaving(false);
           return;
@@ -545,8 +545,9 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           status: 'expected',
           created_by: userId,
         }).select('id').single();
+        const partialNoteLines: string[] = [];
         if (newReturn) {
-          for (const itemId of form.partial_items) {
+          for (const [itemId, qty] of Object.entries(form.partial_items)) {
             const item = items.find(i => i.id === itemId);
             if (item) {
               await supabase.from('return_items').insert({
@@ -554,13 +555,14 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
                 order_item_id: itemId,
                 product_id: item.product_id,
                 sku: item.sku,
-                quantity: item.quantity,
+                quantity: qty,
                 qc_status: 'pending',
               });
+              partialNoteLines.push(`${item.product_name} x${qty}`);
             }
           }
         }
-        updates.partial_delivery_notes = `Partial delivery: ${form.partial_items.length} item(s) returned.`;
+        updates.partial_delivery_notes = `Partial delivery: ${partialNoteLines.join(', ')} returned.`;
       }
 
       if (selectedAction === 'delivered') {
@@ -568,7 +570,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       }
 
       if (selectedAction === 'reverse_pick') {
-        if (form.reverse_pick_items.length === 0) {
+        if (Object.keys(form.reverse_pick_items).length === 0) {
           alert('Please select at least one item for the reverse pick.');
           setSaving(false);
           return;
@@ -583,7 +585,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           created_by: userId,
         }).select('id').single();
         if (rpReturn) {
-          for (const itemId of form.reverse_pick_items) {
+          for (const [itemId, qty] of Object.entries(form.reverse_pick_items)) {
             const item = items.find(i => i.id === itemId);
             if (item) {
               await supabase.from('return_items').insert({
@@ -591,7 +593,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
                 order_item_id: itemId,
                 product_id: item.product_id,
                 sku: item.sku,
-                quantity: item.quantity,
+                quantity: qty,
                 qc_status: 'pending',
               });
             }
@@ -632,8 +634,8 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       setForm({
         cancellation_reason_id: '', cancellation_reason_text: '',
         late_delivery_reason: '', expected_delivery_date: '',
-        exchange_return_id: '', partial_items: [],
-        reverse_pick_items: [], exchange_selected_items: [],
+        exchange_return_id: '', partial_items: {},
+        reverse_pick_items: {}, exchange_selected_items: {},
         refund_amount: '',
       });
       setExchangeItems([]);
@@ -846,7 +848,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
                 <input
                   value={form.exchange_return_id}
                   onChange={e => {
-                    setForm(p => ({ ...p, exchange_return_id: e.target.value, exchange_selected_items: [] }));
+                    setForm(p => ({ ...p, exchange_return_id: e.target.value, exchange_selected_items: {} }));
                     setExchangeItems([]);
                     setExchangeItemsFetched(false);
                   }}
@@ -866,22 +868,43 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
               {exchangeItemsFetched && exchangeItems.length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-blue-800 mb-2">Select Items to Return *</div>
-                  {exchangeItems.map(item => (
-                    <label key={item.id} className="flex items-center gap-2 cursor-pointer mb-1.5">
-                      <input
-                        type="checkbox"
-                        checked={form.exchange_selected_items.includes(item.id)}
-                        onChange={e => setForm(p => ({
-                          ...p,
-                          exchange_selected_items: e.target.checked
-                            ? [...p.exchange_selected_items, item.id]
-                            : p.exchange_selected_items.filter(id => id !== item.id)
-                        }))}
-                        className="rounded border-gray-300"
-                      />
-                      <span className="text-sm text-gray-800">{item.product_name} <span className="text-gray-400">(Qty: {item.quantity})</span></span>
-                    </label>
-                  ))}
+                  {exchangeItems.map(item => {
+                    const isChecked = item.id in form.exchange_selected_items;
+                    return (
+                      <div key={item.id} className="flex items-center gap-2 mb-1.5">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setForm(p => ({ ...p, exchange_selected_items: { ...p.exchange_selected_items, [item.id]: 1 } }));
+                            } else {
+                              setForm(p => {
+                                const next = { ...p.exchange_selected_items };
+                                delete next[item.id];
+                                return { ...p, exchange_selected_items: next };
+                              });
+                            }
+                          }}
+                          className="rounded border-gray-300 shrink-0"
+                        />
+                        <span className="text-sm text-gray-800 flex-1">{item.product_name} <span className="text-gray-400 text-xs">(ordered: {item.quantity})</span></span>
+                        {isChecked && (
+                          <input
+                            type="number"
+                            min={1}
+                            max={item.quantity}
+                            value={form.exchange_selected_items[item.id]}
+                            onChange={e => {
+                              const val = Math.min(item.quantity, Math.max(1, parseInt(e.target.value) || 1));
+                              setForm(p => ({ ...p, exchange_selected_items: { ...p.exchange_selected_items, [item.id]: val } }));
+                            }}
+                            className="w-16 px-2 py-1 border border-blue-300 rounded text-sm text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {exchangeItemsFetched && exchangeItems.length === 0 && (
@@ -916,24 +939,45 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
 
           {/* Partial delivery item selection */}
           {selectedAction === 'partial_delivery' && (
-            <div className="space-y-2 mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
-              <div className="text-xs font-medium text-orange-800 mb-2">Select Items to Return *</div>
-              {items.map(item => (
-                <label key={item.id} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.partial_items.includes(item.id)}
-                    onChange={e => setForm(p => ({
-                      ...p,
-                      partial_items: e.target.checked
-                        ? [...p.partial_items, item.id]
-                        : p.partial_items.filter(id => id !== item.id)
-                    }))}
-                    className="rounded border-gray-300"
-                  />
-                  <span className="text-sm text-gray-800">{item.product_name} <span className="text-gray-400">(Qty: {item.quantity})</span></span>
-                </label>
-              ))}
+            <div className="space-y-1.5 mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+              <div className="text-xs font-medium text-orange-800 mb-2">Select Items Not Received *</div>
+              {items.map(item => {
+                const isChecked = item.id in form.partial_items;
+                return (
+                  <div key={item.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={e => {
+                        if (e.target.checked) {
+                          setForm(p => ({ ...p, partial_items: { ...p.partial_items, [item.id]: 1 } }));
+                        } else {
+                          setForm(p => {
+                            const next = { ...p.partial_items };
+                            delete next[item.id];
+                            return { ...p, partial_items: next };
+                          });
+                        }
+                      }}
+                      className="rounded border-gray-300 shrink-0"
+                    />
+                    <span className="text-sm text-gray-800 flex-1">{item.product_name} <span className="text-gray-400 text-xs">(ordered: {item.quantity})</span></span>
+                    {isChecked && (
+                      <input
+                        type="number"
+                        min={1}
+                        max={item.quantity}
+                        value={form.partial_items[item.id]}
+                        onChange={e => {
+                          const val = Math.min(item.quantity, Math.max(1, parseInt(e.target.value) || 1));
+                          setForm(p => ({ ...p, partial_items: { ...p.partial_items, [item.id]: val } }));
+                        }}
+                        className="w-16 px-2 py-1 border border-orange-300 rounded text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-400"
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -945,22 +989,43 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
               </p>
               <div>
                 <div className="text-xs font-medium text-rose-800 mb-2">Select Items to Reverse Pick *</div>
-                {items.map(item => (
-                  <label key={item.id} className="flex items-center gap-2 cursor-pointer mb-1.5">
-                    <input
-                      type="checkbox"
-                      checked={form.reverse_pick_items.includes(item.id)}
-                      onChange={e => setForm(p => ({
-                        ...p,
-                        reverse_pick_items: e.target.checked
-                          ? [...p.reverse_pick_items, item.id]
-                          : p.reverse_pick_items.filter(id => id !== item.id)
-                      }))}
-                      className="rounded border-gray-300"
-                    />
-                    <span className="text-sm text-gray-800">{item.product_name} <span className="text-gray-400">(Qty: {item.quantity})</span></span>
-                  </label>
-                ))}
+                {items.map(item => {
+                  const isChecked = item.id in form.reverse_pick_items;
+                  return (
+                    <div key={item.id} className="flex items-center gap-2 mb-1.5">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setForm(p => ({ ...p, reverse_pick_items: { ...p.reverse_pick_items, [item.id]: 1 } }));
+                          } else {
+                            setForm(p => {
+                              const next = { ...p.reverse_pick_items };
+                              delete next[item.id];
+                              return { ...p, reverse_pick_items: next };
+                            });
+                          }
+                        }}
+                        className="rounded border-gray-300 shrink-0"
+                      />
+                      <span className="text-sm text-gray-800 flex-1">{item.product_name} <span className="text-gray-400 text-xs">(ordered: {item.quantity})</span></span>
+                      {isChecked && (
+                        <input
+                          type="number"
+                          min={1}
+                          max={item.quantity}
+                          value={form.reverse_pick_items[item.id]}
+                          onChange={e => {
+                            const val = Math.min(item.quantity, Math.max(1, parseInt(e.target.value) || 1));
+                            setForm(p => ({ ...p, reverse_pick_items: { ...p.reverse_pick_items, [item.id]: val } }));
+                          }}
+                          className="w-16 px-2 py-1 border border-rose-300 rounded text-sm text-center focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -13,7 +13,8 @@ import {
   Package,
   UserCheck,
   ShieldAlert,
-  KeyRound
+  KeyRound,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export default function Settings() {
@@ -91,6 +92,13 @@ export default function Settings() {
       route: '/settings/api-access'
     },
     {
+      title: 'Misc / General',
+      description: 'Operational toggles and general controls for fulfillment and warehouse',
+      icon: SlidersHorizontal,
+      color: 'slate',
+      route: '/settings/misc'
+    },
+    {
       title: 'Security',
       description: 'Manage security and authentication settings',
       icon: Lock,
@@ -112,7 +120,8 @@ export default function Settings() {
       amber: 'bg-amber-100 text-amber-600',
       orange: 'bg-orange-100 text-orange-600',
       red: 'bg-red-100 text-red-600',
-      teal: 'bg-teal-100 text-teal-600'
+      teal: 'bg-teal-100 text-teal-600',
+      slate: 'bg-slate-100 text-slate-600'
     };
     return colors[color as keyof typeof colors] || 'bg-gray-100 text-gray-600';
   };

@@ -8,6 +8,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { getAppSetting } from '../../lib/appSettings';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
@@ -15,6 +16,7 @@ import { PickModal } from '../../components/fulfillment/PickModal';
 import { BarcodeScannerModal } from '../../components/fulfillment/BarcodeScannerModal';
 import { LabInvoiceModal } from '../../components/fulfillment/LabInvoiceModal';
 import { PackedExportModal } from '../../components/fulfillment/PackedExportModal';
+import { DispatchPackagingModal } from '../../components/fulfillment/DispatchPackagingModal';
 import { STATUS_CONFIG } from './orders/types';
 import { buildInvoiceHtml, buildPackingSlipHtml } from './orders/orderDetail/InvoiceTemplate';
 import {
@@ -92,6 +94,9 @@ export default function Operations() {
   const [labPickOrder, setLabPickOrder] = useState<OperationsOrder | null>(null);
   const [shippedRange, setShippedRange] = useState('today');
   const [processingConfirmId, setProcessingConfirmId] = useState<string | null>(null);
+  const [showDispatchModal, setShowDispatchModal] = useState(false);
+  const [packagingDispatchedToday, setPackagingDispatchedToday] = useState(false);
+  const [dispatchGateEnabled, setDispatchGateEnabled] = useState(true);
 
   const statusCounts = {
     not_printed: orders.filter(o => o.fulfillment_status === 'not_printed').length,
@@ -100,6 +105,20 @@ export default function Operations() {
     send_to_lab: orders.filter(o => o.fulfillment_status === 'send_to_lab').length,
     shipped: shippedOrders.length,
   };
+
+  const checkDispatchStatus = useCallback(async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const { count } = await supabase
+      .from('packaging_dispatch_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('dispatch_date', today);
+    setPackagingDispatchedToday((count ?? 0) > 0);
+  }, []);
+
+  const loadDispatchGateSetting = useCallback(async () => {
+    const val = await getAppSetting<boolean>('require_packaging_dispatch_gate');
+    setDispatchGateEnabled(val !== false);
+  }, []);
 
   const fetchOrders = useCallback(async () => {
     try {
@@ -196,6 +215,11 @@ export default function Operations() {
   }, []);
 
   useEffect(() => {
+    checkDispatchStatus();
+    loadDispatchGateSetting();
+  }, [checkDispatchStatus, loadDispatchGateSetting]);
+
+  useEffect(() => {
     fetchOrders();
   }, [lastRefreshed, fetchOrders]);
 
@@ -210,9 +234,12 @@ export default function Operations() {
         fetchOrders();
         fetchShippedOrders(shippedRange);
       })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'packaging_dispatch_logs' }, () => {
+        checkDispatchStatus();
+      })
       .subscribe();
     return () => { subscription.unsubscribe(); };
-  }, [fetchOrders, fetchShippedOrders, shippedRange]);
+  }, [fetchOrders, fetchShippedOrders, shippedRange, checkDispatchStatus]);
 
   const handleCameraScan = (barcode: string) => {
     setShowScanner(false);
@@ -534,13 +561,25 @@ export default function Operations() {
               />
             </div>
             {activeTab === 'packed' && (
-              <Button
-                size="sm"
-                onClick={() => setShowExportModal(true)}
-                className="sm:hidden shrink-0 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-              >
-                <Download className="h-4 w-4" />
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => setShowDispatchModal(true)}
+                  className={`sm:hidden shrink-0 relative border ${packagingDispatchedToday || !dispatchGateEnabled ? 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50' : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'}`}
+                >
+                  <Package className="h-4 w-4" />
+                  {!packagingDispatchedToday && dispatchGateEnabled && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full border-2 border-white" />
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => setShowExportModal(true)}
+                  className="sm:hidden shrink-0 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  <Download className="h-4 w-4" />
+                </Button>
+              </>
             )}
             {activeTab === 'shipped' && (
               <Select
@@ -559,14 +598,29 @@ export default function Operations() {
             <span>Barcode scanner ready — Scan order barcode to start picking</span>
           </div>
           {activeTab === 'packed' && (
-            <Button
-              size="sm"
-              onClick={() => setShowExportModal(true)}
-              className="hidden sm:flex bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-gray-900"
-            >
-              <Download className="h-4 w-4 mr-1.5" />
-              Export Packed
-            </Button>
+            <div className="hidden sm:flex items-center gap-2">
+              <div className="relative">
+                <Button
+                  size="sm"
+                  onClick={() => setShowDispatchModal(true)}
+                  className={`border ${packagingDispatchedToday || !dispatchGateEnabled ? 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-gray-900' : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'}`}
+                >
+                  <Package className="h-4 w-4 mr-1.5" />
+                  Dispatch Packaging
+                </Button>
+                {!packagingDispatchedToday && dispatchGateEnabled && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full border-2 border-white" />
+                )}
+              </div>
+              <Button
+                size="sm"
+                onClick={() => setShowExportModal(true)}
+                className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-gray-900"
+              >
+                <Download className="h-4 w-4 mr-1.5" />
+                Export Packed
+              </Button>
+            </div>
           )}
           {activeTab === 'shipped' && (
             <div className="hidden sm:flex items-center gap-2">
@@ -653,6 +707,8 @@ export default function Operations() {
                 onMarkProcessing={setProcessingConfirmId}
                 isWarehouseRole={isWarehouseRole}
                 onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
+                packagingDispatchedToday={packagingDispatchedToday}
+                gateEnabled={dispatchGateEnabled}
               />
             )}
             {activeTab === 'send_to_lab' && (
@@ -709,6 +765,17 @@ export default function Operations() {
         <PackedExportModal
           orders={packedOrdersForExport}
           onClose={() => setShowExportModal(false)}
+        />
+      )}
+
+      {showDispatchModal && (
+        <DispatchPackagingModal
+          onClose={() => setShowDispatchModal(false)}
+          onDispatched={() => {
+            setShowDispatchModal(false);
+            checkDispatchStatus();
+          }}
+          currentUser={undefined}
         />
       )}
 

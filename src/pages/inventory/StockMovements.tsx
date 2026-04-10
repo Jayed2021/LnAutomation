@@ -39,7 +39,7 @@ interface DateGroup {
   netSaleable: number;
 }
 
-const MOVEMENT_TYPES = ['all', 'receipt', 'sale', 'return_restock', 'adjustment', 'transfer', 'damaged', 'pkg_manual_restock', 'pkg_damaged'];
+const MOVEMENT_TYPES = ['all', 'receipt', 'sale', 'return_restock', 'adjustment', 'transfer', 'damaged', 'pkg_manual_restock', 'pkg_damaged', 'pkg_dispatch'];
 
 const movementConfig: Record<string, { label: string; variant: string; icon: React.ReactNode; sign: string }> = {
   receipt: { label: 'Receipt', variant: 'emerald', icon: <TrendingUp className="w-3 h-3" />, sign: '+' },
@@ -52,10 +52,11 @@ const movementConfig: Record<string, { label: string; variant: string; icon: Rea
   qc_damaged: { label: 'QC Damaged', variant: 'red', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
   pkg_manual_restock: { label: 'Pkg Restock', variant: 'emerald', icon: <TrendingUp className="w-3 h-3" />, sign: '+' },
   pkg_damaged: { label: 'Pkg Damaged', variant: 'red', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
+  pkg_dispatch: { label: 'Pkg Dispatched', variant: 'orange', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
 };
 
 const INBOUND_TYPES = new Set(['receipt', 'return_restock', 'return_receive', 'pkg_manual_restock']);
-const OUTBOUND_TYPES = new Set(['sale', 'damaged', 'qc_damaged', 'pkg_damaged']);
+const OUTBOUND_TYPES = new Set(['sale', 'damaged', 'qc_damaged', 'pkg_damaged', 'pkg_dispatch']);
 const OTHER_TYPES = new Set(['adjustment', 'transfer']);
 
 function formatDateLabel(dateStr: string): string {
@@ -163,7 +164,7 @@ function DateAccordion({ group, defaultOpen }: DateAccordionProps) {
             <span className="flex items-center gap-1">
               <Package className="w-3 h-3 text-orange-400" />
               <span className="text-gray-700 font-medium">{group.packagingOut}</span>
-              <span>pkg used</span>
+              <span>pkg dispatched</span>
             </span>
           )}
           {others.length > 0 && (
@@ -285,17 +286,17 @@ function MovementSection({ title, icon, rows, emptyText, linkToOrder }: Movement
 }
 
 function PackagingSummary({ movements }: { movements: Movement[] }) {
-  const outMovements = movements.filter(m => OUTBOUND_TYPES.has(m.movement_type) && m.movement_type !== 'pkg_damaged');
+  const dispatchMovements = movements.filter(m => m.movement_type === 'pkg_dispatch');
   const restockMovements = movements.filter(m => m.movement_type === 'pkg_manual_restock');
   const damagedMovements = movements.filter(m => m.movement_type === 'pkg_damaged');
-  const totalOut = outMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
+  const totalDispatched = dispatchMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
   const totalRestock = restockMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
   const totalDamaged = damagedMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
 
-  const uniqueOut = new Map<string, { name: string; qty: number }>();
-  for (const m of outMovements) {
-    if (!uniqueOut.has(m.sku)) uniqueOut.set(m.sku, { name: m.product_name, qty: 0 });
-    uniqueOut.get(m.sku)!.qty += Math.abs(m.quantity);
+  const uniqueDispatched = new Map<string, { name: string; qty: number }>();
+  for (const m of dispatchMovements) {
+    if (!uniqueDispatched.has(m.sku)) uniqueDispatched.set(m.sku, { name: m.product_name, qty: 0 });
+    uniqueDispatched.get(m.sku)!.qty += Math.abs(m.quantity);
   }
 
   return (
@@ -305,12 +306,12 @@ function PackagingSummary({ movements }: { movements: Movement[] }) {
         <span className="text-xs font-semibold text-orange-800 uppercase tracking-wide">Packaging Materials</span>
       </div>
       <div className="flex flex-wrap gap-4 text-xs text-orange-700">
-        {totalOut > 0 && (
+        {totalDispatched > 0 && (
           <span>
-            <span className="font-semibold">{totalOut}</span> units used
-            {uniqueOut.size > 0 && (
+            <span className="font-semibold">{totalDispatched}</span> dispatched
+            {uniqueDispatched.size > 0 && (
               <span className="text-orange-500 ml-1">
-                ({[...uniqueOut.entries()].map(([sku, v]) => `${v.qty}× ${sku}`).join(', ')})
+                ({[...uniqueDispatched.entries()].map(([sku, v]) => `${v.qty}× ${sku}`).join(', ')})
               </span>
             )}
           </span>
@@ -325,7 +326,7 @@ function PackagingSummary({ movements }: { movements: Movement[] }) {
             <span className="font-semibold">{totalDamaged}</span> damaged/lost
           </span>
         )}
-        {totalOut === 0 && totalRestock === 0 && totalDamaged === 0 && (
+        {totalDispatched === 0 && totalRestock === 0 && totalDamaged === 0 && (
           <span className="text-orange-400">No movements</span>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { Truck, RotateCcw } from 'lucide-react';
+import { Truck, RotateCcw, Lock } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import type { OperationsOrder } from './types';
 
@@ -9,6 +9,8 @@ interface Props {
   onMarkProcessing: (id: string) => void;
   isWarehouseRole: boolean;
   onNavigate: (id: string) => void;
+  packagingDispatchedToday: boolean;
+  gateEnabled: boolean;
 }
 
 export function PackedTable({
@@ -18,9 +20,52 @@ export function PackedTable({
   onMarkProcessing,
   isWarehouseRole,
   onNavigate,
+  packagingDispatchedToday,
+  gateEnabled,
 }: Props) {
+  const isShipBlocked = gateEnabled && !packagingDispatchedToday;
+
+  const ShipButton = ({ orderId, fullWidth = false }: { orderId: string; fullWidth?: boolean }) => {
+    if (isShipBlocked) {
+      return (
+        <div className="relative group">
+          <button
+            disabled
+            className={`${fullWidth ? 'flex-1 w-full' : 'px-3'} flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-gray-100 text-gray-400 cursor-not-allowed text-sm font-medium border border-gray-200`}
+          >
+            <Lock className="h-3.5 w-3.5" />
+            <span>Mark as Shipped</span>
+          </button>
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-gray-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+            Dispatch packaging first for today
+            <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <Button
+        size="sm"
+        className={`${fullWidth ? 'flex-1' : ''} bg-slate-700 hover:bg-slate-800 text-white border-0 py-2.5 h-auto`}
+        onClick={() => onMarkShipped(orderId)}
+      >
+        <Truck className="h-3.5 w-3.5 mr-1.5" /> Mark as Shipped
+      </Button>
+    );
+  };
+
   return (
     <>
+      {isShipBlocked && (
+        <div className="mx-4 mt-3 flex items-center gap-2.5 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+          <Lock className="h-4 w-4 text-amber-500 shrink-0" />
+          <p className="text-sm text-amber-800">
+            <span className="font-semibold">Shipping is locked.</span> You must dispatch packaging materials first. Click <span className="font-semibold">Dispatch Packaging</span> above to unlock shipping for today.
+          </p>
+        </div>
+      )}
+
       <div className="sm:hidden divide-y divide-gray-100">
         {orders.map(order => (
           <div key={order.id} className="p-4 hover:bg-green-50 transition-colors">
@@ -48,13 +93,12 @@ export function PackedTable({
                   <RotateCcw className="h-4 w-4" />
                 </button>
               )}
-              <Button size="sm" className="flex-1 bg-slate-700 hover:bg-slate-800 text-white border-0 py-2.5 h-auto" onClick={() => onMarkShipped(order.id)}>
-                <Truck className="h-3.5 w-3.5 mr-1.5" /> Mark as Shipped
-              </Button>
+              <ShipButton orderId={order.id} fullWidth />
             </div>
           </div>
         ))}
       </div>
+
       <div className="hidden sm:block overflow-x-auto">
         <table className="w-full text-sm min-w-[500px]">
           <thead>
@@ -102,9 +146,25 @@ export function PackedTable({
                         <RotateCcw className="h-4 w-4" />
                       </button>
                     )}
-                    <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-3" onClick={() => onMarkShipped(order.id)}>
-                      <Truck className="h-3.5 w-3.5 mr-1" /> Mark Shipped
-                    </Button>
+                    {isShipBlocked ? (
+                      <div className="relative group">
+                        <button
+                          disabled
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-400 cursor-not-allowed text-sm font-medium border border-gray-200"
+                        >
+                          <Lock className="h-3.5 w-3.5" />
+                          <span>Mark Shipped</span>
+                        </button>
+                        <div className="absolute bottom-full right-0 mb-2 px-2.5 py-1.5 bg-gray-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                          Dispatch packaging first for today
+                          <span className="absolute top-full right-4 border-4 border-transparent border-t-gray-800" />
+                        </div>
+                      </div>
+                    ) : (
+                      <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-3" onClick={() => onMarkShipped(order.id)}>
+                        <Truck className="h-3.5 w-3.5 mr-1" /> Mark Shipped
+                      </Button>
+                    )}
                   </div>
                 </td>
               </tr>

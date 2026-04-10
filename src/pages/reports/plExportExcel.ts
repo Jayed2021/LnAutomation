@@ -75,31 +75,32 @@ interface ExportOptions {
     gross_profit: number;
   };
   storeName?: string;
-  packagingOverride?: {
+  manualPackagingCost?: {
     total_cost: number;
-    system_cost: number;
     notes: string | null;
   };
 }
 
 export async function exportProfitLossExcel(opts: ExportOptions): Promise<void> {
-  const { from, to, rows, otherRevenue, plExpenses, orderTotals, storeName, packagingOverride } = opts;
-
-  const effectivePackagingCost = packagingOverride ? packagingOverride.total_cost : orderTotals.packaging_cost;
-  const packagingDiff = effectivePackagingCost - orderTotals.packaging_cost;
+  const { from, to, rows, otherRevenue, plExpenses, orderTotals, storeName, manualPackagingCost } = opts;
 
   const totalRevenue = orderTotals.revenue + otherRevenue.total;
-  const grossProfit = orderTotals.gross_profit + otherRevenue.total - packagingDiff;
+  const grossProfit = orderTotals.gross_profit + otherRevenue.total;
   const totalExpenses = plExpenses.reduce((s, e) => s + e.amount, 0);
   const netProfit = grossProfit - totalExpenses;
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
   const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
+  const manualGrossProfit = manualPackagingCost
+    ? grossProfit - manualPackagingCost.total_cost + orderTotals.packaging_cost
+    : null;
+  const manualNetProfit = manualGrossProfit !== null ? manualGrossProfit - totalExpenses : null;
+
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Lunettes ERP';
   workbook.created = new Date();
 
-  buildSummarySheet(workbook, { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses, packagingOverride, effectivePackagingCost });
+  buildSummarySheet(workbook, { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses, manualPackagingCost, manualGrossProfit, manualNetProfit });
   buildOrderDetailSheet(workbook, rows, from, to);
   buildExpensesSheet(workbook, plExpenses, from, to);
 
@@ -122,8 +123,9 @@ function buildSummarySheet(
     totalRevenue: number; grossProfit: number; totalExpenses: number; netProfit: number;
     grossMargin: number; netMargin: number;
     plExpenses: Expense[];
-    packagingOverride?: { total_cost: number; system_cost: number; notes: string | null };
-    effectivePackagingCost: number;
+    manualPackagingCost?: { total_cost: number; notes: string | null } | null;
+    manualGrossProfit: number | null;
+    manualNetProfit: number | null;
   }
 ) {
   const ws = wb.addWorksheet('P&L Summary', { properties: { tabColor: { argb: 'FF1E3A5F' } } });
@@ -190,7 +192,7 @@ function buildSummarySheet(
     row.height = 22;
   };
 
-  const { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses, packagingOverride, effectivePackagingCost } = opts;
+  const { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses, manualPackagingCost, manualGrossProfit, manualNetProfit } = opts;
 
   addTitle(storeName ? `${storeName} — Profit & Loss Statement` : 'Profit & Loss Statement');
   addMeta('Report Period:', `${from}  to  ${to}`);
@@ -212,25 +214,26 @@ function buildSummarySheet(
   addSectionHeader('COST OF GOODS SOLD (COGS)');
   addLine('Product COGS', orderTotals.product_cogs, true,
     totalRevenue > 0 ? (orderTotals.product_cogs / totalRevenue) * 100 : undefined);
-  if (packagingOverride) {
-    addLine('Packaging Cost (Manual Override)', effectivePackagingCost, true,
-      totalRevenue > 0 ? (effectivePackagingCost / totalRevenue) * 100 : undefined);
-    addLine('  → System estimate (for reference)', orderTotals.packaging_cost, true);
-    if (packagingOverride.notes) {
-      addLine(`  → Note: ${packagingOverride.notes}`, 0, true);
+  addLine('Packaging Cost (System Estimate)', orderTotals.packaging_cost, true,
+    totalRevenue > 0 ? (orderTotals.packaging_cost / totalRevenue) * 100 : undefined);
+  if (manualPackagingCost) {
+    addLine('Packaging Cost (Manual Calculation)', manualPackagingCost.total_cost, true,
+      totalRevenue > 0 ? (manualPackagingCost.total_cost / totalRevenue) * 100 : undefined);
+    if (manualPackagingCost.notes) {
+      addLine(`  Note: ${manualPackagingCost.notes}`, 0, true);
     }
-  } else {
-    addLine('Packaging Cost', orderTotals.packaging_cost, true,
-      totalRevenue > 0 ? (orderTotals.packaging_cost / totalRevenue) * 100 : undefined);
   }
   addLine('Delivery Charges', orderTotals.delivery_charge, true,
     totalRevenue > 0 ? (orderTotals.delivery_charge / totalRevenue) * 100 : undefined);
-  const effectiveTotalCogs = orderTotals.total_cogs + (effectivePackagingCost - orderTotals.packaging_cost);
-  addTotalLine('Total COGS', effectiveTotalCogs,
-    totalRevenue > 0 ? (effectiveTotalCogs / totalRevenue) * 100 : undefined, false);
+  addTotalLine('Total COGS (System Packaging)', orderTotals.total_cogs,
+    totalRevenue > 0 ? (orderTotals.total_cogs / totalRevenue) * 100 : undefined, false);
   addBlank();
 
-  addTotalLine('GROSS PROFIT', grossProfit, grossMargin);
+  addTotalLine('GROSS PROFIT (System Packaging)', grossProfit, grossMargin);
+  if (manualGrossProfit !== null) {
+    const manualGrossMargin = totalRevenue > 0 ? (manualGrossProfit / totalRevenue) * 100 : 0;
+    addTotalLine('GROSS PROFIT (Manual Packaging)', manualGrossProfit, manualGrossMargin);
+  }
   addBlank();
 
   addSectionHeader('OPERATING EXPENSES (Affects P&L)');
@@ -257,7 +260,11 @@ function buildSummarySheet(
     totalRevenue > 0 ? (totalExpenses / totalRevenue) * 100 : undefined, false);
   addBlank();
 
-  addTotalLine('NET PROFIT', netProfit, netMargin);
+  addTotalLine('NET PROFIT (System Packaging)', netProfit, netMargin);
+  if (manualNetProfit !== null) {
+    const manualNetMargin = totalRevenue > 0 ? (manualNetProfit / totalRevenue) * 100 : 0;
+    addTotalLine('NET PROFIT (Manual Packaging)', manualNetProfit, manualNetMargin);
+  }
 
   ws.getRow(1).font = { bold: true, size: 14, color: { argb: 'FF1E3A5F' } };
 }

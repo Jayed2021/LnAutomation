@@ -22,7 +22,6 @@ import {
   FileDown,
   Layers,
   Pencil,
-  BadgeAlert,
 } from 'lucide-react';
 import {
   BarChart,
@@ -469,21 +468,28 @@ function ProfitLossContent() {
     { revenue: 0, delivery_charge: 0, product_cogs: 0, packaging_cost: 0, total_cogs: 0, gross_profit: 0 }
   );
 
-  const effectivePackagingCost = packagingOverride !== null
-    ? packagingOverride.total_cost
-    : orderTotals.packaging_cost;
-
   const systemPackagingCost = orderTotals.packaging_cost;
-
-  const packagingDiff = effectivePackagingCost - systemPackagingCost;
+  const manualPackagingCost = packagingOverride !== null ? packagingOverride.total_cost : null;
 
   const totalRevenue = orderTotals.revenue + otherRevenue.total;
-  const grossProfit = orderTotals.gross_profit + otherRevenue.total - packagingDiff;
+
+  const grossProfit = orderTotals.gross_profit + otherRevenue.total;
   const totalExpenses = plExpenses.reduce((s, e) => s + e.amount, 0);
   const netProfit = grossProfit - totalExpenses;
 
   const avgMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
   const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+  const manualGrossProfit = manualPackagingCost !== null
+    ? grossProfit - manualPackagingCost + systemPackagingCost
+    : null;
+  const manualNetProfit = manualGrossProfit !== null ? manualGrossProfit - totalExpenses : null;
+  const manualAvgMargin = manualGrossProfit !== null && totalRevenue > 0
+    ? (manualGrossProfit / totalRevenue) * 100
+    : null;
+  const manualNetMargin = manualNetProfit !== null && totalRevenue > 0
+    ? (manualNetProfit / totalRevenue) * 100
+    : null;
 
   const expensesByMonth = plExpenses.reduce<Record<string, number>>((acc, e) => {
     const key = e.expense_date?.slice(0, 7) ?? 'unknown';
@@ -503,10 +509,9 @@ function ProfitLossContent() {
         otherRevenue,
         plExpenses,
         orderTotals,
-        packagingOverride: packagingOverride ? {
-          total_cost: packagingOverride.total_cost,
-          system_cost: systemPackagingCost,
-          notes: packagingOverride.notes,
+        manualPackagingCost: manualPackagingCost !== null ? {
+          total_cost: manualPackagingCost,
+          notes: packagingOverride?.notes ?? null,
         } : undefined,
       });
     } finally {
@@ -642,51 +647,50 @@ function ProfitLossContent() {
           </p>
         </div>
 
-        <div className={`border rounded-xl p-4 ${packagingOverride ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-200'}`}>
-          <div className="flex items-start justify-between gap-1 mb-2">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className="flex items-start justify-between gap-1 mb-3">
             <div className="flex items-center gap-2">
-              <div className={`p-1.5 rounded-lg ${packagingOverride ? 'bg-amber-100' : 'bg-orange-100'}`}>
-                <Package className={`w-4 h-4 ${packagingOverride ? 'text-amber-600' : 'text-orange-600'}`} />
+              <div className="p-1.5 bg-orange-100 rounded-lg">
+                <Package className="w-4 h-4 text-orange-600" />
               </div>
               <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Packaging</span>
             </div>
             <button
               onClick={() => setShowOverrideModal(true)}
-              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors shrink-0 ${
-                packagingOverride
-                  ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors shrink-0 bg-gray-100 text-gray-500 hover:bg-gray-200"
             >
               <Pencil className="w-2.5 h-2.5" />
-              {packagingOverride ? 'Edit' : 'Override'}
+              {packagingOverride ? 'Edit' : 'Enter Qty'}
             </button>
           </div>
-          <p className={`text-xl font-bold ${packagingOverride ? 'text-amber-900' : 'text-gray-900'}`}>
-            ৳{fmtCur(effectivePackagingCost)}
-          </p>
-          {packagingOverride ? (
-            <div className="mt-1 space-y-0.5">
-              <div className="flex items-center gap-1">
-                <BadgeAlert className="w-3 h-3 text-amber-600" />
-                <span className="text-[10px] font-semibold text-amber-700">Manual Override</span>
-              </div>
-              <p className="text-[10px] text-amber-600">
-                System est: ৳{fmtCur(systemPackagingCost)}
+          <div className="space-y-2">
+            <div>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide font-medium mb-0.5">System Estimate</p>
+              <p className="text-lg font-bold text-gray-900">৳{fmtCur(systemPackagingCost)}</p>
+              <p className="text-[10px] text-gray-400">
+                {totalRevenue > 0 ? fmtPct(systemPackagingCost / totalRevenue * 100) : '—'} of revenue
               </p>
             </div>
-          ) : (
-            <p className="text-xs text-gray-400 mt-1">
-              {totalRevenue > 0 ? fmtPct(effectivePackagingCost / totalRevenue * 100) : '—'} of revenue
-            </p>
-          )}
+            {manualPackagingCost !== null && (
+              <div className="pt-2 border-t border-orange-100">
+                <p className="text-[10px] text-orange-600 uppercase tracking-wide font-semibold mb-0.5">Manual Calculation</p>
+                <p className="text-lg font-bold text-orange-700">৳{fmtCur(manualPackagingCost)}</p>
+                <p className="text-[10px] text-orange-400">
+                  {totalRevenue > 0 ? fmtPct(manualPackagingCost / totalRevenue * 100) : '—'} of revenue
+                </p>
+              </div>
+            )}
+            {manualPackagingCost === null && (
+              <p className="text-[10px] text-gray-300 pt-1 border-t border-gray-100">No manual quantities entered</p>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Summary cards — Row 2: Gross Profit → Expenses → Net Profit */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-3">
             <div className={`p-1.5 rounded-lg ${grossProfit >= 0 ? 'bg-emerald-100' : 'bg-red-100'}`}>
               {grossProfit >= 0
                 ? <TrendingUp className="w-4 h-4 text-emerald-600" />
@@ -695,14 +699,33 @@ function ProfitLossContent() {
             </div>
             <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Gross Profit</span>
           </div>
-          <p className={`text-2xl font-bold ${grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
-            ৳{fmtCur(grossProfit)}
-          </p>
-          <div className="flex items-center justify-between mt-1">
-            <p className="text-xs text-gray-400">after COGS + packaging</p>
-            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${avgMargin >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-              {fmtPct(avgMargin)}
-            </span>
+          <div className="space-y-2">
+            <div>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide font-medium mb-0.5">System</p>
+              <p className={`text-2xl font-bold ${grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                ৳{fmtCur(grossProfit)}
+              </p>
+              <div className="flex items-center justify-between mt-0.5">
+                <p className="text-[10px] text-gray-400">after COGS + packaging</p>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${avgMargin >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                  {fmtPct(avgMargin)}
+                </span>
+              </div>
+            </div>
+            {manualGrossProfit !== null && manualAvgMargin !== null && (
+              <div className="pt-2 border-t border-orange-100">
+                <p className="text-[10px] text-orange-600 uppercase tracking-wide font-semibold mb-0.5">Manual</p>
+                <p className={`text-xl font-bold ${manualGrossProfit >= 0 ? 'text-orange-700' : 'text-red-600'}`}>
+                  ৳{fmtCur(manualGrossProfit)}
+                </p>
+                <div className="flex items-center justify-between mt-0.5">
+                  <p className="text-[10px] text-orange-400">manual packaging cost</p>
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${manualAvgMargin >= 0 ? 'bg-orange-50 text-orange-700' : 'bg-red-50 text-red-600'}`}>
+                    {fmtPct(manualAvgMargin)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -721,7 +744,7 @@ function ProfitLossContent() {
         </div>
 
         <div className={`rounded-xl p-4 border-2 ${netProfit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-3">
             <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-200' : 'bg-red-200'}`}>
               {netProfit >= 0
                 ? <TrendingUp className="w-4 h-4 text-emerald-700" />
@@ -730,16 +753,35 @@ function ProfitLossContent() {
             </div>
             <span className={`text-xs font-bold uppercase tracking-wide ${netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net Profit</span>
           </div>
-          <p className={`text-2xl font-bold ${netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
-            ৳{fmtCur(netProfit)}
-          </p>
-          <div className="flex items-center justify-between mt-1">
-            <p className={`text-xs ${netProfit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-              Gross Profit minus Expenses
-            </p>
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${netProfit >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
-              {fmtPct(netMargin)}
-            </span>
+          <div className="space-y-2">
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wide font-medium mb-0.5">System</p>
+              <p className={`text-2xl font-bold ${netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
+                ৳{fmtCur(netProfit)}
+              </p>
+              <div className="flex items-center justify-between mt-0.5">
+                <p className={`text-[10px] ${netProfit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  Gross minus Expenses
+                </p>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${netProfit >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+                  {fmtPct(netMargin)}
+                </span>
+              </div>
+            </div>
+            {manualNetProfit !== null && manualNetMargin !== null && (
+              <div className="pt-2 border-t border-orange-100">
+                <p className="text-[10px] text-orange-600 uppercase tracking-wide font-semibold mb-0.5">Manual</p>
+                <p className={`text-xl font-bold ${manualNetProfit >= 0 ? 'text-orange-700' : 'text-red-600'}`}>
+                  ৳{fmtCur(manualNetProfit)}
+                </p>
+                <div className="flex items-center justify-between mt-0.5">
+                  <p className="text-[10px] text-orange-400">manual packaging cost</p>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${manualNetProfit >= 0 ? 'bg-orange-50 text-orange-700' : 'bg-red-50 text-red-600'}`}>
+                    {fmtPct(manualNetMargin)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -918,19 +960,22 @@ function ProfitLossContent() {
                     ৳{fmtCur(orderTotals.product_cogs)}
                   </td>
                   <td className="px-3 py-3 text-right font-bold whitespace-nowrap text-xs">
-                    {packagingOverride ? (
-                      <span className="text-amber-700">
-                        ৳{fmtCur(effectivePackagingCost)}
-                        <span className="block text-[10px] font-normal text-amber-500 leading-tight">override</span>
+                    <span className="text-orange-600">৳{fmtCur(systemPackagingCost)}</span>
+                    {manualPackagingCost !== null && (
+                      <span className="block text-[10px] font-normal text-orange-400 leading-tight">
+                        Manual: ৳{fmtCur(manualPackagingCost)}
                       </span>
-                    ) : (
-                      <span className="text-orange-600">৳{fmtCur(orderTotals.packaging_cost)}</span>
                     )}
                   </td>
                   <td className={`px-3 py-3 text-right font-bold whitespace-nowrap text-xs ${
                     grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'
                   }`}>
                     ৳{fmtCur(grossProfit)}
+                    {manualGrossProfit !== null && (
+                      <span className="block text-[10px] font-normal text-orange-500 leading-tight">
+                        Manual: ৳{fmtCur(manualGrossProfit)}
+                      </span>
+                    )}
                   </td>
                   <td className={`px-3 py-3 text-right font-bold whitespace-nowrap text-xs ${
                     avgMargin >= 0 ? 'text-emerald-700' : 'text-red-600'
@@ -952,6 +997,11 @@ function ProfitLossContent() {
                 <tr className={`border-t-2 ${netProfit >= 0 ? 'bg-emerald-50 border-emerald-300' : 'bg-red-50 border-red-300'}`}>
                   <td colSpan={7} className={`px-3 py-3 text-sm font-bold uppercase tracking-wide ${netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
                     Net Profit
+                    {manualNetProfit !== null && (
+                      <span className="block text-[10px] font-normal text-orange-500 normal-case leading-tight mt-0.5">
+                        Manual: ৳{fmtCur(manualNetProfit)} ({manualNetMargin !== null ? fmtPct(manualNetMargin) : '—'})
+                      </span>
+                    )}
                   </td>
                   <td className={`px-3 py-3 text-right text-base font-bold whitespace-nowrap ${netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
                     ৳{fmtCur(netProfit)}

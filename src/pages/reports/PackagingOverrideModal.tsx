@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Package, Calculator, Info, Save, AlertTriangle } from 'lucide-react';
+import { X, Package, Calculator, Save, AlertTriangle, Info } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -7,10 +7,8 @@ interface PackagingSkuRow {
   product_id: string;
   sku: string;
   product_name: string;
-  avg_landed_cost: number;
+  unit_cost: number;
   system_dispatch_qty: number;
-  system_return_qty: number;
-  system_damaged_qty: number;
   manual_quantity: number;
   line_cost: number;
 }
@@ -64,16 +62,15 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
     const [pkgProductsResult, movementsResult] = await Promise.all([
       supabase
         .from('products')
-        .select('id, sku, name, avg_landed_cost')
+        .select('id, sku, name, default_landed_cost')
         .eq('product_type', 'packaging_material')
-        .gt('avg_landed_cost', 0)
         .order('sku'),
       supabase
         .from('stock_movements')
-        .select('product_id, movement_type, quantity')
+        .select('product_id, quantity')
+        .eq('movement_type', 'pkg_dispatch')
         .gte('created_at', periodFrom)
-        .lte('created_at', periodTo + 'T23:59:59Z')
-        .in('movement_type', ['sale', 'adjustment', 'pkg_manual_restock', 'damaged']),
+        .lte('created_at', periodTo + 'T23:59:59Z'),
     ]);
 
     if (pkgProductsResult.error || movementsResult.error) {
@@ -85,18 +82,10 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
     const products = pkgProductsResult.data ?? [];
     const movements = movementsResult.data ?? [];
 
-    const movementTotals: Record<string, { dispatch: number; restock: number; damaged: number }> = {};
+    const dispatchQtyByProduct: Record<string, number> = {};
     for (const m of movements) {
-      if (!movementTotals[m.product_id]) {
-        movementTotals[m.product_id] = { dispatch: 0, restock: 0, damaged: 0 };
-      }
-      if (m.movement_type === 'sale' || m.movement_type === 'adjustment') {
-        movementTotals[m.product_id].dispatch += Math.abs(m.quantity);
-      } else if (m.movement_type === 'pkg_manual_restock') {
-        movementTotals[m.product_id].restock += Math.abs(m.quantity);
-      } else if (m.movement_type === 'damaged') {
-        movementTotals[m.product_id].damaged += Math.abs(m.quantity);
-      }
+      if (!dispatchQtyByProduct[m.product_id]) dispatchQtyByProduct[m.product_id] = 0;
+      dispatchQtyByProduct[m.product_id] += Math.abs(m.quantity);
     }
 
     const existingByProductId: Record<string, PackagingOverrideItem> = {};
@@ -107,18 +96,16 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
     }
 
     const skuRows: PackagingSkuRow[] = products.map(p => {
-      const totals = movementTotals[p.id] ?? { dispatch: 0, restock: 0, damaged: 0 };
       const existing = existingByProductId[p.id];
       const manualQty = existing?.manual_quantity ?? 0;
-      const cost = Number(p.avg_landed_cost ?? 0);
+      const cost = Number(p.default_landed_cost ?? 0);
+      const sysQty = dispatchQtyByProduct[p.id] ?? 0;
       return {
         product_id: p.id,
         sku: p.sku,
         product_name: p.name,
-        avg_landed_cost: cost,
-        system_dispatch_qty: totals.dispatch,
-        system_return_qty: totals.restock,
-        system_damaged_qty: totals.damaged,
+        unit_cost: cost,
+        system_dispatch_qty: sysQty,
         manual_quantity: manualQty,
         line_cost: manualQty * cost,
       };
@@ -136,12 +123,12 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
     setRows(prev => prev.map(r => {
       if (r.product_id !== productId) return r;
       const safeQty = Math.max(0, isNaN(qty) ? 0 : qty);
-      return { ...r, manual_quantity: safeQty, line_cost: safeQty * r.avg_landed_cost };
+      return { ...r, manual_quantity: safeQty, line_cost: safeQty * r.unit_cost };
     }));
   };
 
   const totalManualCost = rows.reduce((s, r) => s + r.line_cost, 0);
-  const systemEstimate = rows.reduce((s, r) => s + r.system_dispatch_qty * r.avg_landed_cost, 0);
+  const systemEstimate = rows.reduce((s, r) => s + r.system_dispatch_qty * r.unit_cost, 0);
   const hasAnyQty = rows.some(r => r.manual_quantity > 0);
 
   const handleSave = async () => {
@@ -189,14 +176,14 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
       }
 
       const itemsToInsert = rows
-        .filter(r => r.manual_quantity > 0 || r.avg_landed_cost > 0)
+        .filter(r => r.manual_quantity > 0)
         .map(r => ({
           override_id: overrideId,
           product_id: r.product_id,
           sku: r.sku,
           product_name: r.product_name,
           manual_quantity: r.manual_quantity,
-          avg_landed_cost_snapshot: r.avg_landed_cost,
+          avg_landed_cost_snapshot: r.unit_cost,
           line_cost: r.line_cost,
           system_dispatch_qty: r.system_dispatch_qty,
         }));
@@ -218,14 +205,14 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
         created_by: (user as { username?: string })?.username ?? 'admin',
         updated_at: new Date().toISOString(),
         items: rows
-          .filter(r => r.manual_quantity > 0 || r.avg_landed_cost > 0)
+          .filter(r => r.manual_quantity > 0)
           .map(r => ({
             id: '',
             product_id: r.product_id,
             sku: r.sku,
             product_name: r.product_name,
             manual_quantity: r.manual_quantity,
-            avg_landed_cost_snapshot: r.avg_landed_cost,
+            avg_landed_cost_snapshot: r.unit_cost,
             line_cost: r.line_cost,
             system_dispatch_qty: r.system_dispatch_qty,
           })),
@@ -233,7 +220,7 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
 
       onSaved(savedOverride);
     } catch (err) {
-      setError('Failed to save override. Please try again.');
+      setError('Failed to save. Please try again.');
       console.error(err);
     } finally {
       setSaving(false);
@@ -242,8 +229,7 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        {/* Header */}
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-orange-100 rounded-xl">
@@ -251,7 +237,7 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
             </div>
             <div>
               <h2 className="text-base font-bold text-gray-900">
-                {existingOverride ? 'Edit Packaging Cost Override' : 'Set Packaging Cost Override'}
+                {existingOverride ? 'Edit Manual Packaging Quantities' : 'Enter Manual Packaging Quantities'}
               </h2>
               <p className="text-xs text-gray-500 mt-0.5">
                 Period: {periodFrom} — {periodTo}
@@ -263,22 +249,20 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
           </button>
         </div>
 
-        {/* Info banner */}
-        <div className="mx-6 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 shrink-0">
-          <Info className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-          <p className="text-xs text-amber-800 leading-relaxed">
-            This override replaces the aggregated packaging cost in the P&L summary for this period.
-            Per-order packaging costs in the order detail table are not affected.
-            Enter the actual quantity of each material consumed during the period.
+        <div className="mx-6 mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-start gap-2.5 shrink-0">
+          <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+          <p className="text-xs text-blue-800 leading-relaxed">
+            Enter the actual quantity of each packaging material consumed this period.
+            The <span className="font-semibold">System (from Operations)</span> column shows quantities recorded via the Dispatch Packaging workflow — use it as a reference.
+            Your entered values will appear as a separate <span className="font-semibold">Manual Calculation</span> in the P&L alongside the system estimate.
           </p>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
-              <span className="ml-3 text-sm text-gray-500">Loading packaging data...</span>
+              <span className="ml-3 text-sm text-gray-500">Loading packaging materials...</span>
             </div>
           ) : error ? (
             <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
@@ -288,8 +272,8 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
           ) : rows.length === 0 ? (
             <div className="text-center py-16">
               <Package className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-              <p className="text-sm text-gray-500">No packaging materials with a landed cost found.</p>
-              <p className="text-xs text-gray-400 mt-1">Set avg landed cost on packaging materials first.</p>
+              <p className="text-sm text-gray-500">No packaging materials found.</p>
+              <p className="text-xs text-gray-400 mt-1">Add products with type "packaging_material" first.</p>
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -299,24 +283,17 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
                     <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">SKU</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Product</th>
                     <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-28">
-                      <span className="text-gray-400">System</span>
-                      <br />
-                      <span className="text-[10px] normal-case font-normal text-gray-400">dispatched</span>
+                      Cost/Unit
                     </th>
-                    <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-24">
-                      <span className="text-gray-400">Rcvd Back</span>
-                    </th>
-                    <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-24">
-                      <span className="text-gray-400">Damaged</span>
-                    </th>
-                    <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-28">
-                      Avg Cost
+                    <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-32">
+                      System
+                      <span className="block text-[10px] normal-case font-normal">(from Ops)</span>
                     </th>
                     <th className="px-4 py-3 text-center text-[11px] font-semibold text-orange-600 uppercase tracking-wider w-32">
-                      Manual Qty
+                      Your Qty
                     </th>
                     <th className="px-4 py-3 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wider w-32">
-                      Line Cost
+                      Line Total
                     </th>
                   </tr>
                 </thead>
@@ -325,29 +302,15 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
                     <tr key={row.product_id} className="hover:bg-orange-50/30 transition-colors">
                       <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.sku}</td>
                       <td className="px-4 py-3 text-sm text-gray-800">{row.product_name}</td>
-                      <td className="px-4 py-3 text-right text-xs text-gray-500">
+                      <td className="px-4 py-3 text-right text-xs text-gray-600 font-mono">
+                        {row.unit_cost > 0 ? `৳${fmtCur(row.unit_cost)}` : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right text-xs text-gray-400">
                         {row.system_dispatch_qty > 0 ? (
                           <span className="font-mono">{row.system_dispatch_qty.toLocaleString()}</span>
                         ) : (
-                          <span className="text-gray-300">—</span>
+                          <span className="text-gray-300">0</span>
                         )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-xs">
-                        {row.system_return_qty > 0 ? (
-                          <span className="font-mono text-emerald-600">+{row.system_return_qty.toLocaleString()}</span>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-xs">
-                        {row.system_damaged_qty > 0 ? (
-                          <span className="font-mono text-red-500">{row.system_damaged_qty.toLocaleString()}</span>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-xs text-gray-600 font-mono">
-                        ৳{fmtCur(row.avg_landed_cost)}
                       </td>
                       <td className="px-4 py-3">
                         <input
@@ -373,7 +336,6 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
             </div>
           )}
 
-          {/* Notes */}
           {!loading && rows.length > 0 && (
             <div className="mt-4">
               <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
@@ -390,7 +352,6 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
           )}
         </div>
 
-        {/* Footer */}
         {!loading && rows.length > 0 && (
           <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl shrink-0">
             <div className="flex items-center justify-between gap-4">
@@ -430,7 +391,7 @@ export default function PackagingOverrideModal({ periodFrom, periodTo, existingO
                   className="flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700 disabled:bg-orange-300 rounded-lg transition-colors"
                 >
                   <Save className="w-4 h-4" />
-                  {saving ? 'Saving...' : existingOverride ? 'Update Override' : 'Save Override'}
+                  {saving ? 'Saving...' : existingOverride ? 'Update' : 'Save'}
                 </button>
               </div>
             </div>

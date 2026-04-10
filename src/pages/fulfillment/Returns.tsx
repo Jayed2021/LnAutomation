@@ -13,6 +13,7 @@ import { ReceiveReturnModal } from '../../components/fulfillment/ReceiveReturnMo
 import { RestockModal } from '../../components/fulfillment/RestockModal';
 import { QCReviewModal } from '../../components/fulfillment/QCReviewModal';
 import { BarcodeScannerModal } from '../../components/fulfillment/BarcodeScannerModal';
+import { ReceivePackagingModal } from '../../components/fulfillment/ReceivePackagingModal';
 import { STATUS_CONFIG } from './orders/types';
 
 interface ReturnItem {
@@ -144,6 +145,7 @@ export default function Returns() {
   const [deleting, setDeleting] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [scanNotFound, setScanNotFound] = useState<string | null>(null);
+  const [showReceivePackaging, setShowReceivePackaging] = useState(false);
 
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
@@ -305,15 +307,25 @@ export default function Returns() {
           <h1 className="text-2xl font-bold text-gray-900">Returns Management</h1>
           <p className="text-sm text-gray-500 mt-1">Manage product returns, quality control, and restocking</p>
         </div>
-        <Button
-          variant="primary"
-          onClick={() => setShowScanner(true)}
-          className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
-        >
-          <Camera className="h-4 w-4 mr-2" />
-          <span className="hidden sm:inline">Open Barcode Scanner</span>
-          <span className="sm:hidden">Scan</span>
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            onClick={() => setShowReceivePackaging(true)}
+            className="gap-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
+          >
+            <Package className="h-4 w-4" />
+            <span className="hidden sm:inline">Receive Packaging</span>
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => setShowScanner(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+          >
+            <Camera className="h-4 w-4" />
+            <span className="hidden sm:inline">Open Barcode Scanner</span>
+            <span className="sm:hidden">Scan</span>
+          </Button>
+        </div>
       </div>
 
       {scanNotFound && (
@@ -637,6 +649,13 @@ export default function Returns() {
         <BarcodeScannerModal
           onScan={handleCameraScan}
           onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {showReceivePackaging && (
+        <ReceivePackagingModal
+          onClose={() => setShowReceivePackaging(false)}
+          onSuccess={() => setShowReceivePackaging(false)}
         />
       )}
     </div>

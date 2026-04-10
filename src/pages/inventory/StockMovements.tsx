@@ -39,7 +39,7 @@ interface DateGroup {
   netSaleable: number;
 }
 
-const MOVEMENT_TYPES = ['all', 'receipt', 'sale', 'return_restock', 'adjustment', 'transfer', 'damaged'];
+const MOVEMENT_TYPES = ['all', 'receipt', 'sale', 'return_restock', 'adjustment', 'transfer', 'damaged', 'pkg_manual_restock', 'pkg_damaged'];
 
 const movementConfig: Record<string, { label: string; variant: string; icon: React.ReactNode; sign: string }> = {
   receipt: { label: 'Receipt', variant: 'emerald', icon: <TrendingUp className="w-3 h-3" />, sign: '+' },
@@ -50,10 +50,12 @@ const movementConfig: Record<string, { label: string; variant: string; icon: Rea
   transfer: { label: 'Transfer', variant: 'blue', icon: <ArrowLeftRight className="w-3 h-3" />, sign: '' },
   damaged: { label: 'Damaged', variant: 'red', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
   qc_damaged: { label: 'QC Damaged', variant: 'red', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
+  pkg_manual_restock: { label: 'Pkg Restock', variant: 'emerald', icon: <TrendingUp className="w-3 h-3" />, sign: '+' },
+  pkg_damaged: { label: 'Pkg Damaged', variant: 'red', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
 };
 
-const INBOUND_TYPES = new Set(['receipt', 'return_restock', 'return_receive']);
-const OUTBOUND_TYPES = new Set(['sale', 'damaged', 'qc_damaged']);
+const INBOUND_TYPES = new Set(['receipt', 'return_restock', 'return_receive', 'pkg_manual_restock']);
+const OUTBOUND_TYPES = new Set(['sale', 'damaged', 'qc_damaged', 'pkg_damaged']);
 const OTHER_TYPES = new Set(['adjustment', 'transfer']);
 
 function formatDateLabel(dateStr: string): string {
@@ -283,10 +285,12 @@ function MovementSection({ title, icon, rows, emptyText, linkToOrder }: Movement
 }
 
 function PackagingSummary({ movements }: { movements: Movement[] }) {
-  const outMovements = movements.filter(m => OUTBOUND_TYPES.has(m.movement_type));
-  const inMovements = movements.filter(m => INBOUND_TYPES.has(m.movement_type));
+  const outMovements = movements.filter(m => OUTBOUND_TYPES.has(m.movement_type) && m.movement_type !== 'pkg_damaged');
+  const restockMovements = movements.filter(m => m.movement_type === 'pkg_manual_restock');
+  const damagedMovements = movements.filter(m => m.movement_type === 'pkg_damaged');
   const totalOut = outMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
-  const totalIn = inMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
+  const totalRestock = restockMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
+  const totalDamaged = damagedMovements.reduce((s, m) => s + Math.abs(m.quantity), 0);
 
   const uniqueOut = new Map<string, { name: string; qty: number }>();
   for (const m of outMovements) {
@@ -299,7 +303,6 @@ function PackagingSummary({ movements }: { movements: Movement[] }) {
       <div className="flex items-center gap-2 mb-2">
         <Package className="w-3.5 h-3.5 text-orange-500" />
         <span className="text-xs font-semibold text-orange-800 uppercase tracking-wide">Packaging Materials</span>
-        <span className="ml-auto text-xs text-orange-500 italic">Deduction logic being updated</span>
       </div>
       <div className="flex flex-wrap gap-4 text-xs text-orange-700">
         {totalOut > 0 && (
@@ -312,10 +315,17 @@ function PackagingSummary({ movements }: { movements: Movement[] }) {
             )}
           </span>
         )}
-        {totalIn > 0 && (
-          <span><span className="font-semibold">{totalIn}</span> units restocked</span>
+        {totalRestock > 0 && (
+          <span className="text-emerald-700">
+            <span className="font-semibold">+{totalRestock}</span> restocked
+          </span>
         )}
-        {totalOut === 0 && totalIn === 0 && (
+        {totalDamaged > 0 && (
+          <span className="text-red-600">
+            <span className="font-semibold">{totalDamaged}</span> damaged/lost
+          </span>
+        )}
+        {totalOut === 0 && totalRestock === 0 && totalDamaged === 0 && (
           <span className="text-orange-400">No movements</span>
         )}
       </div>

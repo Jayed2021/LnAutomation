@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { fetchManualRevenueTotalForRange, REVENUE_CATEGORY_LABELS, RevenueCategory } from '../finance/collection/manualRevenueService';
 import { fetchExpenses, type Expense } from '../finance/expenseService';
 import { exportProfitLossExcel } from './plExportExcel';
+import PackagingOverrideModal, { type PackagingOverride } from './PackagingOverrideModal';
 import {
   TrendingUp,
   TrendingDown,
@@ -20,6 +21,8 @@ import {
   Receipt,
   FileDown,
   Layers,
+  Pencil,
+  BadgeAlert,
 } from 'lucide-react';
 import {
   BarChart,
@@ -339,10 +342,23 @@ function ProfitLossContent() {
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [otherRevenue, setOtherRevenue] = useState<{ total: number; byCategory: Record<string, number> }>({ total: 0, byCategory: {} });
   const [plExpenses, setPlExpenses] = useState<Expense[]>([]);
+  const [packagingOverride, setPackagingOverride] = useState<PackagingOverride | null>(null);
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
 
   const dateRange = preset === 'custom'
     ? { from: customFrom, to: customTo }
     : getPresetDates(preset);
+
+  const loadPackagingOverride = useCallback(async (from: string, to: string) => {
+    const { data } = await supabase
+      .from('pl_packaging_overrides')
+      .select('*, items:pl_packaging_override_items(*)')
+      .eq('period_from', from)
+      .eq('period_to', to)
+      .maybeSingle();
+
+    setPackagingOverride(data ? (data as PackagingOverride) : null);
+  }, []);
 
   const fetchData = useCallback(async () => {
     if (!dateRange.from || !dateRange.to) return;
@@ -359,6 +375,8 @@ function ProfitLossContent() {
       fetchManualRevenueTotalForRange(dateRange.from, dateRange.to),
       fetchExpenses({ dateFrom: dateRange.from, dateTo: dateRange.to, affectsProfit: true }),
     ]);
+
+    await loadPackagingOverride(dateRange.from, dateRange.to);
 
     if (!orderResult.error && orderResult.data) {
       setRows(orderResult.data as OrderProfit[]);
@@ -451,8 +469,16 @@ function ProfitLossContent() {
     { revenue: 0, delivery_charge: 0, product_cogs: 0, packaging_cost: 0, total_cogs: 0, gross_profit: 0 }
   );
 
+  const effectivePackagingCost = packagingOverride !== null
+    ? packagingOverride.total_cost
+    : orderTotals.packaging_cost;
+
+  const systemPackagingCost = orderTotals.packaging_cost;
+
+  const packagingDiff = effectivePackagingCost - systemPackagingCost;
+
   const totalRevenue = orderTotals.revenue + otherRevenue.total;
-  const grossProfit = orderTotals.gross_profit + otherRevenue.total;
+  const grossProfit = orderTotals.gross_profit + otherRevenue.total - packagingDiff;
   const totalExpenses = plExpenses.reduce((s, e) => s + e.amount, 0);
   const netProfit = grossProfit - totalExpenses;
 
@@ -477,6 +503,11 @@ function ProfitLossContent() {
         otherRevenue,
         plExpenses,
         orderTotals,
+        packagingOverride: packagingOverride ? {
+          total_cost: packagingOverride.total_cost,
+          system_cost: systemPackagingCost,
+          notes: packagingOverride.notes,
+        } : undefined,
       });
     } finally {
       setExporting(false);
@@ -611,17 +642,44 @@ function ProfitLossContent() {
           </p>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-1.5 bg-orange-100 rounded-lg">
-              <Package className="w-4 h-4 text-orange-600" />
+        <div className={`border rounded-xl p-4 ${packagingOverride ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-200'}`}>
+          <div className="flex items-start justify-between gap-1 mb-2">
+            <div className="flex items-center gap-2">
+              <div className={`p-1.5 rounded-lg ${packagingOverride ? 'bg-amber-100' : 'bg-orange-100'}`}>
+                <Package className={`w-4 h-4 ${packagingOverride ? 'text-amber-600' : 'text-orange-600'}`} />
+              </div>
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Packaging</span>
             </div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Packaging</span>
+            <button
+              onClick={() => setShowOverrideModal(true)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors shrink-0 ${
+                packagingOverride
+                  ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              <Pencil className="w-2.5 h-2.5" />
+              {packagingOverride ? 'Edit' : 'Override'}
+            </button>
           </div>
-          <p className="text-xl font-bold text-gray-900">৳{fmtCur(orderTotals.packaging_cost)}</p>
-          <p className="text-xs text-gray-400 mt-1">
-            {totalRevenue > 0 ? fmtPct(orderTotals.packaging_cost / totalRevenue * 100) : '—'} of revenue
+          <p className={`text-xl font-bold ${packagingOverride ? 'text-amber-900' : 'text-gray-900'}`}>
+            ৳{fmtCur(effectivePackagingCost)}
           </p>
+          {packagingOverride ? (
+            <div className="mt-1 space-y-0.5">
+              <div className="flex items-center gap-1">
+                <BadgeAlert className="w-3 h-3 text-amber-600" />
+                <span className="text-[10px] font-semibold text-amber-700">Manual Override</span>
+              </div>
+              <p className="text-[10px] text-amber-600">
+                System est: ৳{fmtCur(systemPackagingCost)}
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 mt-1">
+              {totalRevenue > 0 ? fmtPct(effectivePackagingCost / totalRevenue * 100) : '—'} of revenue
+            </p>
+          )}
         </div>
       </div>
 
@@ -859,8 +917,15 @@ function ProfitLossContent() {
                   <td className="px-3 py-3 text-right font-bold text-amber-700 whitespace-nowrap text-xs">
                     ৳{fmtCur(orderTotals.product_cogs)}
                   </td>
-                  <td className="px-3 py-3 text-right font-bold text-orange-600 whitespace-nowrap text-xs">
-                    ৳{fmtCur(orderTotals.packaging_cost)}
+                  <td className="px-3 py-3 text-right font-bold whitespace-nowrap text-xs">
+                    {packagingOverride ? (
+                      <span className="text-amber-700">
+                        ৳{fmtCur(effectivePackagingCost)}
+                        <span className="block text-[10px] font-normal text-amber-500 leading-tight">override</span>
+                      </span>
+                    ) : (
+                      <span className="text-orange-600">৳{fmtCur(orderTotals.packaging_cost)}</span>
+                    )}
                   </td>
                   <td className={`px-3 py-3 text-right font-bold whitespace-nowrap text-xs ${
                     grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'
@@ -900,6 +965,19 @@ function ProfitLossContent() {
           </div>
         )}
       </div>
+
+      {showOverrideModal && (
+        <PackagingOverrideModal
+          periodFrom={dateRange.from}
+          periodTo={dateRange.to}
+          existingOverride={packagingOverride}
+          onClose={() => setShowOverrideModal(false)}
+          onSaved={(saved) => {
+            setPackagingOverride(saved);
+            setShowOverrideModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

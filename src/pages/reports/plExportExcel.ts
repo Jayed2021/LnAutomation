@@ -75,13 +75,21 @@ interface ExportOptions {
     gross_profit: number;
   };
   storeName?: string;
+  packagingOverride?: {
+    total_cost: number;
+    system_cost: number;
+    notes: string | null;
+  };
 }
 
 export async function exportProfitLossExcel(opts: ExportOptions): Promise<void> {
-  const { from, to, rows, otherRevenue, plExpenses, orderTotals, storeName } = opts;
+  const { from, to, rows, otherRevenue, plExpenses, orderTotals, storeName, packagingOverride } = opts;
+
+  const effectivePackagingCost = packagingOverride ? packagingOverride.total_cost : orderTotals.packaging_cost;
+  const packagingDiff = effectivePackagingCost - orderTotals.packaging_cost;
 
   const totalRevenue = orderTotals.revenue + otherRevenue.total;
-  const grossProfit = orderTotals.gross_profit + otherRevenue.total;
+  const grossProfit = orderTotals.gross_profit + otherRevenue.total - packagingDiff;
   const totalExpenses = plExpenses.reduce((s, e) => s + e.amount, 0);
   const netProfit = grossProfit - totalExpenses;
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
@@ -91,7 +99,7 @@ export async function exportProfitLossExcel(opts: ExportOptions): Promise<void> 
   workbook.creator = 'Lunettes ERP';
   workbook.created = new Date();
 
-  buildSummarySheet(workbook, { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses });
+  buildSummarySheet(workbook, { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses, packagingOverride, effectivePackagingCost });
   buildOrderDetailSheet(workbook, rows, from, to);
   buildExpensesSheet(workbook, plExpenses, from, to);
 
@@ -114,6 +122,8 @@ function buildSummarySheet(
     totalRevenue: number; grossProfit: number; totalExpenses: number; netProfit: number;
     grossMargin: number; netMargin: number;
     plExpenses: Expense[];
+    packagingOverride?: { total_cost: number; system_cost: number; notes: string | null };
+    effectivePackagingCost: number;
   }
 ) {
   const ws = wb.addWorksheet('P&L Summary', { properties: { tabColor: { argb: 'FF1E3A5F' } } });
@@ -180,7 +190,7 @@ function buildSummarySheet(
     row.height = 22;
   };
 
-  const { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses } = opts;
+  const { from, to, storeName, orderTotals, otherRevenue, totalRevenue, grossProfit, totalExpenses, netProfit, grossMargin, netMargin, plExpenses, packagingOverride, effectivePackagingCost } = opts;
 
   addTitle(storeName ? `${storeName} — Profit & Loss Statement` : 'Profit & Loss Statement');
   addMeta('Report Period:', `${from}  to  ${to}`);
@@ -202,12 +212,22 @@ function buildSummarySheet(
   addSectionHeader('COST OF GOODS SOLD (COGS)');
   addLine('Product COGS', orderTotals.product_cogs, true,
     totalRevenue > 0 ? (orderTotals.product_cogs / totalRevenue) * 100 : undefined);
-  addLine('Packaging Cost', orderTotals.packaging_cost, true,
-    totalRevenue > 0 ? (orderTotals.packaging_cost / totalRevenue) * 100 : undefined);
+  if (packagingOverride) {
+    addLine('Packaging Cost (Manual Override)', effectivePackagingCost, true,
+      totalRevenue > 0 ? (effectivePackagingCost / totalRevenue) * 100 : undefined);
+    addLine('  → System estimate (for reference)', orderTotals.packaging_cost, true);
+    if (packagingOverride.notes) {
+      addLine(`  → Note: ${packagingOverride.notes}`, 0, true);
+    }
+  } else {
+    addLine('Packaging Cost', orderTotals.packaging_cost, true,
+      totalRevenue > 0 ? (orderTotals.packaging_cost / totalRevenue) * 100 : undefined);
+  }
   addLine('Delivery Charges', orderTotals.delivery_charge, true,
     totalRevenue > 0 ? (orderTotals.delivery_charge / totalRevenue) * 100 : undefined);
-  addTotalLine('Total COGS', orderTotals.total_cogs,
-    totalRevenue > 0 ? (orderTotals.total_cogs / totalRevenue) * 100 : undefined, false);
+  const effectiveTotalCogs = orderTotals.total_cogs + (effectivePackagingCost - orderTotals.packaging_cost);
+  addTotalLine('Total COGS', effectiveTotalCogs,
+    totalRevenue > 0 ? (effectiveTotalCogs / totalRevenue) * 100 : undefined, false);
   addBlank();
 
   addTotalLine('GROSS PROFIT', grossProfit, grossMargin);

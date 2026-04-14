@@ -272,7 +272,7 @@ export function InternalTransferModal({ onClose, onSuccess }: InternalTransferMo
             quantity: item.transferQty,
             reference_type: 'internal_transfer',
             notes: `Transfer from ${sourceLocation.code} to ${destLocation.code}`,
-            performed_by: user?.full_name || user?.username || 'Unknown',
+            performed_by: user?.id,
           });
 
         if (movErr) throw new Error(`Failed to record movement for ${item.sku}: ${movErr.message}`);

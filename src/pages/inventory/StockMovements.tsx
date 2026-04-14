@@ -5,6 +5,7 @@ import { useRefresh } from '../../contexts/RefreshContext';
 import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { InternalTransferModal } from '../../components/inventory/InternalTransferModal';
 import {
   Search, Download, TrendingUp, TrendingDown, ArrowLeftRight,
   RefreshCw, Package, ChevronDown, ChevronRight, ExternalLink,
@@ -370,6 +371,7 @@ export default function StockMovements() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loadedDays, setLoadedDays] = useState(30);
+  const [showTransferModal, setShowTransferModal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -484,10 +486,16 @@ export default function StockMovements() {
           <h1 className="text-3xl font-bold text-gray-900">Stock Movements</h1>
           <p className="text-sm text-gray-500 mt-1">Daily inventory activity — grouped by date</p>
         </div>
-        <Button variant="outline" onClick={exportCSV} className="flex items-center gap-2">
-          <Download className="w-4 h-4" />
-          Export CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="primary" onClick={() => setShowTransferModal(true)} className="flex items-center gap-2">
+            <ArrowLeftRight className="w-4 h-4" />
+            Internal Transfer
+          </Button>
+          <Button variant="outline" onClick={exportCSV} className="flex items-center gap-2">
+            <Download className="w-4 h-4" />
+            Export CSV
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -589,6 +597,13 @@ export default function StockMovements() {
           )}
         </div>
       </Card>
+
+      {showTransferModal && (
+        <InternalTransferModal
+          onClose={() => setShowTransferModal(false)}
+          onSuccess={() => { loadMovements(); }}
+        />
+      )}
     </div>
   );
 }

@@ -254,19 +254,66 @@ export function InternalTransferModal({ onClose, onSuccess }: InternalTransferMo
 
     try {
       for (const item of transferItems) {
-        const { error: lotErr } = await supabase
+        const { data: lotData, error: fetchErr } = await supabase
           .from('inventory_lots')
-          .update({ location_id: destLocation.id })
-          .eq('id', item.lotId);
+          .select('id, lot_number, product_id, shipment_id, po_id, location_id, received_date, received_quantity, remaining_quantity, landed_cost_per_unit, barcode, reserved_quantity')
+          .eq('id', item.lotId)
+          .single();
 
-        if (lotErr) throw new Error(`Failed to update lot ${item.lotNumber}: ${lotErr.message}`);
+        if (fetchErr || !lotData) throw new Error(`Failed to fetch lot ${item.lotNumber}: ${fetchErr?.message}`);
+
+        if (item.transferQty > lotData.remaining_quantity) {
+          throw new Error(`Transfer quantity (${item.transferQty}) exceeds available stock (${lotData.remaining_quantity}) for lot ${item.lotNumber}.`);
+        }
+
+        let destLotId: string;
+
+        if (item.transferQty === lotData.remaining_quantity) {
+          const { error: moveErr } = await supabase
+            .from('inventory_lots')
+            .update({ location_id: destLocation.id })
+            .eq('id', item.lotId);
+
+          if (moveErr) throw new Error(`Failed to move lot ${item.lotNumber}: ${moveErr.message}`);
+
+          destLotId = item.lotId;
+        } else {
+          const { error: deductErr } = await supabase
+            .from('inventory_lots')
+            .update({ remaining_quantity: lotData.remaining_quantity - item.transferQty })
+            .eq('id', item.lotId);
+
+          if (deductErr) throw new Error(`Failed to deduct from lot ${item.lotNumber}: ${deductErr.message}`);
+
+          const { data: newLot, error: insertErr } = await supabase
+            .from('inventory_lots')
+            .insert({
+              lot_number: lotData.lot_number,
+              product_id: lotData.product_id,
+              shipment_id: lotData.shipment_id,
+              po_id: lotData.po_id,
+              location_id: destLocation.id,
+              received_date: lotData.received_date,
+              received_quantity: item.transferQty,
+              remaining_quantity: item.transferQty,
+              landed_cost_per_unit: lotData.landed_cost_per_unit,
+              barcode: null,
+              reserved_quantity: 0,
+            })
+            .select('id')
+            .single();
+
+          if (insertErr || !newLot) throw new Error(`Failed to create destination lot for ${item.lotNumber}: ${insertErr?.message}`);
+
+          destLotId = newLot.id;
+        }
 
         const { error: movErr } = await supabase
           .from('stock_movements')
           .insert({
             movement_type: 'transfer',
             product_id: item.productId,
-            lot_id: item.lotId,
+            lot_id: destLotId,
             from_location_id: sourceLocation.id,
             to_location_id: destLocation.id,
             quantity: item.transferQty,

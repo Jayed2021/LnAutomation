@@ -122,7 +122,11 @@ export function InternalTransferModal({ onClose, onSuccess }: InternalTransferMo
     setScannedLot(null);
     setProductLoading(true);
 
-    const { data } = await supabase
+    const trimmed = val.trim();
+
+    let data: any = null;
+
+    const { data: byLotBarcode } = await supabase
       .from('inventory_lots')
       .select(`
         id, lot_number, remaining_quantity,
@@ -130,8 +134,40 @@ export function InternalTransferModal({ onClose, onSuccess }: InternalTransferMo
       `)
       .eq('location_id', sourceLocation!.id)
       .gt('remaining_quantity', 0)
-      .or(`products.barcode.eq.${val.trim()},products.sku.ilike.${val.trim()}`)
+      .eq('barcode', trimmed)
       .maybeSingle();
+
+    if (byLotBarcode) {
+      data = byLotBarcode;
+    } else {
+      const { data: byProductBarcode } = await supabase
+        .from('inventory_lots')
+        .select(`
+          id, lot_number, remaining_quantity,
+          products!inner(id, name, sku, barcode)
+        `)
+        .eq('location_id', sourceLocation!.id)
+        .gt('remaining_quantity', 0)
+        .eq('products.barcode', trimmed)
+        .maybeSingle();
+
+      if (byProductBarcode) {
+        data = byProductBarcode;
+      } else {
+        const { data: byProductSku } = await supabase
+          .from('inventory_lots')
+          .select(`
+            id, lot_number, remaining_quantity,
+            products!inner(id, name, sku, barcode)
+          `)
+          .eq('location_id', sourceLocation!.id)
+          .gt('remaining_quantity', 0)
+          .ilike('products.sku', trimmed)
+          .maybeSingle();
+
+        data = byProductSku ?? null;
+      }
+    }
 
     setProductLoading(false);
 

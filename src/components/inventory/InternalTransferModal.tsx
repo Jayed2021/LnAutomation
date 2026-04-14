@@ -297,7 +297,7 @@ export function InternalTransferModal({ onClose, onSuccess }: InternalTransferMo
               received_quantity: item.transferQty,
               remaining_quantity: item.transferQty,
               landed_cost_per_unit: lotData.landed_cost_per_unit,
-              barcode: null,
+              barcode: lotData.barcode,
               reserved_quantity: 0,
             })
             .select('id')

@@ -51,6 +51,10 @@ interface SyncResult {
   statuses?: Record<string, string>;
   dry_run?: boolean;
   timestamp?: string;
+  cursor_reset?: boolean;
+  total_eligible?: number;
+  total_batches?: number;
+  batch_size?: number;
 }
 
 const PATHAO_URLS = {
@@ -155,6 +159,7 @@ export default function CourierSettings() {
         supabase.from('app_settings').select('key, value').in('key', [
           'pathao_sync_enabled', 'pathao_sync_interval_hours',
           'pathao_sync_lookback_days', 'pathao_sync_last_run', 'pathao_sync_last_result',
+          'pathao_sync_cursor', 'pathao_sync_batch_size',
           'service_role_key',
         ]),
         supabase
@@ -201,9 +206,11 @@ export default function CourierSettings() {
       if (settingsData) {
         const sm: Record<string, unknown> = {};
         for (const row of settingsData) sm[row.key] = row.value;
+        const rawInterval = parseInt(String(sm['pathao_sync_interval_hours'] ?? '1'));
+        const intervalHours = isNaN(rawInterval) ? 1 : rawInterval;
         setSyncSettings({
           enabled: sm['pathao_sync_enabled'] === true || sm['pathao_sync_enabled'] === 'true',
-          intervalHours: parseInt(String(sm['pathao_sync_interval_hours'] ?? '1')) || 1,
+          intervalHours,
           lookbackDays: parseInt(String(sm['pathao_sync_lookback_days'] ?? '14')) || 14,
           lastRun: (sm['pathao_sync_last_run'] && sm['pathao_sync_last_run'] !== 'null') ? sm['pathao_sync_last_run'] as string : null,
           lastResult: (sm['pathao_sync_last_result'] && sm['pathao_sync_last_result'] !== 'null') ? sm['pathao_sync_last_result'] as SyncResult : null,
@@ -377,8 +384,9 @@ export default function CourierSettings() {
   const getSyncStatusIndicator = () => {
     if (!syncSettings.lastRun) return { color: 'bg-gray-300', label: 'Never run' };
     const hoursSince = (Date.now() - new Date(syncSettings.lastRun).getTime()) / (1000 * 60 * 60);
-    if (hoursSince < syncSettings.intervalHours * 1.5) return { color: 'bg-emerald-500', label: 'On schedule' };
-    if (hoursSince < syncSettings.intervalHours * 3) return { color: 'bg-amber-500', label: 'Slightly overdue' };
+    const effectiveInterval = syncSettings.intervalHours === 0 ? 0.5 : syncSettings.intervalHours;
+    if (hoursSince < effectiveInterval * 1.5) return { color: 'bg-emerald-500', label: 'On schedule' };
+    if (hoursSince < effectiveInterval * 3) return { color: 'bg-amber-500', label: 'Slightly overdue' };
     return { color: 'bg-red-500', label: 'Overdue' };
   };
 
@@ -781,7 +789,7 @@ export default function CourierSettings() {
                     </div>
                     <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-center">
                       <div className="text-lg font-bold text-gray-900">
-                        {syncSettings.lastRun ? `${syncSettings.intervalHours}h` : '—'}
+                        {syncSettings.lastRun ? (syncSettings.intervalHours === 0 ? '30m' : `${syncSettings.intervalHours}h`) : '—'}
                       </div>
                       <div className="text-[11px] text-gray-500 mt-0.5">Sync interval</div>
                     </div>
@@ -841,6 +849,37 @@ export default function CourierSettings() {
                           </div>
                         </div>
                       )}
+                      {/* Rotation progress */}
+                      {(() => {
+                        const r = syncSettings.lastResult;
+                        const total = r.total_eligible ?? 0;
+                        const batchSz = r.batch_size ?? 50;
+                        const totalBatches = r.total_batches ?? (batchSz > 0 ? Math.ceil(total / batchSz) : 1);
+                        if (total === 0 || totalBatches <= 1) return null;
+                        const checkedSoFar = r.checked ?? 0;
+                        const progressPct = total > 0 ? Math.min(100, Math.round((checkedSoFar / total) * 100)) : 0;
+                        return (
+                          <div className="pt-1 space-y-1.5">
+                            <div className="flex items-center justify-between text-[11px] text-gray-500">
+                              <span>
+                                Rotation coverage — {r.cursor_reset ? 'full pass complete' : `${checkedSoFar} of ${total} orders this pass`}
+                              </span>
+                              <span className="font-medium text-gray-600">{progressPct}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${r.cursor_reset ? 'bg-emerald-500' : 'bg-teal-500'}`}
+                                style={{ width: `${r.cursor_reset ? 100 : progressPct}%` }}
+                              />
+                            </div>
+                            {!r.cursor_reset && (
+                              <p className="text-[11px] text-gray-400">
+                                ~{totalBatches} batches of {batchSz} to complete one full rotation
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 
@@ -1028,17 +1067,16 @@ export default function CourierSettings() {
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1.5">Sync Interval</label>
                       <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
-                        {[1, 2, 4, 6, 12, 24].map(h => (
+                        {[{ label: '30m', value: 0 }, { label: '1h', value: 1 }, { label: '2h', value: 2 }, { label: '4h', value: 4 }, { label: '6h', value: 6 }, { label: '12h', value: 12 }, { label: '24h', value: 24 }].map(opt => (
                           <button
-                            key={h}
-                            onClick={() => setSyncSettings(s => ({ ...s, intervalHours: h }))}
-                            className={`flex-1 py-2 transition-colors ${syncSettings.intervalHours === h ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+                            key={opt.value}
+                            onClick={() => setSyncSettings(s => ({ ...s, intervalHours: opt.value }))}
+                            className={`flex-1 py-2 transition-colors ${syncSettings.intervalHours === opt.value ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
                           >
-                            {h}h
+                            {opt.label}
                           </button>
                         ))}
                       </div>
-                      <p className="text-[11px] text-gray-400 mt-1">Minimum 1 hour</p>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1.5">Lookback Window</label>

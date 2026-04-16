@@ -16,7 +16,6 @@ const FINAL_COURIER_STATUSES = new Set([
   "Partial Delivery",
 ]);
 
-const BATCH_CAP = 50;
 const INTER_REQUEST_DELAY_MS = 400;
 
 function sleep(ms: number): Promise<void> {
@@ -72,7 +71,11 @@ async function fetchOrderStatus(
   try {
     let res = await doFetch();
     if (res.status === 429) {
-      await sleep(3000);
+      await sleep(5000);
+      res = await doFetch();
+    }
+    if (res.status === 429) {
+      await sleep(5000);
       res = await doFetch();
     }
     if (!res.ok) {
@@ -106,7 +109,14 @@ Deno.serve(async (req: Request) => {
     const { data: settings } = await supabase
       .from("app_settings")
       .select("key, value")
-      .in("key", ["pathao_sync_enabled", "pathao_sync_interval_hours", "pathao_sync_lookback_days", "pathao_sync_last_run"]);
+      .in("key", [
+        "pathao_sync_enabled",
+        "pathao_sync_interval_hours",
+        "pathao_sync_lookback_days",
+        "pathao_sync_last_run",
+        "pathao_sync_cursor",
+        "pathao_sync_batch_size",
+      ]);
 
     const settingsMap: Record<string, unknown> = {};
     for (const row of settings ?? []) {
@@ -117,6 +127,14 @@ Deno.serve(async (req: Request) => {
     const intervalHours = parseInt(String(settingsMap["pathao_sync_interval_hours"] ?? "1")) || 1;
     const lookbackDays = parseInt(String(settingsMap["pathao_sync_lookback_days"] ?? "14")) || 14;
     const lastRun = settingsMap["pathao_sync_last_run"];
+    const batchSize = parseInt(String(settingsMap["pathao_sync_batch_size"] ?? "50")) || 50;
+
+    // Cursor: null means start from the beginning (oldest unchecked first)
+    const rawCursor = settingsMap["pathao_sync_cursor"];
+    const cursor: string | null =
+      rawCursor === null || rawCursor === "null" || rawCursor === undefined
+        ? null
+        : String(rawCursor).replace(/^"|"$/g, "");
 
     if (!specificIdList) {
       if (!isEnabled && !force) {
@@ -129,11 +147,13 @@ Deno.serve(async (req: Request) => {
       if (!force && lastRun && lastRun !== "null" && lastRun !== null) {
         const lastRunDate = new Date(lastRun as string);
         const hoursSinceLastRun = (Date.now() - lastRunDate.getTime()) / (1000 * 60 * 60);
-        if (hoursSinceLastRun < intervalHours) {
+        // intervalHours=0 means 30 minutes (0.5 hours)
+        const effectiveIntervalHours = intervalHours === 0 ? 0.5 : intervalHours;
+        if (hoursSinceLastRun < effectiveIntervalHours) {
           return new Response(
             JSON.stringify({
               skipped: true,
-              reason: `Next run in ${(intervalHours - hoursSinceLastRun).toFixed(1)}h (interval: ${intervalHours}h)`,
+              reason: `Next run in ${((effectiveIntervalHours - hoursSinceLastRun) * 60).toFixed(0)}m (interval: ${intervalHours === 0 ? "30m" : intervalHours + "h"})`,
             }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
@@ -176,9 +196,24 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Count total eligible for progress reporting
+    let totalEligible = 0;
+    if (!specificIdList) {
+      const lookbackDate = new Date();
+      lookbackDate.setDate(lookbackDate.getDate() - lookbackDays);
+      const { count } = await supabase
+        .from("order_courier_info")
+        .select("id", { count: "exact", head: true })
+        .ilike("courier_company", "pathao")
+        .not("consignment_id", "is", null)
+        .or(`courier_status.is.null,courier_status.not.in.(${[...FINAL_COURIER_STATUSES].join(",")})`)
+        .gte("created_at", lookbackDate.toISOString());
+      totalEligible = count ?? 0;
+    }
+
     let eligibleQuery = supabase
       .from("order_courier_info")
-      .select("id, order_id, consignment_id, courier_status, orders(cs_status)")
+      .select("id, order_id, consignment_id, courier_status, courier_status_updated_at, orders(cs_status)")
       .ilike("courier_company", "pathao")
       .not("consignment_id", "is", null);
 
@@ -189,11 +224,26 @@ Deno.serve(async (req: Request) => {
       lookbackDate.setDate(lookbackDate.getDate() - lookbackDays);
 
       eligibleQuery = eligibleQuery
-        .or(
-          `courier_status.is.null,courier_status.not.in.(${[...FINAL_COURIER_STATUSES].join(",")})`
-        )
-        .gte("created_at", lookbackDate.toISOString())
-        .limit(BATCH_CAP);
+        .or(`courier_status.is.null,courier_status.not.in.(${[...FINAL_COURIER_STATUSES].join(",")})`)
+        .gte("created_at", lookbackDate.toISOString());
+
+      if (force) {
+        // Force run: process everything, ordered oldest-unchecked first
+        eligibleQuery = eligibleQuery.order("courier_status_updated_at", { ascending: true, nullsFirst: true });
+      } else {
+        // Scheduled run: paginate using cursor, process in batches
+        // Orders with null courier_status_updated_at always come first (never been checked)
+        if (cursor) {
+          eligibleQuery = eligibleQuery
+            .or(`courier_status_updated_at.is.null,courier_status_updated_at.lt.${cursor}`)
+            .order("courier_status_updated_at", { ascending: true, nullsFirst: true })
+            .limit(batchSize);
+        } else {
+          eligibleQuery = eligibleQuery
+            .order("courier_status_updated_at", { ascending: true, nullsFirst: true })
+            .limit(batchSize);
+        }
+      }
     }
 
     const { data: eligible, error: eligibleErr } = await eligibleQuery;
@@ -206,7 +256,13 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!eligible || eligible.length === 0) {
-      if (!dryRun) {
+      // Pool exhausted — reset cursor so next run starts fresh
+      if (!dryRun && !specificIdList) {
+        await supabase
+          .from("app_settings")
+          .update({ value: null })
+          .eq("key", "pathao_sync_cursor");
+
         await supabase
           .from("app_settings")
           .update({ value: new Date().toISOString() })
@@ -214,12 +270,12 @@ Deno.serve(async (req: Request) => {
 
         await supabase
           .from("app_settings")
-          .update({ value: { checked: 0, updated: 0, unchanged: 0, partial_delivery_count: 0, errors: [] } })
+          .update({ value: { checked: 0, updated: 0, unchanged: 0, partial_delivery_count: 0, errors: [], cursor_reset: true } })
           .eq("key", "pathao_sync_last_result");
       }
 
       return new Response(
-        JSON.stringify({ checked: 0, updated: 0, unchanged: 0, partial_delivery_count: 0, errors: [], message: "No eligible orders to sync" }),
+        JSON.stringify({ checked: 0, updated: 0, unchanged: 0, partial_delivery_count: 0, errors: [], message: "No eligible orders to sync — cursor reset for next rotation", cursor_reset: true, total_eligible: totalEligible }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -249,6 +305,13 @@ Deno.serve(async (req: Request) => {
 
       if (order_status === row.courier_status) {
         unchanged++;
+        if (!dryRun) {
+          // Still update the timestamp so this order moves to the back of the queue
+          await supabase
+            .from("order_courier_info")
+            .update({ courier_status_updated_at: now })
+            .eq("id", row.id);
+        }
         continue;
       }
 
@@ -368,6 +431,16 @@ Deno.serve(async (req: Request) => {
       updated++;
     }
 
+    // Advance the cursor to the last processed order's courier_status_updated_at
+    // so the next scheduled run continues from here
+    const lastRow = eligible[eligible.length - 1] as { courier_status_updated_at: string | null };
+    const newCursor = lastRow?.courier_status_updated_at ?? now;
+
+    // If this was a force run or covered fewer rows than batchSize, the pool
+    // is likely exhausted — reset cursor to start fresh next scheduled run
+    const poolExhausted = force || eligible.length < batchSize;
+
+    const totalBatches = batchSize > 0 ? Math.ceil(totalEligible / batchSize) : 1;
     const result = {
       checked: eligible.length,
       updated,
@@ -377,18 +450,29 @@ Deno.serve(async (req: Request) => {
       statuses,
       dry_run: dryRun,
       timestamp: now,
+      cursor_reset: poolExhausted,
+      total_eligible: totalEligible,
+      total_batches: totalBatches,
+      batch_size: batchSize,
     };
 
     if (!dryRun) {
       await supabase
         .from("app_settings")
-        .update({ value: now })
+        .update({ value: new Date().toISOString() })
         .eq("key", "pathao_sync_last_run");
 
       await supabase
         .from("app_settings")
         .update({ value: result })
         .eq("key", "pathao_sync_last_result");
+
+      if (!specificIdList) {
+        await supabase
+          .from("app_settings")
+          .update({ value: poolExhausted ? null : newCursor })
+          .eq("key", "pathao_sync_cursor");
+      }
     }
 
     return new Response(JSON.stringify(result), {

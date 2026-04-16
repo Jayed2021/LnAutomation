@@ -16,6 +16,13 @@ const FINAL_COURIER_STATUSES = new Set([
   "Partial Delivery",
 ]);
 
+const BATCH_CAP = 50;
+const INTER_REQUEST_DELAY_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 const CS_STATUS_ON_COURIER: Record<string, string> = {
   "Delivered": "delivered",
   "Return": "cancelled_cad",
@@ -55,11 +62,19 @@ async function fetchOrderStatus(
   accessToken: string,
   consignmentId: string
 ): Promise<{ order_status: string | null; error: string | null }> {
-  try {
-    const res = await fetch(
+  const doFetch = async (): Promise<Response> => {
+    return await fetch(
       `${baseUrl}/aladdin/api/v1/orders/${encodeURIComponent(consignmentId)}/info`,
       { headers: { "Authorization": `Bearer ${accessToken}` } }
     );
+  };
+
+  try {
+    let res = await doFetch();
+    if (res.status === 429) {
+      await sleep(3000);
+      res = await doFetch();
+    }
     if (!res.ok) {
       return { order_status: null, error: `HTTP ${res.status}` };
     }
@@ -84,6 +99,7 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const dryRun = url.searchParams.get("dry_run") === "true";
+    const force = url.searchParams.get("force") === "true";
     const specificIds = url.searchParams.get("consignment_ids");
     const specificIdList = specificIds ? specificIds.split(",").map(s => s.trim()).filter(Boolean) : null;
 
@@ -103,14 +119,14 @@ Deno.serve(async (req: Request) => {
     const lastRun = settingsMap["pathao_sync_last_run"];
 
     if (!specificIdList) {
-      if (!isEnabled) {
+      if (!isEnabled && !force) {
         return new Response(
           JSON.stringify({ skipped: true, reason: "pathao_sync_enabled is false" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      if (lastRun && lastRun !== "null" && lastRun !== null) {
+      if (!force && lastRun && lastRun !== "null" && lastRun !== null) {
         const lastRunDate = new Date(lastRun as string);
         const hoursSinceLastRun = (Date.now() - lastRunDate.getTime()) / (1000 * 60 * 60);
         if (hoursSinceLastRun < intervalHours) {
@@ -176,7 +192,8 @@ Deno.serve(async (req: Request) => {
         .or(
           `courier_status.is.null,courier_status.not.in.(${[...FINAL_COURIER_STATUSES].join(",")})`
         )
-        .gte("created_at", lookbackDate.toISOString());
+        .gte("created_at", lookbackDate.toISOString())
+        .limit(BATCH_CAP);
     }
 
     const { data: eligible, error: eligibleErr } = await eligibleQuery;
@@ -214,7 +231,9 @@ Deno.serve(async (req: Request) => {
     const statuses: Record<string, string> = {};
     const now = new Date().toISOString();
 
-    for (const row of eligible) {
+    for (let i = 0; i < eligible.length; i++) {
+      const row = eligible[i];
+      if (i > 0) await sleep(INTER_REQUEST_DELAY_MS);
       const { order_status, error: fetchErr } = await fetchOrderStatus(
         pathaoConfig.base_url!,
         accessToken,

@@ -292,6 +292,7 @@ export default function CourierSettings() {
         supabase.from('app_settings').update({ value: syncSettings.enabled }).eq('key', 'pathao_sync_enabled'),
         supabase.from('app_settings').update({ value: syncSettings.intervalHours }).eq('key', 'pathao_sync_interval_hours'),
         supabase.from('app_settings').update({ value: syncSettings.lookbackDays }).eq('key', 'pathao_sync_lookback_days'),
+        supabase.from('app_settings').upsert({ key: 'supabase_url', value: import.meta.env.VITE_SUPABASE_URL }, { onConflict: 'key' }),
       ];
       const trimmedKey = serviceRoleKey.trim();
       if (trimmedKey) {
@@ -314,7 +315,7 @@ export default function CourierSettings() {
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-      const res = await fetch(`${supabaseUrl}/functions/v1/pathao-sync-status`, {
+      const res = await fetch(`${supabaseUrl}/functions/v1/pathao-sync-status?force=true`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${anonKey}`,

@@ -124,12 +124,15 @@ Deno.serve(async (req: Request) => {
     }
 
     const isEnabled = settingsMap["pathao_sync_enabled"] === true || settingsMap["pathao_sync_enabled"] === "true";
-    const intervalHours = parseInt(String(settingsMap["pathao_sync_interval_hours"] ?? "1")) || 1;
+    const parsedInterval = parseInt(String(settingsMap["pathao_sync_interval_hours"] ?? "1"));
+    const intervalHours = isNaN(parsedInterval) ? 1 : parsedInterval;
     const lookbackDays = parseInt(String(settingsMap["pathao_sync_lookback_days"] ?? "14")) || 14;
     const lastRun = settingsMap["pathao_sync_last_run"];
     const batchSize = parseInt(String(settingsMap["pathao_sync_batch_size"] ?? "50")) || 50;
 
-    // Cursor: null means start from the beginning (oldest unchecked first)
+    // Cursor tracks the newest courier_status_updated_at already processed in this rotation.
+    // Orders with updated_at <= cursor (or IS NULL) have NOT been processed in this rotation yet.
+    // When cursor is null the rotation starts fresh from the oldest-checked order.
     const rawCursor = settingsMap["pathao_sync_cursor"];
     const cursor: string | null =
       rawCursor === null || rawCursor === "null" || rawCursor === undefined
@@ -231,15 +234,23 @@ Deno.serve(async (req: Request) => {
         // Force run: process everything, ordered oldest-unchecked first
         eligibleQuery = eligibleQuery.order("courier_status_updated_at", { ascending: true, nullsFirst: true });
       } else {
-        // Scheduled run: paginate using cursor, process in batches
-        // Orders with null courier_status_updated_at always come first (never been checked)
+        // Scheduled run: paginate using cursor.
+        // The cursor stores the run-start timestamp captured at the beginning of each rotation.
+        // We process orders whose courier_status_updated_at is OLDER than the cursor (or null —
+        // never checked). After processing, we update their timestamp to now(), which is NEWER
+        // than the cursor, so they are excluded from subsequent batches in this rotation.
+        // When 0 rows remain the pool is exhausted and the cursor is reset to null so the
+        // next scheduled invocation starts a fresh rotation.
         if (cursor) {
           eligibleQuery = eligibleQuery
             .or(`courier_status_updated_at.is.null,courier_status_updated_at.lt.${cursor}`)
             .order("courier_status_updated_at", { ascending: true, nullsFirst: true })
             .limit(batchSize);
         } else {
+          // cursor=null → start of a new rotation; capture now as the rotation boundary
+          // so that orders updated during this run are not re-processed in the same rotation.
           eligibleQuery = eligibleQuery
+            .lt("courier_status_updated_at", now)
             .order("courier_status_updated_at", { ascending: true, nullsFirst: true })
             .limit(batchSize);
         }
@@ -256,11 +267,11 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!eligible || eligible.length === 0) {
-      // Pool exhausted — reset cursor so next run starts fresh
+      // Pool exhausted — reset cursor so next run starts a fresh rotation
       if (!dryRun && !specificIdList) {
         await supabase
           .from("app_settings")
-          .update({ value: null })
+          .upsert({ key: "pathao_sync_cursor", value: null })
           .eq("key", "pathao_sync_cursor");
 
         await supabase
@@ -431,13 +442,10 @@ Deno.serve(async (req: Request) => {
       updated++;
     }
 
-    // Advance the cursor to the last processed order's courier_status_updated_at
-    // so the next scheduled run continues from here
-    const lastRow = eligible[eligible.length - 1] as { courier_status_updated_at: string | null };
-    const newCursor = lastRow?.courier_status_updated_at ?? now;
-
-    // If this was a force run or covered fewer rows than batchSize, the pool
-    // is likely exhausted — reset cursor to start fresh next scheduled run
+    // The cursor is set to `now` (the timestamp used to update all rows in this batch).
+    // Next scheduled run queries updated_at < cursor, which excludes these freshly-updated rows.
+    // If fewer rows than batchSize were returned the pool is exhausted for this rotation.
+    const newCursor = now;
     const poolExhausted = force || eligible.length < batchSize;
 
     const totalBatches = batchSize > 0 ? Math.ceil(totalEligible / batchSize) : 1;
@@ -468,10 +476,17 @@ Deno.serve(async (req: Request) => {
         .eq("key", "pathao_sync_last_result");
 
       if (!specificIdList) {
-        await supabase
-          .from("app_settings")
-          .update({ value: poolExhausted ? null : newCursor })
-          .eq("key", "pathao_sync_cursor");
+        if (poolExhausted) {
+          await supabase
+            .from("app_settings")
+            .upsert({ key: "pathao_sync_cursor", value: null })
+            .eq("key", "pathao_sync_cursor");
+        } else {
+          await supabase
+            .from("app_settings")
+            .update({ value: newCursor })
+            .eq("key", "pathao_sync_cursor");
+        }
       }
     }
 

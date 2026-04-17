@@ -107,10 +107,10 @@ export default function Reports() {
     },
     {
       name: 'Inventory Valuation',
-      description: 'Total value by category with FIFO costing',
-      route: null,
+      description: 'Total value at landed cost by category and SKU, with historical date lookup',
+      route: '/reports/inventory-valuation',
       adminOnly: false,
-      live: false,
+      live: true,
       icon: Package,
     },
     {

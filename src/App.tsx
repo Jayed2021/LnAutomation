@@ -38,6 +38,7 @@ const ProfitLoss = lazy(() => import('./pages/reports/ProfitLoss'));
 const ExpenseAnalysis = lazy(() => import('./pages/reports/ExpenseAnalysis'));
 const CashFlow = lazy(() => import('./pages/reports/CashFlow'));
 const StockLevels = lazy(() => import('./pages/reports/StockLevels'));
+const SalesOverview = lazy(() => import('./pages/reports/SalesOverview'));
 
 const Settings = lazy(() => import('./pages/Settings'));
 const WooCommerceSettings = lazy(() => import('./pages/settings/WooCommerceSettings'));
@@ -119,6 +120,7 @@ function App() {
               <Route path="reports/expense-analysis" element={<Suspense fallback={<PageLoader />}><ExpenseAnalysis /></Suspense>} />
               <Route path="reports/cash-flow" element={<Suspense fallback={<PageLoader />}><CashFlow /></Suspense>} />
               <Route path="reports/stock-levels" element={<Suspense fallback={<PageLoader />}><StockLevels /></Suspense>} />
+              <Route path="reports/sales-overview" element={<Suspense fallback={<PageLoader />}><SalesOverview /></Suspense>} />
               <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
               <Route path="settings/woocommerce" element={<Suspense fallback={<PageLoader />}><WooCommerceSettings /></Suspense>} />
               <Route path="settings/barcode" element={<Suspense fallback={<PageLoader />}><BarcodeSettings /></Suspense>} />

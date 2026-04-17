@@ -124,7 +124,7 @@ export default function Reports() {
   ];
 
   const salesReports = [
-    { name: 'Daily Sales Summary', description: 'Revenue by day with order count', route: null, live: false, adminOnly: false, icon: TrendingUp },
+    { name: 'Sales Overview', description: 'Order volume, dispatch rate, confirmation and CAD rates by period', route: '/reports/sales-overview', live: true, adminOnly: false, icon: TrendingUp },
     { name: 'Sales by Product', description: 'Top products ranked by revenue and volume', route: null, live: false, adminOnly: false, icon: Package },
     { name: 'Sales Trend Analysis', description: 'Week-over-week and month-over-month trends', route: null, live: false, adminOnly: false, icon: BarChart3 },
   ];
@@ -210,9 +210,19 @@ export default function Reports() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Sales Reports */}
         <Section title="Sales Reports" subtitle="Revenue and order analysis" accent="amber" compact>
-          {salesReports.map(r => (
-            <ReportRow key={r.name} report={r} locked={false} clickable={false} onClick={() => {}} compact />
-          ))}
+          {salesReports.map(r => {
+            const clickable = !!r.route && r.live;
+            return (
+              <ReportRow
+                key={r.name}
+                report={r}
+                locked={false}
+                clickable={clickable}
+                onClick={() => clickable && navigate(r.route!)}
+                compact
+              />
+            );
+          })}
         </Section>
 
         {/* Customer Reports */}

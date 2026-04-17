@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  BarChart3, TrendingUp, Package, DollarSign, Users,
+  BarChart3, TrendingUp, Package, DollarSign,
   FileText, Lock, ArrowRight, TrendingDown, Activity,
-  Layers, Receipt, RefreshCw,
+  Layers, Receipt, RefreshCw, Truck, ShoppingCart,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -129,10 +129,9 @@ export default function Reports() {
     { name: 'Sales Trend Analysis', description: 'Week-over-week and month-over-month trends', route: null, live: false, adminOnly: false, icon: BarChart3 },
   ];
 
-  const customerReports = [
-    { name: 'Customer Analytics', description: 'Lifetime value, frequency, and retention', route: null, live: false, adminOnly: false, icon: Users },
-    { name: 'Top Customers', description: 'Ranked by revenue with order history', route: null, live: false, adminOnly: false, icon: TrendingUp },
-    { name: 'Customer Returns', description: 'Return rate and reason analysis', route: null, live: false, adminOnly: false, icon: TrendingDown },
+  const operationsPurchasingReports = [
+    { name: 'Shipment Performance', description: 'Sell-through rate, inventory age, and profit by shipment', route: '/reports/shipment-performance', live: true, adminOnly: false, icon: Truck },
+    { name: 'Reorder Intelligence', description: 'Velocity-based reorder suggestions with lead time and stock coverage', route: null, live: false, adminOnly: false, icon: ShoppingCart },
   ];
 
   return (
@@ -225,11 +224,21 @@ export default function Reports() {
           })}
         </Section>
 
-        {/* Customer Reports */}
-        <Section title="Customer Reports" subtitle="Customer behaviour and analytics" accent="teal" compact>
-          {customerReports.map(r => (
-            <ReportRow key={r.name} report={r} locked={false} clickable={false} onClick={() => {}} compact />
-          ))}
+        {/* Operations & Purchasing Reports */}
+        <Section title="Operations & Purchasing" subtitle="Shipment performance and procurement intelligence" accent="teal" compact>
+          {operationsPurchasingReports.map(r => {
+            const clickable = !!r.route && r.live;
+            return (
+              <ReportRow
+                key={r.name}
+                report={r}
+                locked={false}
+                clickable={clickable}
+                onClick={() => clickable && navigate(r.route!)}
+                compact
+              />
+            );
+          })}
         </Section>
       </div>
     </div>

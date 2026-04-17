@@ -27,6 +27,7 @@ const CS_STATUS_ON_COURIER: Record<string, string> = {
   "Return": "cancelled_cad",
   "Delivery Failed": "cancelled_cad",
   "Paid Return": "cancelled_cad",
+  "Exchange": "exchange",
 };
 
 const PROTECTED_CS_STATUSES = new Set(["exchange", "exr", "reverse_pick"]);

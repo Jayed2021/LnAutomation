@@ -34,6 +34,7 @@ const CS_STATUS_EVENTS: Record<string, string> = {
   "order.returned": "cancelled_cad",
   "order.delivery-failed": "cancelled_cad",
   "order.paid-return": "cancelled_cad",
+  "order.exchanged": "exchange",
 };
 
 const COLLECTED_AMOUNT_EVENTS = new Set([

@@ -125,7 +125,7 @@ export default function Reports() {
 
   const salesReports = [
     { name: 'Sales Overview', description: 'Order volume, dispatch rate, confirmation and CAD rates by period', route: '/reports/sales-overview', live: true, adminOnly: false, icon: TrendingUp },
-    { name: 'Sales by Product', description: 'Top products ranked by revenue and volume', route: null, live: false, adminOnly: false, icon: Package },
+    { name: 'Product Profitability Report', description: 'Units sold, COGS, margin, and profit contribution by product', route: '/reports/product-profitability', live: true, adminOnly: false, icon: Package },
     { name: 'Sales Trend Analysis', description: 'Week-over-week and month-over-month trends', route: null, live: false, adminOnly: false, icon: BarChart3 },
   ];
 

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import {
-  ArrowLeft, ShoppingCart, Truck, TrendingUp, TrendingDown,
-  Clock, AlertCircle, CheckCircle, XCircle, BarChart3,
+  ArrowLeft, ShoppingCart, Truck, TrendingUp,
+  AlertCircle, CheckCircle, XCircle, BarChart3,
+  RefreshCw, Database,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
@@ -28,50 +29,106 @@ interface DailyBreakdown {
   cad: number;
 }
 
+interface CacheEntry {
+  from: string;
+  to: string;
+  fetchedAt: number;
+  rows: OrderRow[];
+}
+
+const CACHE_KEY = 'sales_overview_snapshot';
+
+function readCache(from: string, to: string): OrderRow[] | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const entry: CacheEntry = JSON.parse(raw);
+    if (entry.from === from && entry.to === to) return entry.rows;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(from: string, to: string, rows: OrderRow[]) {
+  try {
+    const entry: CacheEntry = { from, to, fetchedAt: Date.now(), rows };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(entry));
+  } catch {
+    // storage full or unavailable
+  }
+}
+
+function readCacheMeta(): { fetchedAt: number; from: string; to: string } | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const entry: CacheEntry = JSON.parse(raw);
+    return { fetchedAt: entry.fetchedAt, from: entry.from, to: entry.to };
+  } catch {
+    return null;
+  }
+}
+
+function formatCacheAge(fetchedAt: number): string {
+  const mins = Math.floor((Date.now() - fetchedAt) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 /* ─── Date helpers ──────────────────────────────────────────────── */
+
+/** Format a Date using local timezone components, not UTC */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function getPresetDates(preset: Preset, custom: { from: string; to: string }): { from: string; to: string } {
   const now = new Date();
   const y = now.getFullYear();
   const m = now.getMonth();
 
-  const pad = (d: Date) => d.toISOString().split('T')[0];
-
   switch (preset) {
     case 'today':
-      return { from: pad(now), to: pad(now) };
+      return { from: localDateStr(now), to: localDateStr(now) };
     case 'yesterday': {
       const y2 = new Date(now); y2.setDate(now.getDate() - 1);
-      return { from: pad(y2), to: pad(y2) };
+      return { from: localDateStr(y2), to: localDateStr(y2) };
     }
     case 'this_week': {
       const day = now.getDay();
       const mon = new Date(now); mon.setDate(now.getDate() - ((day + 6) % 7));
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-      return { from: pad(mon), to: pad(sun) };
+      return { from: localDateStr(mon), to: localDateStr(sun) };
     }
     case 'last_week': {
       const day = now.getDay();
       const thisMon = new Date(now); thisMon.setDate(now.getDate() - ((day + 6) % 7));
       const lastMon = new Date(thisMon); lastMon.setDate(thisMon.getDate() - 7);
       const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6);
-      return { from: pad(lastMon), to: pad(lastSun) };
+      return { from: localDateStr(lastMon), to: localDateStr(lastSun) };
     }
-    case 'this_month':
-      return {
-        from: new Date(y, m, 1).toISOString().split('T')[0],
-        to: new Date(y, m + 1, 0).toISOString().split('T')[0],
-      };
-    case 'last_month':
-      return {
-        from: new Date(y, m - 1, 1).toISOString().split('T')[0],
-        to: new Date(y, m, 0).toISOString().split('T')[0],
-      };
+    case 'this_month': {
+      const first = new Date(y, m, 1);
+      const last = new Date(y, m + 1, 0);
+      return { from: localDateStr(first), to: localDateStr(last) };
+    }
+    case 'last_month': {
+      const first = new Date(y, m - 1, 1);
+      const last = new Date(y, m, 0);
+      return { from: localDateStr(first), to: localDateStr(last) };
+    }
     case 'this_quarter': {
       const qStart = Math.floor(m / 3) * 3;
-      return {
-        from: new Date(y, qStart, 1).toISOString().split('T')[0],
-        to: new Date(y, qStart + 3, 0).toISOString().split('T')[0],
-      };
+      const first = new Date(y, qStart, 1);
+      const last = new Date(y, qStart + 3, 0);
+      return { from: localDateStr(first), to: localDateStr(last) };
     }
     case 'custom':
       return custom;
@@ -105,10 +162,56 @@ function getDaysInRange(from: string, to: string): string[] {
   const cur = new Date(from + 'T00:00:00');
   const end = new Date(to + 'T00:00:00');
   while (cur <= end) {
-    days.push(cur.toISOString().split('T')[0]);
+    days.push(localDateStr(cur));
     cur.setDate(cur.getDate() + 1);
   }
   return days;
+}
+
+/** Extract YYYY-MM-DD from any ISO timestamptz string */
+function orderDateKey(ts: string): string {
+  return ts.slice(0, 10);
+}
+
+/* ─── Paginated fetch (solves 1000-row cap) ─────────────────────── */
+async function fetchAllOrdersInRange(from: string, to: string): Promise<OrderRow[]> {
+  const PAGE = 1000;
+  let all: OrderRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id, order_date, shipped_at, cs_status, total_amount')
+      .gte('order_date', from + 'T00:00:00')
+      .lte('order_date', to + 'T23:59:59')
+      .order('order_date', { ascending: true })
+      .range(offset, offset + PAGE - 1);
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    all = all.concat(data as OrderRow[]);
+    if (data.length < PAGE) break;
+    offset += PAGE;
+  }
+
+  return all;
+}
+
+/* ─── CBD / CAD classifiers ─────────────────────────────────────── */
+function isCbd(o: OrderRow) {
+  return o.cs_status === 'cancelled_cbd';
+}
+
+function isCAD(o: OrderRow) {
+  return (
+    o.cs_status === 'cancelled_cad' ||
+    o.cs_status === 'exchange' ||
+    o.cs_status === 'exchange_returnable' ||
+    o.cs_status === 'refund' ||
+    o.cs_status === 'reverse_pick'
+  ) && !!o.shipped_at;
 }
 
 /* ─── Main Component ─────────────────────────────────────────────── */
@@ -116,27 +219,52 @@ function SalesOverviewContent() {
   const navigate = useNavigate();
   const [preset, setPreset] = useState<Preset>('this_month');
   const [custom, setCustom] = useState({ from: '', to: '' });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [cacheMeta, setCacheMeta] = useState<{ fetchedAt: number; from: string; to: string } | null>(null);
+  const [cacheAge, setCacheAge] = useState('');
 
   const dateRange = getPresetDates(preset, custom);
 
-  const load = useCallback(async () => {
+  /* Load from cache on mount / range change */
+  useEffect(() => {
     if (preset === 'custom' && (!custom.from || !custom.to)) return;
-    setLoading(true);
-    try {
-      const { data } = await supabase
-        .from('orders')
-        .select('id, order_date, shipped_at, cs_status, total_amount')
-        .gte('order_date', dateRange.from)
-        .lte('order_date', dateRange.to);
-      setOrders((data ?? []) as OrderRow[]);
-    } finally {
-      setLoading(false);
+    const cached = readCache(dateRange.from, dateRange.to);
+    if (cached) {
+      setOrders(cached);
+      const meta = readCacheMeta();
+      setCacheMeta(meta);
+    } else {
+      setOrders([]);
+      setCacheMeta(null);
     }
   }, [dateRange.from, dateRange.to, preset, custom.from, custom.to]);
 
-  useEffect(() => { load(); }, [load]);
+  /* Tick cache age every minute */
+  useEffect(() => {
+    if (!cacheMeta) { setCacheAge(''); return; }
+    setCacheAge(formatCacheAge(cacheMeta.fetchedAt));
+    const id = setInterval(() => setCacheAge(formatCacheAge(cacheMeta.fetchedAt)), 60000);
+    return () => clearInterval(id);
+  }, [cacheMeta]);
+
+  const handleUpdate = useCallback(async () => {
+    if (preset === 'custom' && (!custom.from || !custom.to)) return;
+    setUpdating(true);
+    setLoading(true);
+    try {
+      const rows = await fetchAllOrdersInRange(dateRange.from, dateRange.to);
+      writeCache(dateRange.from, dateRange.to, rows);
+      setOrders(rows);
+      const meta = readCacheMeta();
+      setCacheMeta(meta);
+      if (meta) setCacheAge(formatCacheAge(meta.fetchedAt));
+    } finally {
+      setUpdating(false);
+      setLoading(false);
+    }
+  }, [dateRange.from, dateRange.to, preset, custom.from, custom.to]);
 
   /* ─── Derived metrics ──────────────────────────────────────────── */
   const metrics = useMemo(() => {
@@ -146,17 +274,8 @@ function SalesOverviewContent() {
     const revDispatched = orders.filter(o => !!o.shipped_at).reduce((s, o) => s + Number(o.total_amount), 0);
     const avgOrderValue = created > 0 ? revCreated / created : 0;
 
-    const isCbd = (o: OrderRow) =>
-      o.cs_status === 'cancelled_cbd' ||
-      o.cs_status === 'cancel_requested_cbd' ||
-      o.cs_status === 'cancelled';
     const cbd = orders.filter(isCbd).length;
-
-    const isCAD = (o: OrderRow) =>
-      o.cs_status === 'cancelled_after_dispatch' ||
-      o.cs_status === 'return_requested' ||
-      o.cs_status === 'returned';
-    const cad = orders.filter(o => isCAD(o) && !!o.shipped_at).length;
+    const cad = orders.filter(isCAD).length;
 
     const confirmationPool = dispatched + cbd;
     const confirmationRate = confirmationPool > 0 ? (dispatched / confirmationPool) * 100 : null;
@@ -184,17 +303,8 @@ function SalesOverviewContent() {
     const days = getDaysInRange(dateRange.from, dateRange.to);
     if (days.length <= 1) return [];
 
-    const isCbd = (o: OrderRow) =>
-      o.cs_status === 'cancelled_cbd' ||
-      o.cs_status === 'cancel_requested_cbd' ||
-      o.cs_status === 'cancelled';
-    const isCAD = (o: OrderRow) =>
-      (o.cs_status === 'cancelled_after_dispatch' ||
-        o.cs_status === 'return_requested' ||
-        o.cs_status === 'returned') && !!o.shipped_at;
-
     return days.map(date => {
-      const dayOrders = orders.filter(o => o.order_date === date);
+      const dayOrders = orders.filter(o => orderDateKey(o.order_date) === date);
       const dayDispatched = dayOrders.filter(o => !!o.shipped_at);
       return {
         date,
@@ -219,6 +329,9 @@ function SalesOverviewContent() {
     { value: 'custom', label: 'Custom' },
   ];
 
+  const hasData = orders.length > 0;
+  const noCache = !hasData && !loading;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -229,9 +342,27 @@ function SalesOverviewContent() {
         >
           <ArrowLeft className="w-5 h-5 text-gray-500" />
         </button>
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">Sales Overview</h1>
           <p className="text-sm text-gray-500 mt-0.5">Order volume, dispatch performance, and confirmation rates</p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {cacheMeta && (
+            <span className="text-xs text-gray-400 hidden sm:block">
+              Updated {cacheAge}
+            </span>
+          )}
+          <button
+            onClick={handleUpdate}
+            disabled={updating || (preset === 'custom' && (!custom.from || !custom.to))}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-semibold rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+          >
+            {updating
+              ? <RefreshCw className="w-4 h-4 animate-spin" />
+              : <Database className="w-4 h-4" />
+            }
+            {updating ? 'Fetching…' : 'Update Data'}
+          </button>
         </div>
       </div>
 
@@ -267,31 +398,60 @@ function SalesOverviewContent() {
             />
           </div>
         )}
-        {!loading && (
-          <span className="text-xs text-gray-400 ml-2">
-            {dateRange.from === dateRange.to
-              ? formatDateLabel(dateRange.from)
-              : `${dateRange.from} → ${dateRange.to}`}
-          </span>
-        )}
+        <span className="text-xs text-gray-400 ml-2">
+          {dateRange.from === dateRange.to
+            ? formatDateLabel(dateRange.from)
+            : `${dateRange.from} → ${dateRange.to}`}
+        </span>
       </div>
 
-      {loading ? (
+      {/* No cache prompt */}
+      {noCache && (
+        <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 py-16 flex flex-col items-center gap-4">
+          <div className="p-3 bg-gray-100 rounded-full">
+            <Database className="w-6 h-6 text-gray-400" />
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-semibold text-gray-700">No data for this period</p>
+            <p className="text-xs text-gray-400 mt-1">Press <strong>Update Data</strong> to fetch orders from the server</p>
+          </div>
+          <button
+            onClick={handleUpdate}
+            disabled={updating || (preset === 'custom' && (!custom.from || !custom.to))}
+            className="flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors shadow-sm"
+          >
+            {updating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+            {updating ? 'Fetching…' : 'Update Data'}
+          </button>
+        </div>
+      )}
+
+      {/* Loading skeleton */}
+      {loading && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {[...Array(6)].map((_, i) => (
               <div key={i} className="h-28 bg-gray-100 rounded-xl animate-pulse" />
             ))}
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {[...Array(3)].map((_, i) => (
               <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />
             ))}
           </div>
         </div>
-      ) : (
+      )}
+
+      {/* Content */}
+      {!loading && hasData && (
         <div className="space-y-6">
-          {/* Primary KPI Cards — 2 rows of 3 */}
+          {/* Row count info */}
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <span>{orders.length.toLocaleString()} orders loaded</span>
+            {cacheMeta && <span>· cached {cacheAge}</span>}
+          </div>
+
+          {/* Primary KPI Cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <KpiCard
               label="Orders Created"
@@ -417,8 +577,8 @@ function SalesOverviewContent() {
                         <td className="px-5 py-3 text-sm font-medium text-gray-800 whitespace-nowrap">
                           {formatDateLabel(row.date)}
                         </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.created}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-emerald-700 font-medium">{row.dispatched}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.created > 0 ? row.created : <span className="text-gray-300">0</span>}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-emerald-700 font-medium">{row.dispatched > 0 ? row.dispatched : <span className="text-gray-300">0</span>}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-gray-700 whitespace-nowrap">{fmt(row.revCreated)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-emerald-700 font-medium whitespace-nowrap">{fmt(row.revDispatched)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-red-500">{row.cbd > 0 ? row.cbd : <span className="text-gray-300">—</span>}</td>

@@ -9,7 +9,7 @@ import { InternalTransferModal } from '../../components/inventory/InternalTransf
 import {
   Search, Download, TrendingUp, TrendingDown, ArrowLeftRight,
   RefreshCw, Package, ChevronDown, ChevronRight, ExternalLink,
-  AlertCircle
+  AlertCircle, MapPin
 } from 'lucide-react';
 
 interface Movement {
@@ -25,8 +25,16 @@ interface Movement {
   quantity: number;
   reference_type: string | null;
   reference_id: string | null;
+  reference_number: string | null;
   notes: string | null;
   performed_by: string | null;
+}
+
+interface ProductGroup {
+  sku: string;
+  product_name: string;
+  total_quantity: number;
+  movements: Movement[];
 }
 
 interface DateGroup {
@@ -45,8 +53,8 @@ const MOVEMENT_TYPES = ['all', 'receipt', 'sale', 'return_restock', 'adjustment'
 const movementConfig: Record<string, { label: string; variant: string; icon: React.ReactNode; sign: string }> = {
   receipt: { label: 'Receipt', variant: 'emerald', icon: <TrendingUp className="w-3 h-3" />, sign: '+' },
   sale: { label: 'Sale', variant: 'blue', icon: <TrendingDown className="w-3 h-3" />, sign: '' },
-  return_restock: { label: 'Return', variant: 'amber', icon: <RefreshCw className="w-3 h-3" />, sign: '+' },
-  return_receive: { label: 'Return In', variant: 'amber', icon: <RefreshCw className="w-3 h-3" />, sign: '+' },
+  return_restock: { label: 'Return Restocked', variant: 'amber', icon: <RefreshCw className="w-3 h-3" />, sign: '+' },
+  return_receive: { label: 'Return Hold', variant: 'gray', icon: <MapPin className="w-3 h-3" />, sign: '+' },
   adjustment: { label: 'Adjustment', variant: 'gray', icon: <Package className="w-3 h-3" />, sign: '' },
   transfer: { label: 'Transfer', variant: 'blue', icon: <ArrowLeftRight className="w-3 h-3" />, sign: '' },
   damaged: { label: 'Damaged', variant: 'red', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
@@ -56,9 +64,9 @@ const movementConfig: Record<string, { label: string; variant: string; icon: Rea
   pkg_dispatch: { label: 'Pkg Dispatched', variant: 'orange', icon: <TrendingDown className="w-3 h-3" />, sign: '-' },
 };
 
-const INBOUND_TYPES = new Set(['receipt', 'return_restock', 'return_receive', 'pkg_manual_restock']);
+const INBOUND_TYPES = new Set(['receipt', 'return_restock', 'pkg_manual_restock']);
 const OUTBOUND_TYPES = new Set(['sale', 'damaged', 'qc_damaged', 'pkg_damaged', 'pkg_dispatch']);
-const OTHER_TYPES = new Set(['adjustment', 'transfer']);
+const OTHER_TYPES = new Set(['adjustment', 'transfer', 'return_receive']);
 
 function formatDateLabel(dateStr: string): string {
   const today = new Date().toISOString().slice(0, 10);
@@ -72,6 +80,19 @@ function formatDateLabel(dateStr: string): string {
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-BD', { hour: '2-digit', minute: '2-digit' });
+}
+
+function buildProductGroups(movements: Movement[]): ProductGroup[] {
+  const map = new Map<string, ProductGroup>();
+  for (const m of movements) {
+    if (!map.has(m.sku)) {
+      map.set(m.sku, { sku: m.sku, product_name: m.product_name, total_quantity: 0, movements: [] });
+    }
+    const g = map.get(m.sku)!;
+    g.total_quantity += Math.abs(m.quantity);
+    g.movements.push(m);
+  }
+  return [...map.values()].sort((a, b) => b.total_quantity - a.total_quantity);
 }
 
 function buildDateGroups(movements: Movement[]): DateGroup[] {
@@ -90,10 +111,11 @@ function buildDateGroups(movements: Movement[]): DateGroup[] {
         if (OUTBOUND_TYPES.has(m.movement_type)) packagingOut += abQty;
       } else {
         if (m.movement_type === 'sale') saleableOut += abQty;
-        else if (INBOUND_TYPES.has(m.movement_type)) saleableIn += abQty;
+        else if (INBOUND_TYPES.has(m.movement_type)) {
+          saleableIn += abQty;
+          goodsReceived += abQty;
+        }
       }
-      if (m.movement_type === 'receipt') goodsReceived += abQty;
-      if (INBOUND_TYPES.has(m.movement_type) && m.movement_type !== 'receipt') goodsReceived += abQty;
     }
     groups.push({
       date,
@@ -119,6 +141,43 @@ function NetBadge({ value }: { value: number }) {
   );
 }
 
+function ReferenceLink({ movement }: { movement: Movement }) {
+  if (!movement.reference_number && !movement.reference_id) return null;
+  const label = movement.reference_number || movement.reference_id!.slice(0, 8);
+
+  if (movement.reference_type === 'order' && movement.reference_id) {
+    return (
+      <Link
+        to={`/fulfillment/orders/${movement.reference_id}`}
+        className="inline-flex items-center gap-0.5 text-[10px] font-mono text-blue-600 hover:text-blue-800 hover:underline transition-colors shrink-0"
+        onClick={e => e.stopPropagation()}
+        title="View order"
+      >
+        {label}
+        <ExternalLink className="w-2.5 h-2.5" />
+      </Link>
+    );
+  }
+
+  if (movement.reference_type === 'return' && movement.reference_id) {
+    return (
+      <Link
+        to={`/fulfillment/returns/${movement.reference_id}`}
+        className="inline-flex items-center gap-0.5 text-[10px] font-mono text-amber-600 hover:text-amber-800 hover:underline transition-colors shrink-0"
+        onClick={e => e.stopPropagation()}
+        title="View return"
+      >
+        {label}
+        <ExternalLink className="w-2.5 h-2.5" />
+      </Link>
+    );
+  }
+
+  return (
+    <span className="text-[10px] font-mono text-gray-400 shrink-0">{label}</span>
+  );
+}
+
 interface DateAccordionProps {
   group: DateGroup;
   defaultOpen: boolean;
@@ -132,6 +191,7 @@ function DateAccordion({ group, defaultOpen }: DateAccordionProps) {
   const inbound = group.movements.filter(m => INBOUND_TYPES.has(m.movement_type) && m.product_type === 'saleable_goods');
   const packagingMovements = group.movements.filter(m => m.product_type === 'packaging_material');
   const others = group.movements.filter(m => OTHER_TYPES.has(m.movement_type));
+  const returnReceiveCount = others.filter(m => m.movement_type === 'return_receive').length;
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -185,14 +245,13 @@ function DateAccordion({ group, defaultOpen }: DateAccordionProps) {
         <div className="border-t border-gray-100 bg-gray-50 p-4 space-y-4">
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <MovementSection
+            <GroupedMovementSection
               title="Outbound — Sales"
               icon={<TrendingDown className="w-3.5 h-3.5 text-blue-500" />}
               rows={sales}
               emptyText="No sales dispatched"
-              linkToOrder
             />
-            <MovementSection
+            <GroupedMovementSection
               title="Inbound — Goods Received"
               icon={<TrendingUp className="w-3.5 h-3.5 text-emerald-500" />}
               rows={inbound}
@@ -211,7 +270,15 @@ function DateAccordion({ group, defaultOpen }: DateAccordionProps) {
                 className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors mb-2"
               >
                 {othersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                {others.length} other movement{others.length !== 1 ? 's' : ''} (adjustments, transfers)
+                {others.length} other movement{others.length !== 1 ? 's' : ''}
+                {returnReceiveCount > 0 && (
+                  <span className="ml-1 text-gray-400">
+                    ({returnReceiveCount} return hold{returnReceiveCount !== 1 ? 's' : ''}, adjustments, transfers)
+                  </span>
+                )}
+                {returnReceiveCount === 0 && (
+                  <span className="ml-1 text-gray-400">(adjustments, transfers)</span>
+                )}
               </button>
               {othersOpen && (
                 <OtherMovementsTable rows={others} />
@@ -224,15 +291,26 @@ function DateAccordion({ group, defaultOpen }: DateAccordionProps) {
   );
 }
 
-interface MovementSectionProps {
+interface GroupedMovementSectionProps {
   title: string;
   icon: React.ReactNode;
   rows: Movement[];
   emptyText: string;
-  linkToOrder?: boolean;
 }
 
-function MovementSection({ title, icon, rows, emptyText, linkToOrder }: MovementSectionProps) {
+function GroupedMovementSection({ title, icon, rows, emptyText }: GroupedMovementSectionProps) {
+  const groups = useMemo(() => buildProductGroups(rows), [rows]);
+  const [expandedSkus, setExpandedSkus] = useState<Set<string>>(new Set());
+
+  const toggleSku = (sku: string) => {
+    setExpandedSkus(prev => {
+      const next = new Set(prev);
+      if (next.has(sku)) next.delete(sku);
+      else next.add(sku);
+      return next;
+    });
+  };
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50">
@@ -243,39 +321,86 @@ function MovementSection({ title, icon, rows, emptyText, linkToOrder }: Movement
       {rows.length === 0 ? (
         <p className="text-xs text-gray-400 px-3 py-4 text-center">{emptyText}</p>
       ) : (
-        <div className="divide-y divide-gray-50">
-          {rows.map(m => {
-            const cfg = movementConfig[m.movement_type] || { label: m.movement_type, variant: 'gray', icon: null, sign: '' };
-            const isPos = m.quantity > 0;
+        <div className="divide-y divide-gray-100">
+          {groups.map(group => {
+            const isExpanded = expandedSkus.has(group.sku);
+            const hasMultiple = group.movements.length > 1;
             return (
-              <div key={m.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold text-gray-800 font-mono">{m.sku}</span>
-                    <Badge variant={cfg.variant as any} className="text-[10px] px-1 py-0">
-                      <span className="flex items-center gap-0.5">{cfg.icon} {cfg.label}</span>
-                    </Badge>
+              <div key={group.sku}>
+                <button
+                  onClick={() => hasMultiple && toggleSku(group.sku)}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors ${hasMultiple ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-semibold text-gray-800 font-mono">{group.sku}</span>
+                      {hasMultiple && (
+                        <span className="text-[10px] font-medium bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">
+                          {group.movements.length}×
+                        </span>
+                      )}
+                      {!hasMultiple && (
+                        <>
+                          {(() => {
+                            const m = group.movements[0];
+                            const cfg = movementConfig[m.movement_type] || { label: m.movement_type, variant: 'gray', icon: null };
+                            return (
+                              <Badge variant={cfg.variant as any} className="text-[10px] px-1 py-0">
+                                <span className="flex items-center gap-0.5">{cfg.icon} {cfg.label}</span>
+                              </Badge>
+                            );
+                          })()}
+                          <ReferenceLink movement={group.movements[0]} />
+                        </>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-400 truncate">{group.product_name}</p>
+                    {!hasMultiple && group.movements[0].notes && (
+                      <p className="text-[10px] text-gray-400 truncate italic">{group.movements[0].notes}</p>
+                    )}
                   </div>
-                  <p className="text-[11px] text-gray-400 truncate">{m.product_name}</p>
-                  {m.notes && (
-                    <p className="text-[10px] text-gray-400 truncate italic">{m.notes}</p>
-                  )}
-                </div>
-                <div className="text-right shrink-0">
-                  <span className={`text-sm font-bold ${isPos ? 'text-emerald-600' : 'text-blue-600'}`}>
-                    {isPos ? '+' : ''}{m.quantity}
-                  </span>
-                  <p className="text-[10px] text-gray-400">{formatTime(m.created_at)}</p>
-                </div>
-                {linkToOrder && m.reference_id && (
-                  <Link
-                    to={`/fulfillment/orders/${m.reference_id}`}
-                    className="shrink-0 text-gray-300 hover:text-blue-500 transition-colors"
-                    onClick={e => e.stopPropagation()}
-                    title="View order"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </Link>
+                  <div className="text-right shrink-0 flex items-center gap-2">
+                    <div>
+                      <span className="text-sm font-bold text-emerald-600">
+                        +{group.total_quantity}
+                      </span>
+                      {!hasMultiple && (
+                        <p className="text-[10px] text-gray-400">{formatTime(group.movements[0].created_at)}</p>
+                      )}
+                    </div>
+                    {hasMultiple && (
+                      <span className="text-gray-300">
+                        {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      </span>
+                    )}
+                  </div>
+                </button>
+
+                {hasMultiple && isExpanded && (
+                  <div className="bg-gray-50 border-t border-gray-100 divide-y divide-gray-100">
+                    {group.movements.map(m => {
+                      const cfg = movementConfig[m.movement_type] || { label: m.movement_type, variant: 'gray', icon: null };
+                      return (
+                        <div key={m.id} className="flex items-center gap-2 pl-6 pr-3 py-2 hover:bg-gray-100 transition-colors">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge variant={cfg.variant as any} className="text-[10px] px-1 py-0">
+                                <span className="flex items-center gap-0.5">{cfg.icon} {cfg.label}</span>
+                              </Badge>
+                              <ReferenceLink movement={m} />
+                            </div>
+                            {m.notes && (
+                              <p className="text-[10px] text-gray-400 truncate italic mt-0.5">{m.notes}</p>
+                            )}
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className="text-xs font-bold text-emerald-600">+{Math.abs(m.quantity)}</span>
+                            <p className="text-[10px] text-gray-400">{formatTime(m.created_at)}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             );
@@ -341,7 +466,7 @@ function OtherMovementsTable({ rows }: { rows: Movement[] }) {
       <div className="divide-y divide-gray-50">
         {rows.map(m => {
           const cfg = movementConfig[m.movement_type] || { label: m.movement_type, variant: 'gray', icon: null, sign: '' };
-          const isPos = m.quantity > 0;
+          const isReturnReceive = m.movement_type === 'return_receive';
           return (
             <div key={m.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 transition-colors">
               <Badge variant={cfg.variant as any} className="text-[10px] px-1 py-0 shrink-0">
@@ -349,9 +474,18 @@ function OtherMovementsTable({ rows }: { rows: Movement[] }) {
               </Badge>
               <span className="text-xs font-mono text-gray-700">{m.sku}</span>
               <span className="text-xs text-gray-400 flex-1 truncate">{m.product_name}</span>
-              {m.notes && <span className="text-[10px] text-gray-400 italic truncate max-w-xs">{m.notes}</span>}
-              <span className={`text-xs font-bold shrink-0 ${isPos ? 'text-emerald-600' : 'text-red-500'}`}>
-                {isPos ? '+' : ''}{m.quantity}
+              {isReturnReceive && m.to_location && (
+                <span className="flex items-center gap-0.5 text-[10px] text-gray-400 italic shrink-0">
+                  <MapPin className="w-2.5 h-2.5" />
+                  {m.to_location}
+                </span>
+              )}
+              <ReferenceLink movement={m} />
+              {m.notes && !isReturnReceive && (
+                <span className="text-[10px] text-gray-400 italic truncate max-w-xs">{m.notes}</span>
+              )}
+              <span className="text-xs font-bold shrink-0 text-gray-400">
+                +{Math.abs(m.quantity)}
               </span>
               <span className="text-[10px] text-gray-400 shrink-0">{formatTime(m.created_at)}</span>
             </div>
@@ -407,23 +541,45 @@ export default function StockMovements() {
       }
 
       const { data } = await query;
+      const rawMovements = data || [];
 
-      const mapped: Movement[] = (data || []).map((m: any) => ({
-        id: m.id,
-        created_at: m.created_at,
-        movement_type: m.movement_type,
-        product_type: m.products?.product_type || 'saleable_goods',
-        sku: m.products?.sku || '?',
-        product_name: m.products?.name || 'Unknown',
-        lot_number: m.inventory_lots?.lot_number || null,
-        from_location: m.from_loc?.code || null,
-        to_location: m.to_loc?.code || null,
-        quantity: m.quantity,
-        reference_type: m.reference_type,
-        reference_id: m.reference_id || null,
-        notes: m.notes,
-        performed_by: m.performed_by || null,
-      }));
+      const orderIds = [...new Set(rawMovements.filter(m => m.reference_type === 'order' && m.reference_id).map(m => m.reference_id as string))];
+      const returnIds = [...new Set(rawMovements.filter(m => m.reference_type === 'return' && m.reference_id).map(m => m.reference_id as string))];
+      const poIds = [...new Set(rawMovements.filter(m => m.reference_type === 'po' && m.reference_id).map(m => m.reference_id as string))];
+
+      const [ordersResult, returnsResult, posResult] = await Promise.all([
+        orderIds.length > 0 ? supabase.from('orders').select('id, order_number').in('id', orderIds) : { data: [] },
+        returnIds.length > 0 ? supabase.from('returns').select('id, return_number').in('id', returnIds) : { data: [] },
+        poIds.length > 0 ? supabase.from('purchase_orders').select('id, po_number').in('id', poIds) : { data: [] },
+      ]);
+
+      const orderMap = new Map((ordersResult.data || []).map((o: any) => [o.id, o.order_number]));
+      const returnMap = new Map((returnsResult.data || []).map((r: any) => [r.id, r.return_number]));
+      const poMap = new Map((posResult.data || []).map((p: any) => [p.id, p.po_number]));
+
+      const mapped: Movement[] = rawMovements.map((m: any) => {
+        let refNumber: string | null = null;
+        if (m.reference_type === 'order') refNumber = orderMap.get(m.reference_id) || null;
+        else if (m.reference_type === 'return') refNumber = returnMap.get(m.reference_id) || null;
+        else if (m.reference_type === 'po') refNumber = poMap.get(m.reference_id) || null;
+        return {
+          id: m.id,
+          created_at: m.created_at,
+          movement_type: m.movement_type,
+          product_type: m.products?.product_type || 'saleable_goods',
+          sku: m.products?.sku || '?',
+          product_name: m.products?.name || 'Unknown',
+          lot_number: m.inventory_lots?.lot_number || null,
+          from_location: m.from_loc?.code || null,
+          to_location: m.to_loc?.code || null,
+          quantity: m.quantity,
+          reference_type: m.reference_type,
+          reference_id: m.reference_id || null,
+          reference_number: refNumber,
+          notes: m.notes,
+          performed_by: m.performed_by || null,
+        };
+      });
 
       setMovements(mapped);
     } catch (err: any) {
@@ -438,7 +594,8 @@ export default function StockMovements() {
     const matchSearch = !searchTerm ||
       m.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
       m.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (m.lot_number || '').toLowerCase().includes(searchTerm.toLowerCase());
+      (m.lot_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (m.reference_number || '').toLowerCase().includes(searchTerm.toLowerCase());
     const date = m.created_at.slice(0, 10);
     const matchFrom = !dateFrom || date >= dateFrom;
     const matchTo = !dateTo || date <= dateTo;
@@ -452,10 +609,10 @@ export default function StockMovements() {
 
   const totalReceipts = movements.filter(m => m.movement_type === 'receipt').reduce((s, m) => s + Math.abs(m.quantity), 0);
   const totalSales = movements.filter(m => m.movement_type === 'sale').reduce((s, m) => s + Math.abs(m.quantity), 0);
-  const totalReturns = movements.filter(m => m.movement_type === 'return_restock' || m.movement_type === 'return_receive').reduce((s, m) => s + Math.abs(m.quantity), 0);
+  const totalReturns = movements.filter(m => m.movement_type === 'return_restock').reduce((s, m) => s + Math.abs(m.quantity), 0);
 
   const exportCSV = () => {
-    const headers = ['Date', 'Type', 'Product Type', 'SKU', 'Product', 'Lot', 'From', 'To', 'Quantity', 'Reference', 'Notes'];
+    const headers = ['Date', 'Type', 'Product Type', 'SKU', 'Product', 'Lot', 'From', 'To', 'Quantity', 'Reference Type', 'Reference', 'Notes'];
     const rows = filtered.map(m => [
       m.created_at.slice(0, 16),
       m.movement_type,
@@ -467,6 +624,7 @@ export default function StockMovements() {
       m.to_location || '',
       m.quantity,
       m.reference_type || '',
+      m.reference_number || m.reference_id || '',
       m.notes || '',
     ]);
     const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
@@ -532,7 +690,7 @@ export default function StockMovements() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
               <input
                 type="text"
-                placeholder="Search SKU, product, lot..."
+                placeholder="Search SKU, product, lot, reference..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"

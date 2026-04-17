@@ -11,12 +11,21 @@ import { supabase } from '../../lib/supabase';
 /* ─── Types ─────────────────────────────────────────────────────── */
 type Preset = 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'this_quarter' | 'custom';
 
+interface OrderItem {
+  product_name: string;
+  quantity: number;
+}
+
 interface OrderRow {
   id: string;
   order_date: string;
   shipped_at: string | null;
   cs_status: string | null;
   total_amount: number;
+  woo_order_id: number | null;
+  order_number: string;
+  customer_name: string | null;
+  items: OrderItem[];
 }
 
 interface DailyBreakdown {
@@ -36,15 +45,17 @@ interface CacheEntry {
   rows: OrderRow[];
 }
 
-const CACHE_KEY = 'sales_overview_snapshot';
+/* ─── Per-range cache helpers ───────────────────────────────────── */
+function cacheKey(from: string, to: string) {
+  return `sales_overview_${from}_${to}`;
+}
 
 function readCache(from: string, to: string): OrderRow[] | null {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = localStorage.getItem(cacheKey(from, to));
     if (!raw) return null;
     const entry: CacheEntry = JSON.parse(raw);
-    if (entry.from === from && entry.to === to) return entry.rows;
-    return null;
+    return entry.rows;
   } catch {
     return null;
   }
@@ -53,15 +64,15 @@ function readCache(from: string, to: string): OrderRow[] | null {
 function writeCache(from: string, to: string, rows: OrderRow[]) {
   try {
     const entry: CacheEntry = { from, to, fetchedAt: Date.now(), rows };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(entry));
+    localStorage.setItem(cacheKey(from, to), JSON.stringify(entry));
   } catch {
     // storage full or unavailable
   }
 }
 
-function readCacheMeta(): { fetchedAt: number; from: string; to: string } | null {
+function readCacheMeta(from: string, to: string): { fetchedAt: number; from: string; to: string } | null {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = localStorage.getItem(cacheKey(from, to));
     if (!raw) return null;
     const entry: CacheEntry = JSON.parse(raw);
     return { fetchedAt: entry.fetchedAt, from: entry.from, to: entry.to };
@@ -80,8 +91,6 @@ function formatCacheAge(fetchedAt: number): string {
 }
 
 /* ─── Date helpers ──────────────────────────────────────────────── */
-
-/** Format a Date using local timezone components, not UTC */
 function localDateStr(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -157,6 +166,10 @@ function formatDateLabel(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+function formatTime(ts: string) {
+  return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
 function getDaysInRange(from: string, to: string): string[] {
   const days: string[] = [];
   const cur = new Date(from + 'T00:00:00');
@@ -168,12 +181,45 @@ function getDaysInRange(from: string, to: string): string[] {
   return days;
 }
 
-/** Extract YYYY-MM-DD from any ISO timestamptz string */
 function orderDateKey(ts: string): string {
   return ts.slice(0, 10);
 }
 
-/* ─── Paginated fetch (solves 1000-row cap) ─────────────────────── */
+function statusLabel(s: string | null): { label: string; color: string } {
+  if (!s) return { label: 'Unknown', color: 'bg-gray-100 text-gray-500' };
+  const map: Record<string, { label: string; color: string }> = {
+    new: { label: 'New', color: 'bg-blue-100 text-blue-700' },
+    confirmed: { label: 'Confirmed', color: 'bg-cyan-100 text-cyan-700' },
+    not_printed: { label: 'Not Printed', color: 'bg-yellow-100 text-yellow-700' },
+    printed: { label: 'Printed', color: 'bg-orange-100 text-orange-700' },
+    packed: { label: 'Packed', color: 'bg-teal-100 text-teal-700' },
+    shipped: { label: 'Shipped', color: 'bg-emerald-100 text-emerald-700' },
+    delivered: { label: 'Delivered', color: 'bg-green-100 text-green-700' },
+    cancelled_cbd: { label: 'CBD', color: 'bg-red-100 text-red-600' },
+    cancelled_cad: { label: 'CAD', color: 'bg-red-100 text-red-600' },
+    exchange: { label: 'Exchange', color: 'bg-amber-100 text-amber-700' },
+    exchange_returnable: { label: 'Exchange', color: 'bg-amber-100 text-amber-700' },
+    refund: { label: 'Refund', color: 'bg-rose-100 text-rose-700' },
+    reverse_pick: { label: 'Reverse Pick', color: 'bg-rose-100 text-rose-700' },
+    send_to_lab: { label: 'In Lab', color: 'bg-violet-100 text-violet-700' },
+  };
+  return map[s] ?? { label: s.replace(/_/g, ' '), color: 'bg-gray-100 text-gray-600' };
+}
+
+/* ─── Raw fetch row from Supabase ───────────────────────────────── */
+interface RawOrderRow {
+  id: string;
+  order_date: string;
+  shipped_at: string | null;
+  cs_status: string | null;
+  total_amount: number;
+  woo_order_id: number | null;
+  order_number: string;
+  customer: { full_name: string } | null;
+  order_items: { product_name: string; quantity: number }[];
+}
+
+/* ─── Paginated fetch ───────────────────────────────────────────── */
 async function fetchAllOrdersInRange(from: string, to: string): Promise<OrderRow[]> {
   const PAGE = 1000;
   let all: OrderRow[] = [];
@@ -182,7 +228,12 @@ async function fetchAllOrdersInRange(from: string, to: string): Promise<OrderRow
   while (true) {
     const { data, error } = await supabase
       .from('orders')
-      .select('id, order_date, shipped_at, cs_status, total_amount')
+      .select(`
+        id, order_date, shipped_at, cs_status, total_amount,
+        woo_order_id, order_number,
+        customer:customers(full_name),
+        order_items(product_name, quantity)
+      `)
       .gte('order_date', from + 'T00:00:00')
       .lte('order_date', to + 'T23:59:59')
       .order('order_date', { ascending: true })
@@ -191,7 +242,19 @@ async function fetchAllOrdersInRange(from: string, to: string): Promise<OrderRow
     if (error) throw error;
     if (!data || data.length === 0) break;
 
-    all = all.concat(data as OrderRow[]);
+    const mapped: OrderRow[] = (data as unknown as RawOrderRow[]).map(r => ({
+      id: r.id,
+      order_date: r.order_date,
+      shipped_at: r.shipped_at,
+      cs_status: r.cs_status,
+      total_amount: Number(r.total_amount),
+      woo_order_id: r.woo_order_id,
+      order_number: r.order_number,
+      customer_name: r.customer?.full_name ?? null,
+      items: r.order_items ?? [],
+    }));
+
+    all = all.concat(mapped);
     if (data.length < PAGE) break;
     offset += PAGE;
   }
@@ -220,6 +283,7 @@ function SalesOverviewContent() {
   const [preset, setPreset] = useState<Preset>('this_month');
   const [custom, setCustom] = useState({ from: '', to: '' });
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [cacheMeta, setCacheMeta] = useState<{ fetchedAt: number; from: string; to: string } | null>(null);
@@ -227,18 +291,22 @@ function SalesOverviewContent() {
 
   const dateRange = getPresetDates(preset, custom);
 
-  /* Load from cache on mount / range change */
+  /* Load from cache on mount / range change — auto-loads immediately */
   useEffect(() => {
-    if (preset === 'custom' && (!custom.from || !custom.to)) return;
+    if (preset === 'custom' && (!custom.from || !custom.to)) {
+      setInitializing(false);
+      return;
+    }
     const cached = readCache(dateRange.from, dateRange.to);
     if (cached) {
       setOrders(cached);
-      const meta = readCacheMeta();
+      const meta = readCacheMeta(dateRange.from, dateRange.to);
       setCacheMeta(meta);
     } else {
       setOrders([]);
       setCacheMeta(null);
     }
+    setInitializing(false);
   }, [dateRange.from, dateRange.to, preset, custom.from, custom.to]);
 
   /* Tick cache age every minute */
@@ -257,7 +325,7 @@ function SalesOverviewContent() {
       const rows = await fetchAllOrdersInRange(dateRange.from, dateRange.to);
       writeCache(dateRange.from, dateRange.to, rows);
       setOrders(rows);
-      const meta = readCacheMeta();
+      const meta = readCacheMeta(dateRange.from, dateRange.to);
       setCacheMeta(meta);
       if (meta) setCacheAge(formatCacheAge(meta.fetchedAt));
     } finally {
@@ -318,6 +386,13 @@ function SalesOverviewContent() {
     }).reverse();
   }, [orders, dateRange.from, dateRange.to]);
 
+  /* Single-day order list (newest first) */
+  const isSingleDay = dateRange.from === dateRange.to;
+  const singleDayOrders = useMemo(() => {
+    if (!isSingleDay) return [];
+    return [...orders].sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+  }, [orders, isSingleDay]);
+
   const presets: { value: Preset; label: string }[] = [
     { value: 'today', label: 'Today' },
     { value: 'yesterday', label: 'Yesterday' },
@@ -330,7 +405,7 @@ function SalesOverviewContent() {
   ];
 
   const hasData = orders.length > 0;
-  const noCache = !hasData && !loading;
+  const noCache = !hasData && !loading && !initializing;
 
   return (
     <div className="space-y-6">
@@ -405,6 +480,17 @@ function SalesOverviewContent() {
         </span>
       </div>
 
+      {/* Initializing skeleton */}
+      {initializing && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-28 bg-gray-100 rounded-xl animate-pulse" />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* No cache prompt */}
       {noCache && (
         <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 py-16 flex flex-col items-center gap-4">
@@ -427,7 +513,7 @@ function SalesOverviewContent() {
       )}
 
       {/* Loading skeleton */}
-      {loading && (
+      {loading && !updating && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {[...Array(6)].map((_, i) => (
@@ -443,7 +529,7 @@ function SalesOverviewContent() {
       )}
 
       {/* Content */}
-      {!loading && hasData && (
+      {!initializing && !loading && hasData && (
         <div className="space-y-6">
           {/* Row count info */}
           <div className="flex items-center gap-2 text-xs text-gray-400">
@@ -551,6 +637,14 @@ function SalesOverviewContent() {
             />
           </div>
 
+          {/* Single-day Order Detail Table */}
+          {isSingleDay && singleDayOrders.length > 0 && (
+            <SingleDayOrderTable
+              orders={singleDayOrders}
+              date={dateRange.from}
+            />
+          )}
+
           {/* Daily Breakdown Table */}
           {daily.length > 0 && (
             <div className="rounded-xl border border-gray-200 overflow-hidden">
@@ -615,6 +709,128 @@ function SalesOverviewContent() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── Single-Day Order Detail Table ─────────────────────────────── */
+function SingleDayOrderTable({ orders, date }: { orders: OrderRow[]; date: string }) {
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 25;
+  const totalPages = Math.ceil(orders.length / PAGE_SIZE);
+  const pageOrders = orders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const totalNetSales = orders.reduce((s, o) => s + o.total_amount, 0);
+
+  return (
+    <div className="rounded-xl border border-gray-200 overflow-hidden">
+      {/* Header */}
+      <div className="px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">Orders</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {orders.length} orders on {new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-gray-400">Net Sales</p>
+          <p className="text-sm font-bold text-gray-900">{fmt(totalNetSales)}</p>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th className="text-left px-5 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time</th>
+              <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Order ID</th>
+              <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+              <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer</th>
+              <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Products</th>
+              <th className="text-right px-5 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Net Sales</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {pageOrders.map(order => {
+              const st = statusLabel(order.cs_status);
+              const displayId = order.woo_order_id ?? order.order_number;
+              const items = order.items ?? [];
+              const firstItem = items[0];
+              const extraCount = items.length - 1;
+
+              return (
+                <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-3 text-sm text-gray-500 whitespace-nowrap tabular-nums">
+                    {formatTime(order.order_date)}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className="text-sm font-semibold text-blue-600">
+                      #{displayId}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${st.color}`}>
+                      {st.label}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                    {order.customer_name ?? <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-700">
+                    {firstItem ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-gray-800">
+                          {firstItem.quantity > 1 && (
+                            <span className="text-xs font-semibold text-gray-500 mr-1">{firstItem.quantity}×</span>
+                          )}
+                          {firstItem.product_name}
+                        </span>
+                        {extraCount > 0 && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-xs font-medium whitespace-nowrap">
+                            +{extraCount} more
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-right tabular-nums text-sm font-semibold text-gray-900 whitespace-nowrap">
+                    {fmt(order.total_amount)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Footer */}
+      <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+        <p className="text-xs text-gray-500">
+          {orders.length} Orders · {fmt(totalNetSales)} net sales
+        </p>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              ‹ Prev
+            </button>
+            <span className="text-xs text-gray-500">Page {page} of {totalPages}</span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Next ›
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

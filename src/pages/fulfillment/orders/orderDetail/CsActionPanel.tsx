@@ -117,6 +117,59 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const [exchangeItemsFetched, setExchangeItemsFetched] = useState(false);
   const [exchangeFetchLoading, setExchangeFetchLoading] = useState(false);
 
+  interface LinkedExchangeInfo {
+    return_number: string;
+    exr_order_number: string | null;
+    exr_woo_order_id: number | null;
+    exchange_order_number: string | null;
+    exchange_woo_order_id: number | null;
+  }
+  const [linkedExchangeInfo, setLinkedExchangeInfo] = useState<LinkedExchangeInfo | null>(null);
+
+  useEffect(() => {
+    const isExchangeStatus = order.cs_status === 'exchange' || order.cs_status === 'exchange_returnable';
+    if (!isExchangeStatus) { setLinkedExchangeInfo(null); return; }
+
+    const load = async () => {
+      let query;
+      if (order.cs_status === 'exchange' && order.exchange_return_id) {
+        query = supabase
+          .from('returns')
+          .select('return_number, order:orders!order_id(order_number, woo_order_id)')
+          .eq('id', order.exchange_return_id)
+          .maybeSingle();
+      } else {
+        query = supabase
+          .from('returns')
+          .select('return_number, exchange_order:orders!exchange_order_id(order_number, woo_order_id)')
+          .eq('order_id', order.id)
+          .eq('return_reason', 'Exchange')
+          .maybeSingle();
+      }
+      const { data } = await query;
+      if (!data) { setLinkedExchangeInfo(null); return; }
+      const d = data as any;
+      if (order.cs_status === 'exchange') {
+        setLinkedExchangeInfo({
+          return_number: d.return_number,
+          exr_order_number: d.order?.order_number ?? null,
+          exr_woo_order_id: d.order?.woo_order_id ?? null,
+          exchange_order_number: null,
+          exchange_woo_order_id: null,
+        });
+      } else {
+        setLinkedExchangeInfo({
+          return_number: d.return_number,
+          exr_order_number: null,
+          exr_woo_order_id: null,
+          exchange_order_number: d.exchange_order?.order_number ?? null,
+          exchange_woo_order_id: d.exchange_order?.woo_order_id ?? null,
+        });
+      }
+    };
+    load();
+  }, [order.id, order.cs_status, order.exchange_return_id]);
+
   useEffect(() => {
     supabase.from('cancellation_reasons').select('id, reason_text, cancellation_type').eq('is_active', true).order('sort_order').then(({ data }) => {
       setCancellationReasons(data ?? []);
@@ -462,7 +515,8 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           cs_status: 'exchange_returnable',
           updated_at: new Date().toISOString(),
         }).eq('id', retOrder.id);
-        await logActivity(retOrder.id, `Status changed to Exchange Returnable (EXR) — linked to exchange on order ${order.order_number}`, userId);
+        await logActivity(retOrder.id, `Status changed to Exchange Returnable (EXR) — return expected, linked to exchange order ${order.woo_order_id ? `#${order.woo_order_id}` : order.order_number} (${returnNumber})`, userId);
+        await logActivity(order.id, `Exchange created — return expected from EXR order ${form.exchange_return_id.trim()} (${returnNumber})`, userId);
       }
 
       if (selectedAction === 'cancel_before_dispatch') {
@@ -702,6 +756,30 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold border ${STATUS_CONFIG[order.cs_status]?.color ?? 'text-gray-700'} ${STATUS_CONFIG[order.cs_status]?.bg ?? 'bg-gray-100'} ${STATUS_CONFIG[order.cs_status]?.border ?? 'border-gray-200'}`}>
           {STATUS_CONFIG[order.cs_status]?.label ?? order.cs_status}
         </div>
+        {linkedExchangeInfo && (
+          <div className="mt-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-semibold text-blue-700">Return:</span>
+              <span className="font-mono text-xs text-blue-800">{linkedExchangeInfo.return_number}</span>
+            </div>
+            {(linkedExchangeInfo.exr_woo_order_id || linkedExchangeInfo.exr_order_number) && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs text-blue-600">EXR Order:</span>
+                <span className="text-xs font-semibold text-blue-800">
+                  {linkedExchangeInfo.exr_woo_order_id ? `#${linkedExchangeInfo.exr_woo_order_id}` : linkedExchangeInfo.exr_order_number}
+                </span>
+              </div>
+            )}
+            {(linkedExchangeInfo.exchange_woo_order_id || linkedExchangeInfo.exchange_order_number) && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs text-blue-600">Exchange Order:</span>
+                <span className="text-xs font-semibold text-blue-800">
+                  {linkedExchangeInfo.exchange_woo_order_id ? `#${linkedExchangeInfo.exchange_woo_order_id}` : linkedExchangeInfo.exchange_order_number}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {isInWarehouseOps && (

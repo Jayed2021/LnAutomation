@@ -1383,7 +1383,7 @@ export default function Orders() {
                                     title="This is an exchange order"
                                     className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 bg-blue-100 text-blue-700 border border-blue-200"
                                   >
-                                    EXR
+                                    Exchange
                                   </span>
                                 )}
                               </div>

@@ -310,7 +310,7 @@ const VALID_DATE_RANGES: DateRange[] = ['today', 'yesterday', 'this_week', 'this
 const ORDER_SELECT = `
   id, order_number, woo_order_id, woo_order_number,
   order_date, cs_status, order_type, total_amount, expected_delivery_date,
-  has_prescription, shipped_at,
+  has_prescription, shipped_at, exchange_return_id,
   customer:customers(full_name, phone_primary),
   assigned_user:users!orders_assigned_to_fkey(id, full_name),
   confirmed_user:users!orders_confirmed_by_fkey(id, full_name),
@@ -1376,6 +1376,14 @@ export default function Orders() {
                                     {order.order_type === 'home_try_on' ? 'HTO' :
                                      order.order_type === 'creative_work' ? 'CW' :
                                      order.order_type.charAt(0).toUpperCase() + order.order_type.slice(1)}
+                                  </span>
+                                )}
+                                {order.exchange_return_id && (
+                                  <span
+                                    title="This is an exchange order"
+                                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 bg-blue-100 text-blue-700 border border-blue-200"
+                                  >
+                                    EXR
                                   </span>
                                 )}
                               </div>

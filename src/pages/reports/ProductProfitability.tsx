@@ -145,6 +145,7 @@ export default function ProductProfitability() {
   const [sortKey, setSortKey] = useState<SortKey>('profit');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [page, setPage] = useState(1);
+  const [top10Open, setTop10Open] = useState(false);
 
   const dateRange = useMemo(
     () => getDateRange(preset, { from: customFrom, to: customTo }),
@@ -460,45 +461,57 @@ export default function ProductProfitability() {
           {/* Top 10 */}
           {top10.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-800">Top 10 Products by Profitability</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Ranked by gross profit for the selected period</p>
-              </div>
-              <div className="p-4">
-                {top10.map((r, i) => {
-                  const maxProfit = top10[0].profit;
-                  const barWidth = maxProfit > 0 ? Math.max(4, (r.profit / maxProfit) * 100) : 4;
-                  const isLow = r.margin < lowMarginThreshold && r.revenue > 0;
-                  return (
-                    <div key={r.sku} className="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
-                      <span className="w-6 text-right text-sm font-semibold text-gray-400 shrink-0">{i + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-medium text-gray-800 truncate">{r.product_name}</span>
-                          {isLow && (
-                            <span className="shrink-0 inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">
-                              <AlertTriangle className="w-3 h-3" />
-                              Low
-                            </span>
-                          )}
+              <button
+                onClick={() => setTop10Open(o => !o)}
+                className="w-full px-6 py-4 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+              >
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-800">Top 10 Products by Profitability</h2>
+                  {!top10Open && (
+                    <p className="text-xs text-gray-500 mt-0.5">Ranked by gross profit for the selected period</p>
+                  )}
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${top10Open ? 'rotate-180' : ''}`}
+                />
+              </button>
+              {top10Open && (
+                <div className="p-4 border-t border-gray-100">
+                  {top10.map((r, i) => {
+                    const maxProfit = top10[0].profit;
+                    const barWidth = maxProfit > 0 ? Math.max(4, (r.profit / maxProfit) * 100) : 4;
+                    const isLow = r.margin < lowMarginThreshold && r.revenue > 0;
+                    return (
+                      <div key={r.sku} className="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
+                        <span className="w-6 text-right text-sm font-semibold text-gray-400 shrink-0">{i + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-medium text-gray-800 truncate">{r.product_name}</span>
+                            {isLow && (
+                              <span className="shrink-0 inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">
+                                <AlertTriangle className="w-3 h-3" />
+                                Low
+                              </span>
+                            )}
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${r.profit < 0 ? 'bg-red-400' : 'bg-emerald-400'}`}
+                              style={{ width: `${barWidth}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${r.profit < 0 ? 'bg-red-400' : 'bg-emerald-400'}`}
-                            style={{ width: `${barWidth}%` }}
-                          />
+                        <div className="text-right shrink-0">
+                          <p className={`text-sm font-semibold ${r.profit < 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                            {fmt(r.profit)}
+                          </p>
+                          <p className="text-xs text-gray-400">{fmtPct(r.margin)} margin</p>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className={`text-sm font-semibold ${r.profit < 0 ? 'text-red-600' : 'text-emerald-700'}`}>
-                          {fmt(r.profit)}
-                        </p>
-                        <p className="text-xs text-gray-400">{fmtPct(r.margin)} margin</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

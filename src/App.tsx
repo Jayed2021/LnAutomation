@@ -38,8 +38,11 @@ const ProfitLoss = lazy(() => import('./pages/reports/ProfitLoss'));
 const ExpenseAnalysis = lazy(() => import('./pages/reports/ExpenseAnalysis'));
 const CashFlow = lazy(() => import('./pages/reports/CashFlow'));
 const StockLevels = lazy(() => import('./pages/reports/StockLevels'));
+const InventoryValuation = lazy(() => import('./pages/reports/InventoryValuation'));
 const SalesOverview = lazy(() => import('./pages/reports/SalesOverview'));
 const ProductProfitability = lazy(() => import('./pages/reports/ProductProfitability'));
+const ShipmentPerformance = lazy(() => import('./pages/reports/shipmentPerformance/ShipmentPerformance'));
+const ShipmentPerformanceDetail = lazy(() => import('./pages/reports/shipmentPerformance/ShipmentPerformanceDetail'));
 
 const Settings = lazy(() => import('./pages/Settings'));
 const WooCommerceSettings = lazy(() => import('./pages/settings/WooCommerceSettings'));
@@ -121,8 +124,11 @@ function App() {
               <Route path="reports/expense-analysis" element={<Suspense fallback={<PageLoader />}><ExpenseAnalysis /></Suspense>} />
               <Route path="reports/cash-flow" element={<Suspense fallback={<PageLoader />}><CashFlow /></Suspense>} />
               <Route path="reports/stock-levels" element={<Suspense fallback={<PageLoader />}><StockLevels /></Suspense>} />
+              <Route path="reports/inventory-valuation" element={<Suspense fallback={<PageLoader />}><InventoryValuation /></Suspense>} />
               <Route path="reports/sales-overview" element={<Suspense fallback={<PageLoader />}><SalesOverview /></Suspense>} />
               <Route path="reports/product-profitability" element={<Suspense fallback={<PageLoader />}><ProductProfitability /></Suspense>} />
+              <Route path="reports/shipment-performance" element={<Suspense fallback={<PageLoader />}><ShipmentPerformance /></Suspense>} />
+              <Route path="reports/shipment-performance/:id" element={<Suspense fallback={<PageLoader />}><ShipmentPerformanceDetail /></Suspense>} />
               <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
               <Route path="settings/woocommerce" element={<Suspense fallback={<PageLoader />}><WooCommerceSettings /></Suspense>} />
               <Route path="settings/barcode" element={<Suspense fallback={<PageLoader />}><BarcodeSettings /></Suspense>} />

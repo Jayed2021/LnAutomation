@@ -159,6 +159,16 @@ export async function upsertSession(session: ReceiptSession, userId: string): Pr
   return sessionId!;
 }
 
+async function generateLotNumber(shipmentName: string, sku: string, suffix: string = ''): Promise<string> {
+  const base = `LOT-${shipmentName}-${sku}${suffix}`.toUpperCase().replace(/[^A-Z0-9-]/g, '-');
+  const { count } = await supabase
+    .from('inventory_lots')
+    .select('id', { count: 'exact', head: true })
+    .ilike('lot_number', `${base}%`);
+  const n = (count ?? 0) + 1;
+  return n === 1 ? base : `${base}-R${n}`;
+}
+
 export async function finalizeQtyCheck(
   session: ReceiptSession,
   po: { id: string; po_number: string },
@@ -185,7 +195,7 @@ export async function finalizeQtyCheck(
       continue;
     }
 
-    const lotNumber = `LOT-${session.shipment_name}-${line.sku}`.toUpperCase().replace(/[^A-Z0-9-]/g, '-');
+    const lotNumber = await generateLotNumber(session.shipment_name, line.sku);
     const { data: lot } = await supabase.from('inventory_lots').insert({
       lot_number: lotNumber,
       product_id: line.product_id,
@@ -267,7 +277,7 @@ export async function finalizeQC(
     for (const line of session.lines) {
       if (!line.product_id || line.qty_good <= 0) continue;
 
-      const lotNumber = `LOT-${session.shipment_name}-${line.sku}`.toUpperCase().replace(/[^A-Z0-9-]/g, '-');
+      const lotNumber = await generateLotNumber(session.shipment_name, line.sku);
       await supabase.from('inventory_lots').insert({
         lot_number: lotNumber,
         product_id: line.product_id,
@@ -329,7 +339,7 @@ export async function finalizeQC(
 
   for (const line of session.lines) {
     if (!line.product_id || line.qty_damaged <= 0 || !damagedLoc) continue;
-    const dmgLotNumber = `LOT-${session.shipment_name}-${line.sku}-DMG`.toUpperCase().replace(/[^A-Z0-9-]/g, '-');
+    const dmgLotNumber = await generateLotNumber(session.shipment_name, line.sku, '-DMG');
     await supabase.from('inventory_lots').insert({
       lot_number: dmgLotNumber,
       product_id: line.product_id,

@@ -40,7 +40,9 @@ interface Return {
   refund_status: string | null;
   created_at: string;
   order_id: string;
+  exchange_order_id: string | null;
   order: { order_number: string; woo_order_id: number | null; cs_status: string; order_date: string | null } | null;
+  exchange_order: { order_number: string; woo_order_id: number | null } | null;
   customer: { full_name: string; phone_primary: string | null } | null;
   items: ReturnItem[];
 }
@@ -163,7 +165,9 @@ export default function Returns() {
           refund_status,
           created_at,
           order_id,
+          exchange_order_id,
           order:orders!order_id(order_number, woo_order_id, cs_status, order_date),
+          exchange_order:orders!exchange_order_id(order_number, woo_order_id),
           customer:customers!customer_id(full_name, phone_primary),
           items:return_items(
             id,
@@ -219,6 +223,8 @@ export default function Returns() {
       r.return_number.toLowerCase().includes(q) ||
       r.order?.order_number?.toLowerCase().includes(q) ||
       (r.order?.woo_order_id?.toString() ?? '').includes(q) ||
+      r.exchange_order?.order_number?.toLowerCase().includes(q) ||
+      (r.exchange_order?.woo_order_id?.toString() ?? '').includes(q) ||
       r.customer?.full_name?.toLowerCase().includes(q) ||
       r.return_reason?.toLowerCase().includes(q)
     );
@@ -263,7 +269,9 @@ export default function Returns() {
     return returns.find(r =>
       r.order?.woo_order_id?.toString() === trimmed ||
       r.order?.order_number?.toLowerCase() === trimmed.toLowerCase() ||
-      r.return_number.toLowerCase() === trimmed.toLowerCase()
+      r.return_number.toLowerCase() === trimmed.toLowerCase() ||
+      r.exchange_order?.woo_order_id?.toString() === trimmed ||
+      r.exchange_order?.order_number?.toLowerCase() === trimmed.toLowerCase()
     );
   };
 
@@ -371,7 +379,7 @@ export default function Returns() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
-              placeholder="Search by return ID, order ID, customer, or reason..."
+              placeholder="Search by return ID, order ID, exchange order ID, customer, or reason..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10"
@@ -433,6 +441,14 @@ export default function Returns() {
                           <div className="font-medium text-gray-800">
                             {r.order?.woo_order_id ? `#${r.order.woo_order_id}` : (r.order?.order_number ?? '—')}
                           </div>
+                          {r.exchange_order && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <span className="text-xs text-gray-400">Exch:</span>
+                              <span className="text-xs font-medium text-blue-600">
+                                {r.exchange_order.woo_order_id ? `#${r.exchange_order.woo_order_id}` : r.exchange_order.order_number}
+                              </span>
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
                           {r.order?.order_date

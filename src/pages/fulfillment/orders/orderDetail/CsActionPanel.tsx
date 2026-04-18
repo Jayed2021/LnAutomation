@@ -127,12 +127,14 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const [linkedExchangeInfo, setLinkedExchangeInfo] = useState<LinkedExchangeInfo | null>(null);
 
   useEffect(() => {
-    const isExchangeStatus = order.cs_status === 'exchange' || order.cs_status === 'exchange_returnable';
-    if (!isExchangeStatus) { setLinkedExchangeInfo(null); return; }
+    const isExrStatus = order.cs_status === 'exchange_returnable';
+    const hasExchangeLink = !!order.exchange_return_id;
+
+    if (!hasExchangeLink && !isExrStatus) { setLinkedExchangeInfo(null); return; }
 
     const load = async () => {
       let query;
-      if (order.cs_status === 'exchange' && order.exchange_return_id) {
+      if (hasExchangeLink) {
         query = supabase
           .from('returns')
           .select('return_number, order:orders!order_id(order_number, woo_order_id)')
@@ -149,7 +151,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       const { data } = await query;
       if (!data) { setLinkedExchangeInfo(null); return; }
       const d = data as any;
-      if (order.cs_status === 'exchange') {
+      if (hasExchangeLink) {
         setLinkedExchangeInfo({
           return_number: d.return_number,
           exr_order_number: d.order?.order_number ?? null,
@@ -757,24 +759,27 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           {STATUS_CONFIG[order.cs_status]?.label ?? order.cs_status}
         </div>
         {linkedExchangeInfo && (
-          <div className="mt-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
+          <div className="mt-2 p-2.5 bg-blue-50 border border-blue-300 rounded-lg space-y-1.5">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">Exchange Order</span>
+            </div>
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-semibold text-blue-700">Return:</span>
-              <span className="font-mono text-xs text-blue-800">{linkedExchangeInfo.return_number}</span>
+              <span className="text-xs text-blue-600">Return Ref:</span>
+              <span className="font-mono text-xs font-semibold text-blue-800">{linkedExchangeInfo.return_number}</span>
             </div>
             {(linkedExchangeInfo.exr_woo_order_id || linkedExchangeInfo.exr_order_number) && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-xs text-blue-600">EXR Order:</span>
-                <span className="text-xs font-semibold text-blue-800">
-                  {linkedExchangeInfo.exr_woo_order_id ? `#${linkedExchangeInfo.exr_woo_order_id}` : linkedExchangeInfo.exr_order_number}
+                <span className="text-xs font-bold text-blue-900 bg-blue-100 px-1.5 py-0.5 rounded">
+                  #{linkedExchangeInfo.exr_woo_order_id ?? linkedExchangeInfo.exr_order_number}
                 </span>
               </div>
             )}
             {(linkedExchangeInfo.exchange_woo_order_id || linkedExchangeInfo.exchange_order_number) && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-xs text-blue-600">Exchange Order:</span>
-                <span className="text-xs font-semibold text-blue-800">
-                  {linkedExchangeInfo.exchange_woo_order_id ? `#${linkedExchangeInfo.exchange_woo_order_id}` : linkedExchangeInfo.exchange_order_number}
+                <span className="text-xs font-bold text-blue-900 bg-blue-100 px-1.5 py-0.5 rounded">
+                  #{linkedExchangeInfo.exchange_woo_order_id ?? linkedExchangeInfo.exchange_order_number}
                 </span>
               </div>
             )}

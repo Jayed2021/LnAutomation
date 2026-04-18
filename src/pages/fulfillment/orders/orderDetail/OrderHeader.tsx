@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, FileText, Package, Phone } from 'lucide-react';
+import { ArrowLeft, FileText, Package, Phone, ArrowLeftRight } from 'lucide-react';
 import { OrderDetail, OrderItem } from './types';
 import { StatusBadge } from '../StatusBadge';
 
@@ -48,6 +48,12 @@ export function OrderHeader({ order, items, onPrintInvoice, onPrintPackingSlip }
                 #{order.woo_order_id ?? order.order_number}
               </span>
               <StatusBadge status={order.cs_status} />
+              {order.exchange_return_id && (
+                <div className="flex items-center gap-1 px-2.5 py-1 bg-blue-600 text-white rounded-full text-xs font-bold shrink-0">
+                  <ArrowLeftRight className="w-3 h-3" />
+                  Exchange Order
+                </div>
+              )}
               <span className="text-sm text-gray-500">{formatDate(order.order_date)}</span>
               {order.assigned_user && (
                 <div className="flex items-center gap-1.5 bg-gray-100 rounded-full pl-1 pr-3 py-0.5">

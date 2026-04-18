@@ -1,4 +1,6 @@
 import JsBarcode from 'jsbarcode';
+import QRCodeEncoder from '@zxing/library/esm/core/qrcode/encoder/Encoder';
+import QRCodeDecoderErrorCorrectionLevel from '@zxing/library/esm/core/qrcode/decoder/ErrorCorrectionLevel';
 import { supabase } from '../../lib/supabase';
 
 interface PrintLocation {
@@ -19,6 +21,58 @@ async function getLabelSettings(): Promise<LabelSettings> {
     .select('label_width_in, label_height_in, barcode_format, dpi')
     .maybeSingle();
   return data || { label_width_in: 1.5, label_height_in: 1.0, barcode_format: 'CODE128', dpi: 300 };
+}
+
+function buildQrMatrix(text: string): boolean[][] | null {
+  try {
+    const qr = QRCodeEncoder.encode(text, QRCodeDecoderErrorCorrectionLevel.M, null);
+    const matrix = qr.getMatrix();
+    const size = matrix.getWidth();
+    const result: boolean[][] = [];
+    for (let y = 0; y < size; y++) {
+      const row: boolean[] = [];
+      for (let x = 0; x < size; x++) {
+        row.push(matrix.get(x, y) === 1);
+      }
+      result.push(row);
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function renderQrCanvas(text: string, sizePx: number): HTMLCanvasElement | null {
+  const matrix = buildQrMatrix(text);
+  if (!matrix) return null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = sizePx;
+  canvas.height = sizePx;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, sizePx, sizePx);
+
+  const qrSize = matrix.length;
+  const cellSize = sizePx / qrSize;
+
+  ctx.fillStyle = '#000000';
+  for (let y = 0; y < qrSize; y++) {
+    for (let x = 0; x < qrSize; x++) {
+      if (matrix[y][x]) {
+        ctx.fillRect(
+          Math.floor(x * cellSize),
+          Math.floor(y * cellSize),
+          Math.ceil(cellSize),
+          Math.ceil(cellSize)
+        );
+      }
+    }
+  }
+
+  return canvas;
 }
 
 function renderBarcodeCanvas(barcode: string, settings: LabelSettings): HTMLCanvasElement {
@@ -48,7 +102,58 @@ function renderBarcodeCanvas(barcode: string, settings: LabelSettings): HTMLCanv
   return canvas;
 }
 
-export async function printBarcodeLabels(locations: PrintLocation[]) {
+function renderDualCanvas(barcode: string, settings: LabelSettings): HTMLCanvasElement {
+  const widthPx = Math.round(settings.label_width_in * settings.dpi);
+  const heightPx = Math.round(settings.label_height_in * settings.dpi);
+
+  const qrSizePx = Math.round(heightPx * 0.85);
+  const barcodeWidthPx = widthPx - qrSizePx - Math.round(widthPx * 0.04);
+
+  const barcodeCanvas = document.createElement('canvas');
+  const barHeight = Math.round(heightPx * 0.58);
+  const fontSize = Math.max(7, Math.round(heightPx * 0.09));
+  const margin = Math.max(3, Math.round(heightPx * 0.06));
+
+  JsBarcode(barcodeCanvas, barcode, {
+    format: settings.barcode_format as any,
+    width: Math.max(1, Math.round(barcodeWidthPx / 100)),
+    height: barHeight,
+    displayValue: true,
+    fontOptions: '',
+    font: 'monospace',
+    textAlign: 'center',
+    textPosition: 'bottom',
+    textMargin: Math.round(margin / 2),
+    fontSize: fontSize,
+    background: '#ffffff',
+    lineColor: '#000000',
+    margin: margin,
+  });
+
+  const qrCanvas = renderQrCanvas(barcode, qrSizePx);
+
+  const combined = document.createElement('canvas');
+  combined.width = widthPx;
+  combined.height = heightPx;
+  const ctx = combined.getContext('2d');
+  if (!ctx) return barcodeCanvas;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, widthPx, heightPx);
+
+  const barcodeY = Math.round((heightPx - barcodeCanvas.height) / 2);
+  ctx.drawImage(barcodeCanvas, 0, Math.max(0, barcodeY));
+
+  if (qrCanvas) {
+    const qrX = barcodeWidthPx + Math.round(widthPx * 0.02);
+    const qrY = Math.round((heightPx - qrSizePx) / 2);
+    ctx.drawImage(qrCanvas, qrX, Math.max(0, qrY), qrSizePx, qrSizePx);
+  }
+
+  return combined;
+}
+
+export async function printBarcodeLabels(locations: PrintLocation[], withQr = false) {
   const validLocations = locations.filter(l => l.barcode);
   if (validLocations.length === 0) return;
 
@@ -57,7 +162,9 @@ export async function printBarcodeLabels(locations: PrintLocation[]) {
 
   for (const loc of validLocations) {
     try {
-      const canvas = renderBarcodeCanvas(loc.barcode, settings);
+      const canvas = withQr
+        ? renderDualCanvas(loc.barcode, settings)
+        : renderBarcodeCanvas(loc.barcode, settings);
       labelDataUrls.push({ dataUrl: canvas.toDataURL('image/png'), barcode: loc.barcode });
     } catch {
     }
@@ -129,10 +236,12 @@ export async function printBarcodeLabels(locations: PrintLocation[]) {
   }
 }
 
-export async function downloadSingleBarcode(barcode: string) {
+export async function downloadSingleBarcode(barcode: string, withQr = false) {
   const settings = await getLabelSettings();
   try {
-    const canvas = renderBarcodeCanvas(barcode, settings);
+    const canvas = withQr
+      ? renderDualCanvas(barcode, settings)
+      : renderBarcodeCanvas(barcode, settings);
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
     a.download = `barcode-${barcode}.png`;

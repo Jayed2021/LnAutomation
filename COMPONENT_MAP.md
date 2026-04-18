@@ -94,6 +94,12 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Expense analysis report | `src/pages/reports/ExpenseAnalysis.tsx` |
 | Stock levels report | `src/pages/reports/StockLevels.tsx` |
 | P&L Excel export logic | `src/pages/reports/plExportExcel.ts` |
+| Sales overview report | `src/pages/reports/SalesOverview.tsx` |
+| Product profitability report | `src/pages/reports/ProductProfitability.tsx` |
+| Inventory valuation report | `src/pages/reports/InventoryValuation.tsx` |
+| P&L packaging cost override | `src/pages/reports/PackagingOverrideModal.tsx` |
+| Shipment performance report | `src/pages/reports/shipmentPerformance/ShipmentPerformance.tsx` |
+| Shipment performance detail | `src/pages/reports/shipmentPerformance/ShipmentPerformanceDetail.tsx` |
 | Customer list | `src/pages/customers/Customers.tsx` |
 | Customer detail and order history | `src/pages/customers/CustomerDetail.tsx` |
 | WooCommerce sync settings | `src/pages/settings/WooCommerceSettings.tsx` |
@@ -106,6 +112,8 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | CS team assignment rules | `src/pages/settings/CsAssignment.tsx` |
 | Fraud alert service settings | `src/pages/settings/FraudAlertSettings.tsx` |
 | API access / token management | `src/pages/settings/ApiAccessSettings.tsx` |
+| Misc operational toggles (dispatch gate, lens settings) | `src/pages/settings/MiscSettings.tsx` |
+| Lens brands and types with pricing | `src/pages/settings/LensBrandManager.tsx` |
 | Sidebar navigation and layout | `src/components/Layout.tsx` |
 | Login page | `src/pages/Login.tsx` |
 | Dashboard KPIs and charts | `src/pages/Dashboard.tsx` |
@@ -333,6 +341,14 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/reports/ExpenseAnalysis.tsx` | ~300 | Expense breakdown by category, trend charts. |
 | `src/pages/reports/StockLevels.tsx` | ~250 | Stock level report across all products and locations. |
 | `src/pages/reports/plExportExcel.ts` | ~200 | Excel export logic for P&L report using ExcelJS. |
+| `src/pages/reports/SalesOverview.tsx` | ~300 | Sales overview report: revenue by period, top products, channel breakdown. |
+| `src/pages/reports/ProductProfitability.tsx` | ~300 | Per-product profitability: revenue, COGS, margin. |
+| `src/pages/reports/InventoryValuation.tsx` | ~300 | Current inventory value by product and lot using landed cost. |
+| `src/pages/reports/PackagingOverrideModal.tsx` | ~150 | Modal to override packaging cost for specific orders in P&L. |
+| `src/pages/reports/shipmentPerformance/ShipmentPerformance.tsx` | ~300 | Shipment performance overview: delivery rates, courier comparison. |
+| `src/pages/reports/shipmentPerformance/ShipmentPerformanceDetail.tsx` | ~200 | Drill-down into a single courier's performance metrics. |
+| `src/pages/reports/shipmentPerformance/service.ts` | ~100 | API calls for shipment performance data. |
+| `src/pages/reports/shipmentPerformance/types.ts` | ~50 | Types for shipment performance module. |
 
 ---
 
@@ -362,6 +378,8 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/settings/PackagingSettings.tsx` | ~200 | Packaging materials list and default selections. |
 | `src/pages/settings/FraudAlertSettings.tsx` | ~548 | Fraud alert external service integration — success rate thresholds, API config. |
 | `src/pages/settings/ApiAccessSettings.tsx` | ~200 | API token management for external integrations. |
+| `src/pages/settings/MiscSettings.tsx` | ~300 | Miscellaneous operational toggles (e.g., require daily packaging dispatch, prescription lens brands/types). |
+| `src/pages/settings/LensBrandManager.tsx` | ~400 | Manage prescription lens brands and their associated types with pricing. |
 
 ---
 
@@ -446,6 +464,12 @@ All schema changes are in `supabase/migrations/`. Files are named by timestamp a
 | `customers` | `courier_success_rate` | numeric | Computed delivery success rate from courier history. |
 | `app_settings` | `fraud_alert_*` keys | jsonb | Configuration for the fraud alert integration (thresholds, API URL). |
 | `store_profile` | `preferred_courier` | text | Default courier provider for new shipments. |
+| `order_packaging_items` | `unit_cost` | numeric | Per-unit packaging cost at time of packaging (backfilled from avg landed cost). |
+| `collection_line_items` | `match_status` (extended) | text | Extended match status values added for partial and override scenarios. |
+| `order_courier_info` | `prepaid_amount` | numeric | Amount prepaid by the customer toward the courier charge. |
+| `order_courier_info` | `resolver_reason` | text | Reason recorded when a collection match conflict is manually resolved. |
+| `lens_brands` | — | table | Prescription lens brands (name, active flag, display order). |
+| `lens_brand_types` | — | table | Lens types per brand (name, high index flag, lab price, customer price, active). |
 
 ---
 

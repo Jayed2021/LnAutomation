@@ -65,6 +65,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const [scanEnforced, setScanEnforced] = useState(true);
   const [scanScenario, setScanScenario] = useState<ScanScenario>(null);
   const [discrepancyReason, setDiscrepancyReason] = useState('');
+  const [noItemsToPick, setNoItemsToPick] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const scannerFiredRef = useRef(false);
 
@@ -94,6 +95,13 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
     try {
       setLoading(true);
       const states: ItemPickState[] = [];
+
+      const pickableItems = order.items.filter(i => i.sku !== 'RX' && i.sku !== 'FEE');
+      if (pickableItems.length === 0) {
+        setNoItemsToPick(true);
+        setLoading(false);
+        return;
+      }
 
       let prescriptionItemIds = new Set<string>();
       if (isLabPick) {
@@ -460,6 +468,21 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
         <div className="overflow-y-auto flex-1">
           {loading ? (
             <div className="py-12 text-center text-gray-500">Loading FIFO recommendations...</div>
+          ) : noItemsToPick ? (
+            <div className="p-6 space-y-4">
+              <div className="text-center py-4">
+                <FlaskConical className="h-10 w-10 text-teal-400 mx-auto mb-3" />
+                <p className="text-sm font-medium text-gray-700">No inventory items to pick</p>
+                <p className="text-xs text-gray-500 mt-1">This is a prescription-only order. The lens will be processed directly by the lab.</p>
+              </div>
+              <button
+                onClick={() => submitPicks(false)}
+                disabled={processing}
+                className="w-full py-3 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                {processing ? 'Processing...' : 'Mark In Lab'}
+              </button>
+            </div>
           ) : (
             <div className="p-4 space-y-4">
               <div>

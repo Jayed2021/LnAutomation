@@ -211,7 +211,8 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
   const isCbdStatus = order.cs_status === 'cancelled_cbd';
 
-  const allItemsFullyPicked = items.length > 0 && items.every(i => (i.picked_quantity ?? 0) >= i.quantity);
+  const inventoryItems = items.filter(i => i.sku !== 'FEE' && i.sku !== 'RX');
+  const allItemsFullyPicked = inventoryItems.length === 0 || inventoryItems.every(i => (i.picked_quantity ?? 0) >= i.quantity);
 
   const CS_STATUSES_WITH_LAB = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery'];
   const baseActions = BASE_ACTIONS[order.cs_status] ?? [];
@@ -805,7 +806,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           <div>
             <div className="text-xs font-semibold text-teal-800 mb-0.5">Prescription Order — Lab Required</div>
             <p className="text-xs text-teal-700">
-              This order has prescription lenses. Use <strong>Send to Lab</strong> first. The order can only be confirmed after it returns from the lab (<strong>In Lab</strong> status).
+              This order has prescription lenses. Use <strong>Send to Lab</strong> first.{inventoryItems.length > 0 ? ' The order can only be confirmed after it returns from the lab (' : ' After the lab processes the prescription, confirm via ('}<strong>In Lab</strong> status).
             </p>
           </div>
         </div>

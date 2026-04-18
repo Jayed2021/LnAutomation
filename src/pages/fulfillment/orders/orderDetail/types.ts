@@ -104,6 +104,9 @@ export interface OrderPrescription {
   prescription_type: string | null;
   lens_type: string | null;
   custom_lens_type: string | null;
+  lens_brand_id: string | null;
+  lens_brand_name: string | null;
+  high_index: boolean;
   customer_price: number;
   lens_price: number;
   fitting_charge: number;

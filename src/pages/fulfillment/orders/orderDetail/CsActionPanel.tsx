@@ -127,12 +127,14 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const [linkedExchangeInfo, setLinkedExchangeInfo] = useState<LinkedExchangeInfo | null>(null);
 
   useEffect(() => {
-    const isExchangeStatus = order.cs_status === 'exchange' || order.cs_status === 'exchange_returnable';
-    if (!isExchangeStatus) { setLinkedExchangeInfo(null); return; }
+    const isExrStatus = order.cs_status === 'exchange_returnable';
+    const hasExchangeLink = !!order.exchange_return_id;
+
+    if (!hasExchangeLink && !isExrStatus) { setLinkedExchangeInfo(null); return; }
 
     const load = async () => {
       let query;
-      if (order.cs_status === 'exchange' && order.exchange_return_id) {
+      if (hasExchangeLink) {
         query = supabase
           .from('returns')
           .select('return_number, order:orders!order_id(order_number, woo_order_id)')
@@ -149,7 +151,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
       const { data } = await query;
       if (!data) { setLinkedExchangeInfo(null); return; }
       const d = data as any;
-      if (order.cs_status === 'exchange') {
+      if (hasExchangeLink) {
         setLinkedExchangeInfo({
           return_number: d.return_number,
           exr_order_number: d.order?.order_number ?? null,
@@ -209,7 +211,8 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
   const isInWarehouseOps = ['not_printed', 'printed', 'packed'].includes(order.cs_status);
   const isCbdStatus = order.cs_status === 'cancelled_cbd';
 
-  const allItemsFullyPicked = items.length > 0 && items.every(i => (i.picked_quantity ?? 0) >= i.quantity);
+  const inventoryItems = items.filter(i => i.sku !== 'FEE' && i.sku !== 'RX');
+  const allItemsFullyPicked = inventoryItems.length === 0 || inventoryItems.every(i => (i.picked_quantity ?? 0) >= i.quantity);
 
   const CS_STATUSES_WITH_LAB = ['new_not_called', 'new_called', 'awaiting_payment', 'late_delivery'];
   const baseActions = BASE_ACTIONS[order.cs_status] ?? [];
@@ -757,24 +760,27 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           {STATUS_CONFIG[order.cs_status]?.label ?? order.cs_status}
         </div>
         {linkedExchangeInfo && (
-          <div className="mt-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
+          <div className="mt-2 p-2.5 bg-blue-50 border border-blue-300 rounded-lg space-y-1.5">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">Exchange Order</span>
+            </div>
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-semibold text-blue-700">Return:</span>
-              <span className="font-mono text-xs text-blue-800">{linkedExchangeInfo.return_number}</span>
+              <span className="text-xs text-blue-600">Return Ref:</span>
+              <span className="font-mono text-xs font-semibold text-blue-800">{linkedExchangeInfo.return_number}</span>
             </div>
             {(linkedExchangeInfo.exr_woo_order_id || linkedExchangeInfo.exr_order_number) && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-xs text-blue-600">EXR Order:</span>
-                <span className="text-xs font-semibold text-blue-800">
-                  {linkedExchangeInfo.exr_woo_order_id ? `#${linkedExchangeInfo.exr_woo_order_id}` : linkedExchangeInfo.exr_order_number}
+                <span className="text-xs font-bold text-blue-900 bg-blue-100 px-1.5 py-0.5 rounded">
+                  #{linkedExchangeInfo.exr_woo_order_id ?? linkedExchangeInfo.exr_order_number}
                 </span>
               </div>
             )}
             {(linkedExchangeInfo.exchange_woo_order_id || linkedExchangeInfo.exchange_order_number) && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-xs text-blue-600">Exchange Order:</span>
-                <span className="text-xs font-semibold text-blue-800">
-                  {linkedExchangeInfo.exchange_woo_order_id ? `#${linkedExchangeInfo.exchange_woo_order_id}` : linkedExchangeInfo.exchange_order_number}
+                <span className="text-xs font-bold text-blue-900 bg-blue-100 px-1.5 py-0.5 rounded">
+                  #{linkedExchangeInfo.exchange_woo_order_id ?? linkedExchangeInfo.exchange_order_number}
                 </span>
               </div>
             )}
@@ -800,7 +806,7 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
           <div>
             <div className="text-xs font-semibold text-teal-800 mb-0.5">Prescription Order — Lab Required</div>
             <p className="text-xs text-teal-700">
-              This order has prescription lenses. Use <strong>Send to Lab</strong> first. The order can only be confirmed after it returns from the lab (<strong>In Lab</strong> status).
+              This order has prescription lenses. Use <strong>Send to Lab</strong> first.{inventoryItems.length > 0 ? ' The order can only be confirmed after it returns from the lab (' : ' After the lab processes the prescription, confirm via ('}<strong>In Lab</strong> status).
             </p>
           </div>
         </div>

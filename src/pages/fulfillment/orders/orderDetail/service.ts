@@ -75,7 +75,7 @@ export async function fetchOrderCourierInfo(orderId: string): Promise<OrderCouri
 export async function fetchOrderPrescriptions(orderId: string): Promise<OrderPrescription[]> {
   const { data, error } = await supabase
     .from('order_prescriptions')
-    .select('id, order_item_id, prescription_type, lens_type, custom_lens_type, customer_price, lens_price, fitting_charge, od_sph, od_cyl, od_axis, od_pd, os_sph, os_cyl, os_axis, os_pd, rx_file_url, lab_status, lab_sent_date, lab_return_date')
+    .select('id, order_item_id, prescription_type, lens_type, custom_lens_type, lens_brand_id, lens_brand_name, high_index, customer_price, lens_price, fitting_charge, od_sph, od_cyl, od_axis, od_pd, os_sph, os_cyl, os_axis, os_pd, rx_file_url, lab_status, lab_sent_date, lab_return_date')
     .eq('order_id', orderId)
     .order('created_at');
   if (error) throw error;

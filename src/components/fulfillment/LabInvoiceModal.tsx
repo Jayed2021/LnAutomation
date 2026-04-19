@@ -35,6 +35,8 @@ interface PrescriptionDetail {
   prescription_type: string | null;
   lens_type: string | null;
   custom_lens_type: string | null;
+  lens_brand_name: string | null;
+  high_index: boolean;
   customer_price: number | null;
   od_sph: string | null;
   od_cyl: string | null;
@@ -91,6 +93,8 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
           prescription_type,
           lens_type,
           custom_lens_type,
+          lens_brand_name,
+          high_index,
           customer_price,
           od_sph, od_cyl, od_axis, od_pd,
           os_sph, os_cyl, os_axis, os_pd,
@@ -100,6 +104,21 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
 
       const physicalItems = order.items.filter(i => i.sku !== 'RX' && i.sku !== 'FEE');
       const items: InvoiceItem[] = [];
+
+      if (physicalItems.length === 0) {
+        const unassignedRx = (prescriptions ?? []).filter(p => !p.order_item_id);
+        for (const rx of unassignedRx) {
+          items.push({
+            product_name: 'Frame supplied by customer',
+            sku: '—',
+            quantity: 1,
+            fifo_lot: null,
+            prescription: rx,
+          });
+        }
+        setInvoiceItems(items);
+        return;
+      }
 
       for (const item of physicalItems) {
         const { data: product } = await supabase
@@ -310,6 +329,12 @@ export function LabInvoiceModal({ order, onClose }: LabInvoiceModalProps) {
                           <div>
                             <span className="text-gray-400 uppercase tracking-wide">Prescription Details</span>
                           </div>
+                          {item.prescription.lens_brand_name && (
+                            <div>
+                              <span className="text-gray-500">Brand: </span>
+                              <span className="font-semibold text-gray-800">{item.prescription.lens_brand_name}</span>
+                            </div>
+                          )}
                           {(item.prescription.lens_type || item.prescription.custom_lens_type) && (
                             <div>
                               <span className="text-gray-500">Lens: </span>

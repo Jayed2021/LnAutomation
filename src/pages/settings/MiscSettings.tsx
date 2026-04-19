@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, SlidersHorizontal, Save, CheckCircle2, Package, Lock } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, Package, Lock } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { getAppSetting, setAppSetting } from '../../lib/appSettings';
+import { LensBrandManager } from './LensBrandManager';
 
 interface MiscSettingsState {
   require_packaging_dispatch_gate: boolean;
@@ -151,19 +152,8 @@ export default function MiscSettings() {
         </div>
       </Card>
 
-      <Card className="divide-y divide-gray-100">
-        <div className="px-5 py-4 flex items-center gap-3 bg-gray-50/50">
-          <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-            <SlidersHorizontal className="w-4 h-4 text-blue-600" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">More settings coming soon</h3>
-            <p className="text-xs text-gray-500">Additional operational toggles will appear here</p>
-          </div>
-        </div>
-        <div className="px-5 py-8 text-center text-sm text-gray-400">
-          Additional miscellaneous controls will be added here as needed.
-        </div>
+      <Card className="divide-y divide-gray-100 overflow-hidden">
+        <LensBrandManager />
       </Card>
     </div>
   );

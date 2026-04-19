@@ -2,6 +2,11 @@ import { FileText, Printer, Package, ScanLine, RotateCcw } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import type { OperationsOrder } from './types';
 
+function hasInventoryItems(order: OperationsOrder): boolean {
+  if (!order.items || order.items.length === 0) return false;
+  return order.items.some(i => i.sku !== 'FEE' && i.sku !== 'RX');
+}
+
 interface Props {
   orders: OperationsOrder[];
   displayId: (o: OperationsOrder) => string;
@@ -68,7 +73,11 @@ export function PrintedTable({
                     <RotateCcw className="h-4 w-4" />
                   </button>
                 )}
-                {fullyPicked ? (
+                {!hasInventoryItems(order) ? (
+                  <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700 text-white border-0 py-2.5 h-auto" onClick={() => onForcePack(order)}>
+                    <Package className="h-3.5 w-3.5 mr-1" /> Pack
+                  </Button>
+                ) : fullyPicked ? (
                   <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700 text-white border-0 py-2.5 h-auto" onClick={() => onForcePack(order)}>
                     <Package className="h-3.5 w-3.5 mr-1" /> Pack
                   </Button>
@@ -145,7 +154,11 @@ export function PrintedTable({
                           <RotateCcw className="h-4 w-4" />
                         </button>
                       )}
-                      {fullyPicked ? (
+                      {!hasInventoryItems(order) ? (
+                        <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-0 px-3" onClick={() => onForcePack(order)}>
+                          <Package className="h-3.5 w-3.5 mr-1" /> Pack
+                        </Button>
+                      ) : fullyPicked ? (
                         <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-0 px-3" onClick={() => onForcePack(order)}>
                           <Package className="h-3.5 w-3.5 mr-1" /> Pack
                         </Button>

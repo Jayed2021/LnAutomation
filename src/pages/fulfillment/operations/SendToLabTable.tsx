@@ -3,6 +3,11 @@ import { FileText, Send, FlaskConical, X } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import type { OperationsOrder } from './types';
 
+function hasInventoryItems(order: OperationsOrder): boolean {
+  if (!order.items || order.items.length === 0) return false;
+  return order.items.some(i => i.sku !== 'FEE' && i.sku !== 'RX');
+}
+
 interface Props {
   orders: OperationsOrder[];
   displayId: (o: OperationsOrder) => string;
@@ -55,9 +60,11 @@ export function SendToLabTable({
               </Button>
               {order.fulfillment_status !== 'in_lab' && (
                 <>
-                  <Button size="sm" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white border-0 py-2.5 h-auto" onClick={() => onPickForLab(order)}>
-                    <Send className="h-3.5 w-3.5 mr-1.5" /> Pick for Lab
-                  </Button>
+                  {hasInventoryItems(order) && (
+                    <Button size="sm" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white border-0 py-2.5 h-auto" onClick={() => onPickForLab(order)}>
+                      <Send className="h-3.5 w-3.5 mr-1.5" /> Pick for Lab
+                    </Button>
+                  )}
                   {confirmLabId === order.id ? (
                     <div className="flex items-center gap-1">
                       <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 py-2.5 h-auto text-xs px-2" onClick={() => handleMarkInLab(order.id)}>
@@ -116,9 +123,11 @@ export function SendToLabTable({
                     </Button>
                     {order.fulfillment_status !== 'in_lab' && (
                       <>
-                        <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white border-0 px-3" onClick={() => onPickForLab(order)}>
-                          <Send className="h-3.5 w-3.5 mr-1" /> Pick for Lab
-                        </Button>
+                        {hasInventoryItems(order) && (
+                          <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white border-0 px-3" onClick={() => onPickForLab(order)}>
+                            <Send className="h-3.5 w-3.5 mr-1" /> Pick for Lab
+                          </Button>
+                        )}
                         {confirmLabId === order.id ? (
                           <div className="flex items-center gap-1">
                             <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-2.5 text-xs" onClick={() => handleMarkInLab(order.id)}>

@@ -31,6 +31,7 @@ export interface OrderListItem {
   expected_delivery_date: string | null;
   has_prescription: boolean;
   shipped_at: string | null;
+  exchange_return_id: string | null;
   customer: {
     full_name: string;
     phone_primary: string;

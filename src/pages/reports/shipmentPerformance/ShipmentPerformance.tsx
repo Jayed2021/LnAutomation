@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Truck, Package, DollarSign, TrendingUp,
   ArrowRight, ChevronUp, ChevronDown,
-  AlertCircle, Search, CheckCircle, XCircle,
+  AlertCircle, Search, CheckCircle, XCircle, Archive,
 } from 'lucide-react';
 import { fetchShipmentPerformanceList } from './service';
 import type { ShipmentPerformanceRow } from './types';
@@ -43,6 +43,7 @@ function StatusBadge({ status }: { status: string }) {
     partially_received: { label: 'Partial', cls: 'bg-amber-100 text-amber-600' },
     received_complete: { label: 'Complete', cls: 'bg-emerald-100 text-emerald-700' },
     closed: { label: 'Closed', cls: 'bg-gray-100 text-gray-500' },
+    initial: { label: 'Pre-existing', cls: 'bg-slate-100 text-slate-600' },
   };
   const s = map[status] ?? { label: status, cls: 'bg-gray-100 text-gray-500' };
   return (
@@ -299,9 +300,17 @@ function ShipmentRow({ row, onClick }: { row: ShipmentPerformanceRow; onClick: (
     >
       <td className="px-4 py-3.5">
         <div>
-          <p className="font-semibold text-gray-800 group-hover:text-blue-600 transition-colors">
-            {row.shipment_label}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="font-semibold text-gray-800 group-hover:text-blue-600 transition-colors">
+              {row.shipment_label}
+            </p>
+            {row.is_initial_inventory && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full shrink-0">
+                <Archive className="w-3 h-3" />
+                Initial
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-400 mt-0.5">{row.po_number}</p>
         </div>
       </td>
@@ -340,9 +349,11 @@ function ShipmentRow({ row, onClick }: { row: ShipmentPerformanceRow; onClick: (
         <StatusBadge status={row.po_status} />
       </td>
       <td className="px-4 py-3.5">
-        {row.is_payment_complete
-          ? <CheckCircle className="w-4 h-4 text-emerald-500" />
-          : <XCircle className="w-4 h-4 text-red-400" />
+        {row.is_initial_inventory
+          ? <span className="text-gray-300 text-sm">—</span>
+          : row.is_payment_complete
+            ? <CheckCircle className="w-4 h-4 text-emerald-500" />
+            : <XCircle className="w-4 h-4 text-red-400" />
         }
       </td>
       <td className="px-4 py-3.5">

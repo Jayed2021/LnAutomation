@@ -24,6 +24,7 @@ export interface ShipmentPerformanceRow {
   po_status: string;
   is_payment_complete: boolean;
   total_paid_bdt: number;
+  is_initial_inventory: boolean;
 }
 
 export interface ShipmentPerformanceDetailRow {

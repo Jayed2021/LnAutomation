@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Package, DollarSign, TrendingDown,
   AlertCircle, Truck, Calendar, Clock, CheckCircle, XCircle,
-  BarChart3, RefreshCw,
+  BarChart3, RefreshCw, Archive,
 } from 'lucide-react';
 import { fetchShipmentPerformanceList, fetchShipmentPerformanceDetail } from './service';
 import type { ShipmentPerformanceRow, ShipmentPerformanceDetailRow } from './types';
@@ -140,14 +140,24 @@ export default function ShipmentPerformanceDetail() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-gray-900">{shipment.shipment_label}</h1>
-            <PoStatusBadge status={shipment.po_status} />
-            {shipment.is_payment_complete
-              ? <span className="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
-                  <CheckCircle className="w-3 h-3" /> Paid
+            {shipment.is_initial_inventory
+              ? (
+                <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
+                  <Archive className="w-3 h-3" /> Pre-existing Stock
                 </span>
-              : <span className="inline-flex items-center gap-1 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">
-                  <XCircle className="w-3 h-3" /> Unpaid
-                </span>
+              ) : (
+                <>
+                  <PoStatusBadge status={shipment.po_status} />
+                  {shipment.is_payment_complete
+                    ? <span className="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+                        <CheckCircle className="w-3 h-3" /> Paid
+                      </span>
+                    : <span className="inline-flex items-center gap-1 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">
+                        <XCircle className="w-3 h-3" /> Unpaid
+                      </span>
+                  }
+                </>
+              )
             }
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-sm text-gray-500">
@@ -158,19 +168,21 @@ export default function ShipmentPerformanceDetail() {
                 <span className="text-xs text-gray-400 capitalize">({shipment.supplier_type})</span>
               )}
             </span>
-            <span className="flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5 text-gray-400" />
-              {shipment.po_number}
-            </span>
+            {!shipment.is_initial_inventory && shipment.po_number && (
+              <span className="flex items-center gap-1.5">
+                <Package className="w-3.5 h-3.5 text-gray-400" />
+                {shipment.po_number}
+              </span>
+            )}
             <span className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-gray-400" />
-              Received {receivedDate}
+              {shipment.is_initial_inventory ? 'As of' : 'Received'} {receivedDate}
             </span>
             <span className="flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 text-gray-400" />
               {shipment.age_days} days old
             </span>
-            {shipment.lead_time_days !== null && (
+            {!shipment.is_initial_inventory && shipment.lead_time_days !== null && (
               <span className="flex items-center gap-1.5">
                 <RefreshCw className="w-3.5 h-3.5 text-gray-400" />
                 Lead time: {shipment.lead_time_days}d
@@ -266,16 +278,18 @@ export default function ShipmentPerformanceDetail() {
                 />
               </div>
               <CapitalRecoveryBar pct={financials.capitalRecovery} />
-              <div className="border-t border-gray-100 pt-3 grid grid-cols-2 gap-3 text-center">
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-xs text-gray-500 mb-1">PO Created</p>
-                  <p className="text-sm font-semibold text-gray-700">{poCreatedDate}</p>
+              {!shipment.is_initial_inventory && (
+                <div className="border-t border-gray-100 pt-3 grid grid-cols-2 gap-3 text-center">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">PO Created</p>
+                    <p className="text-sm font-semibold text-gray-700">{poCreatedDate}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">Total Paid</p>
+                    <p className="text-sm font-semibold text-gray-700">{fmt(Number(shipment.total_paid_bdt))}</p>
+                  </div>
                 </div>
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-xs text-gray-500 mb-1">Total Paid</p>
-                  <p className="text-sm font-semibold text-gray-700">{fmt(Number(shipment.total_paid_bdt))}</p>
-                </div>
-              </div>
+              )}
             </div>
           )}
         </div>

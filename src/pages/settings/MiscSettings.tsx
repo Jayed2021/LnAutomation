@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, CheckCircle2, Package, Lock } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, Package, Lock, Archive } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { getAppSetting, setAppSetting } from '../../lib/appSettings';
@@ -8,10 +8,16 @@ import { LensBrandManager } from './LensBrandManager';
 
 interface MiscSettingsState {
   require_packaging_dispatch_gate: boolean;
+  initial_inventory_date: string;
+  initial_inventory_shipment_name: string;
+  initial_inventory_supplier_name: string;
 }
 
 const DEFAULT_STATE: MiscSettingsState = {
   require_packaging_dispatch_gate: true,
+  initial_inventory_date: '',
+  initial_inventory_shipment_name: 'Initial Inventory',
+  initial_inventory_supplier_name: 'Pre-existing Stock',
 };
 
 export default function MiscSettings() {
@@ -31,9 +37,17 @@ export default function MiscSettings() {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const gateVal = await getAppSetting<boolean>('require_packaging_dispatch_gate');
+      const [gateVal, invDate, invName, invSupplier] = await Promise.all([
+        getAppSetting<boolean>('require_packaging_dispatch_gate'),
+        getAppSetting<string>('initial_inventory_date'),
+        getAppSetting<string>('initial_inventory_shipment_name'),
+        getAppSetting<string>('initial_inventory_supplier_name'),
+      ]);
       const loaded: MiscSettingsState = {
         require_packaging_dispatch_gate: gateVal !== false,
+        initial_inventory_date: invDate ?? '',
+        initial_inventory_shipment_name: invName ?? 'Initial Inventory',
+        initial_inventory_supplier_name: invSupplier ?? 'Pre-existing Stock',
       };
       setSettings(loaded);
       setSaved(loaded);
@@ -47,7 +61,12 @@ export default function MiscSettings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await setAppSetting('require_packaging_dispatch_gate', settings.require_packaging_dispatch_gate);
+      await Promise.all([
+        setAppSetting('require_packaging_dispatch_gate', settings.require_packaging_dispatch_gate),
+        setAppSetting('initial_inventory_date', settings.initial_inventory_date),
+        setAppSetting('initial_inventory_shipment_name', settings.initial_inventory_shipment_name),
+        setAppSetting('initial_inventory_supplier_name', settings.initial_inventory_supplier_name),
+      ]);
       setSaved({ ...settings });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -148,6 +167,68 @@ export default function MiscSettings() {
             >
               <span className={thumbClass(settings.require_packaging_dispatch_gate)} />
             </button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="divide-y divide-gray-100">
+        <div className="px-5 py-4 flex items-center gap-3 bg-gray-50/50">
+          <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+            <Archive className="w-4 h-4 text-slate-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Initial Inventory</h3>
+            <p className="text-xs text-gray-500">Configure how pre-existing stock appears in the Shipment Performance report</p>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Inventory Date
+            </label>
+            <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+              The date that will be used as the "received date" for the initial stock grouping.
+              Pre-populated with the earliest lot date found in the system.
+            </p>
+            <input
+              type="date"
+              value={settings.initial_inventory_date}
+              onChange={e => setSettings(prev => ({ ...prev, initial_inventory_date: e.target.value }))}
+              className="w-full max-w-xs px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Shipment Name
+            </label>
+            <p className="text-xs text-gray-500 mb-2">
+              The label shown in the "Shipment" column of the report.
+            </p>
+            <input
+              type="text"
+              value={settings.initial_inventory_shipment_name}
+              onChange={e => setSettings(prev => ({ ...prev, initial_inventory_shipment_name: e.target.value }))}
+              placeholder="e.g. Initial Inventory"
+              className="w-full max-w-sm px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Supplier / Source Label
+            </label>
+            <p className="text-xs text-gray-500 mb-2">
+              The label shown in the "Supplier" column of the report.
+            </p>
+            <input
+              type="text"
+              value={settings.initial_inventory_supplier_name}
+              onChange={e => setSettings(prev => ({ ...prev, initial_inventory_supplier_name: e.target.value }))}
+              placeholder="e.g. Pre-existing Stock"
+              className="w-full max-w-sm px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
           </div>
         </div>
       </Card>

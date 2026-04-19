@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRefresh } from '../../contexts/RefreshContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
-import { Plus, Search, FileText, Check, X, Clock, Package } from 'lucide-react';
+import { Plus, Search, FileText, Check, Clock, Package, Archive, ArchiveRestore, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface PurchaseOrder {
@@ -19,6 +20,7 @@ interface PurchaseOrder {
   closed_as_partial: boolean;
   items_count: number;
   total_value: number;
+  is_archived: boolean;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -39,21 +41,106 @@ const STATUS_COLORS: Record<string, string> = {
   closed: 'emerald',
 };
 
+interface ArchiveConfirmState {
+  orderId: string;
+  poNumber: string;
+  archiving: boolean;
+}
+
+function ArchiveConfirmPopover({
+  state,
+  anchorRef,
+  onConfirm,
+  onCancel,
+}: {
+  state: ArchiveConfirmState;
+  anchorRef: React.RefObject<HTMLDivElement | null>;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const rect = anchorRef.current?.getBoundingClientRect();
+  const top = rect ? rect.bottom + window.scrollY + 8 : 0;
+  const left = rect ? rect.left + window.scrollX : 0;
+
+  return (
+    <div
+      className="fixed z-50"
+      style={{ top, left }}
+    >
+      <div className="bg-white border border-gray-200 rounded-xl shadow-xl p-4 w-72">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-amber-50 shrink-0">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-gray-800">
+              {state.archiving ? 'Archive Purchase Order?' : 'Unarchive Purchase Order?'}
+            </p>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+              <span className="font-medium text-gray-700">{state.poNumber}</span>
+              {state.archiving
+                ? ' will be hidden from the orders list and shipment performance report.'
+                : ' will be restored and visible again in all views.'
+              }
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mt-4 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors ${
+              state.archiving
+                ? 'bg-amber-500 hover:bg-amber-600'
+                : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            {state.archiving ? 'Archive' : 'Unarchive'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PurchaseOrders() {
   const navigate = useNavigate();
   const { lastRefreshed, setRefreshing } = useRefresh();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [showArchived, setShowArchived] = useState(false);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [archiveConfirm, setArchiveConfirm] = useState<ArchiveConfirmState | null>(null);
+  const [archiveWorking, setArchiveWorking] = useState(false);
+  const archiveBtnRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetchOrders();
-  }, [lastRefreshed]);
+  }, [lastRefreshed, showArchived]);
+
+  useEffect(() => {
+    if (!archiveConfirm) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (archiveBtnRef.current && !archiveBtnRef.current.contains(e.target as Node)) {
+        setArchiveConfirm(null);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [archiveConfirm]);
 
   const fetchOrders = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    const query = supabase
       .from('purchase_orders')
       .select(`
         id,
@@ -63,10 +150,14 @@ export default function PurchaseOrders() {
         created_at,
         status,
         closed_as_partial,
+        is_archived,
         suppliers!inner(name, code),
         purchase_order_items(ordered_quantity, unit_price)
       `)
+      .eq('is_archived', showArchived)
       .order('created_at', { ascending: false });
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching purchase orders:', error);
@@ -92,12 +183,32 @@ export default function PurchaseOrders() {
         closed_as_partial: row.closed_as_partial || false,
         items_count: items.length,
         total_value,
+        is_archived: row.is_archived || false,
       };
     });
 
     setOrders(mapped);
     setLoading(false);
     setRefreshing(false);
+  };
+
+  const handleArchiveToggle = async (order: PurchaseOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const btn = (e.currentTarget as HTMLElement).closest('[data-archive-btn]') as HTMLDivElement | null;
+    archiveBtnRef.current = btn;
+    setArchiveConfirm({ orderId: order.id, poNumber: order.po_number, archiving: !order.is_archived });
+  };
+
+  const confirmArchive = async () => {
+    if (!archiveConfirm || archiveWorking) return;
+    setArchiveWorking(true);
+    const { error } = await supabase
+      .from('purchase_orders')
+      .update({ is_archived: archiveConfirm.archiving })
+      .eq('id', archiveConfirm.orderId);
+    setArchiveWorking(false);
+    setArchiveConfirm(null);
+    if (!error) fetchOrders();
   };
 
   const filtered = orders.filter((o) => {
@@ -131,16 +242,51 @@ export default function PurchaseOrders() {
 
   return (
     <div className="space-y-6">
+      {archiveConfirm && (
+        <ArchiveConfirmPopover
+          state={archiveConfirm}
+          anchorRef={archiveBtnRef}
+          onConfirm={confirmArchive}
+          onCancel={() => setArchiveConfirm(null)}
+        />
+      )}
+
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Purchase Orders</h1>
           <p className="text-sm text-gray-500 mt-1">Manage supplier purchase orders</p>
         </div>
-        <Button onClick={() => navigate('/purchase/create')} className="flex items-center gap-2">
-          <Plus className="w-4 h-4" />
-          New Purchase Order
-        </Button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              onClick={() => { setShowArchived(v => !v); setStatusFilter('all'); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                showArchived
+                  ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Archive className="w-4 h-4" />
+              {showArchived ? 'Viewing Archived' : 'Archived'}
+            </button>
+          )}
+          {!showArchived && (
+            <Button onClick={() => navigate('/purchase/create')} className="flex items-center gap-2">
+              <Plus className="w-4 h-4" />
+              New Purchase Order
+            </Button>
+          )}
+        </div>
       </div>
+
+      {showArchived && (
+        <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+          <Archive className="w-4 h-4 shrink-0" />
+          <span>
+            Showing archived purchase orders. These are hidden from all standard views and reports.
+          </span>
+        </div>
+      )}
 
       <Card>
         <div className="p-4 border-b border-gray-200 space-y-3">
@@ -154,26 +300,28 @@ export default function PurchaseOrders() {
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
             />
           </div>
-          <div className="flex gap-2 flex-wrap">
-            {tabs.map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setStatusFilter(tab.key)}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  statusFilter === tab.key
-                    ? 'bg-gray-900 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {tab.label}
-                {tab.key !== 'all' && (
-                  <span className="ml-1.5 text-xs opacity-70">
-                    {orders.filter((o) => o.status === tab.key).length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          {!showArchived && (
+            <div className="flex gap-2 flex-wrap">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setStatusFilter(tab.key)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    statusFilter === tab.key
+                      ? 'bg-gray-900 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {tab.label}
+                  {tab.key !== 'all' && (
+                    <span className="ml-1.5 text-xs opacity-70">
+                      {orders.filter((o) => o.status === tab.key).length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -187,13 +335,17 @@ export default function PurchaseOrders() {
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400">
               <Package className="w-12 h-12 mb-3 text-gray-300" />
-              <p className="text-sm font-medium text-gray-500">No purchase orders found</p>
+              <p className="text-sm font-medium text-gray-500">
+                {showArchived ? 'No archived purchase orders' : 'No purchase orders found'}
+              </p>
               <p className="text-xs text-gray-400 mt-1">
                 {searchTerm || statusFilter !== 'all'
                   ? 'Try adjusting your search or filter'
-                  : 'Create your first purchase order'}
+                  : showArchived
+                    ? 'Archived POs will appear here'
+                    : 'Create your first purchase order'}
               </p>
-              {!searchTerm && statusFilter === 'all' && (
+              {!searchTerm && statusFilter === 'all' && !showArchived && (
                 <Button
                   onClick={() => navigate('/purchase/create')}
                   className="mt-4 flex items-center gap-2"
@@ -222,11 +374,15 @@ export default function PurchaseOrders() {
                 {filtered.map((order) => (
                   <tr
                     key={order.id}
-                    className="hover:bg-gray-50 transition-colors cursor-pointer"
+                    className={`hover:bg-gray-50 transition-colors cursor-pointer ${
+                      order.is_archived ? 'opacity-70' : ''
+                    }`}
                     onClick={() =>
-                      order.status === 'draft'
-                        ? navigate(`/purchase/orders/${order.id}/edit`)
-                        : navigate(`/purchase/orders/${order.id}`)
+                      !order.is_archived && (
+                        order.status === 'draft'
+                          ? navigate(`/purchase/orders/${order.id}/edit`)
+                          : navigate(`/purchase/orders/${order.id}`)
+                      )
                     }
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -282,17 +438,39 @@ export default function PurchaseOrders() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          order.status === 'draft'
-                            ? navigate(`/purchase/orders/${order.id}/edit`)
-                            : navigate(`/purchase/orders/${order.id}`)
-                        }
-                      >
-                        {order.status === 'draft' ? 'Continue Editing' : 'View Details'}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {!order.is_archived && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              order.status === 'draft'
+                                ? navigate(`/purchase/orders/${order.id}/edit`)
+                                : navigate(`/purchase/orders/${order.id}`)
+                            }
+                          >
+                            {order.status === 'draft' ? 'Continue Editing' : 'View Details'}
+                          </Button>
+                        )}
+                        {isAdmin && (
+                          <div data-archive-btn>
+                            <button
+                              onClick={(e) => handleArchiveToggle(order, e)}
+                              title={order.is_archived ? 'Unarchive' : 'Archive'}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                                order.is_archived
+                                  ? 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100'
+                                  : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-600'
+                              }`}
+                            >
+                              {order.is_archived
+                                ? <><ArchiveRestore className="w-3.5 h-3.5" /> Unarchive</>
+                                : <><Archive className="w-3.5 h-3.5" /> Archive</>
+                              }
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

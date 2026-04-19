@@ -249,36 +249,48 @@ export default function ShipmentPerformanceDetail() {
         </div>
 
         {/* Financial Metrics */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-700 mb-5 flex items-center gap-2">
-            <DollarSign className="w-4 h-4 text-emerald-500" />
-            Financials
-          </h2>
-          {financials && (
-            <div className="space-y-3">
-              <FinRow
-                label="COGS — Sold Portion"
-                value={fmt(financials.cogsSold)}
-                sub={`${fmtUnits(shipment.units_sold)} units at landed cost`}
-                accent="gray"
-              />
-              <FinRow
-                label="Remaining Inventory Value"
-                value={fmt(financials.remainingValue)}
-                sub={`${fmtUnits(shipment.units_remaining)} units remaining`}
-                accent="amber"
-              />
-              <div className="border-t border-gray-100 pt-3">
+        {shipment.is_initial_inventory ? (
+          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col items-center justify-center text-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center">
+              <DollarSign className="w-5 h-5 text-slate-400" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-slate-600">Cost metrics not available</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                Financial tracking is not applicable for pre-existing stock. Only unit-level performance is shown.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+            <h2 className="text-sm font-semibold text-gray-700 mb-5 flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-emerald-500" />
+              Financials
+            </h2>
+            {financials && (
+              <div className="space-y-3">
                 <FinRow
-                  label="Total Capital Deployed"
-                  value={fmt(financials.capitalDeployed)}
-                  sub={`Landed cost ${fmt(financials.cogsTotal)} + shipping ${fmt(Number(shipment.shipping_cost_bdt))}`}
-                  accent="blue"
-                  bold
+                  label="COGS — Sold Portion"
+                  value={fmt(financials.cogsSold)}
+                  sub={`${fmtUnits(shipment.units_sold)} units at landed cost`}
+                  accent="gray"
                 />
-              </div>
-              <CapitalRecoveryBar pct={financials.capitalRecovery} />
-              {!shipment.is_initial_inventory && (
+                <FinRow
+                  label="Remaining Inventory Value"
+                  value={fmt(financials.remainingValue)}
+                  sub={`${fmtUnits(shipment.units_remaining)} units remaining`}
+                  accent="amber"
+                />
+                <div className="border-t border-gray-100 pt-3">
+                  <FinRow
+                    label="Total Capital Deployed"
+                    value={fmt(financials.capitalDeployed)}
+                    sub={`Landed cost ${fmt(financials.cogsTotal)} + shipping ${fmt(Number(shipment.shipping_cost_bdt))}`}
+                    accent="blue"
+                    bold
+                  />
+                </div>
+                <CapitalRecoveryBar pct={financials.capitalRecovery} />
                 <div className="border-t border-gray-100 pt-3 grid grid-cols-2 gap-3 text-center">
                   <div className="bg-gray-50 rounded-lg p-3">
                     <p className="text-xs text-gray-500 mb-1">PO Created</p>
@@ -289,10 +301,10 @@ export default function ShipmentPerformanceDetail() {
                     <p className="text-sm font-semibold text-gray-700">{fmt(Number(shipment.total_paid_bdt))}</p>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* SKU Breakdown */}
@@ -313,8 +325,12 @@ export default function ShipmentPerformanceDetail() {
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Sold</th>
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Remaining</th>
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide min-w-[140px]">Sell-through</th>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">COGS Sold</th>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Inv. Value</th>
+                {!shipment.is_initial_inventory && (
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">COGS Sold</th>
+                )}
+                {!shipment.is_initial_inventory && (
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Inv. Value</th>
+                )}
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Unit Cost</th>
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-center">Losses</th>
               </tr>
@@ -322,17 +338,17 @@ export default function ShipmentPerformanceDetail() {
             <tbody className="divide-y divide-gray-100">
               {skus.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-gray-400 text-sm">
+                  <td colSpan={shipment.is_initial_inventory ? 7 : 9} className="px-4 py-12 text-center text-gray-400 text-sm">
                     No SKU data available.
                   </td>
                 </tr>
               ) : skus.map(sku => (
-                <SkuRow key={sku.sku} row={sku} />
+                <SkuRow key={sku.sku} row={sku} isInitialInventory={shipment.is_initial_inventory} />
               ))}
             </tbody>
             {skus.length > 0 && (
               <tfoot className="bg-gray-50 border-t border-gray-200">
-                <SkuTotalsRow skus={skus} />
+                <SkuTotalsRow skus={skus} isInitialInventory={shipment.is_initial_inventory} />
               </tfoot>
             )}
           </table>
@@ -342,7 +358,7 @@ export default function ShipmentPerformanceDetail() {
   );
 }
 
-function SkuRow({ row }: { row: ShipmentPerformanceDetailRow }) {
+function SkuRow({ row, isInitialInventory }: { row: ShipmentPerformanceDetailRow; isInitialInventory: boolean }) {
   const hasLoss = row.units_damaged > 0 || row.units_adjusted > 0;
   return (
     <tr className="hover:bg-gray-50">
@@ -362,12 +378,16 @@ function SkuRow({ row }: { row: ShipmentPerformanceDetailRow }) {
       <td className="px-4 py-3.5 min-w-[140px]">
         <SellThroughBar pct={Number(row.sell_through_pct)} />
       </td>
-      <td className="px-4 py-3.5 text-right text-gray-700 tabular-nums whitespace-nowrap">{fmt(Number(row.cogs_sold))}</td>
-      <td className="px-4 py-3.5 text-right tabular-nums whitespace-nowrap">
-        <span className={Number(row.remaining_inventory_value) > 0 ? 'text-amber-700 font-medium' : 'text-gray-400'}>
-          {fmt(Number(row.remaining_inventory_value))}
-        </span>
-      </td>
+      {!isInitialInventory && (
+        <td className="px-4 py-3.5 text-right text-gray-700 tabular-nums whitespace-nowrap">{fmt(Number(row.cogs_sold))}</td>
+      )}
+      {!isInitialInventory && (
+        <td className="px-4 py-3.5 text-right tabular-nums whitespace-nowrap">
+          <span className={Number(row.remaining_inventory_value) > 0 ? 'text-amber-700 font-medium' : 'text-gray-400'}>
+            {fmt(Number(row.remaining_inventory_value))}
+          </span>
+        </td>
+      )}
       <td className="px-4 py-3.5 text-right text-gray-500 tabular-nums whitespace-nowrap">
         {fmt(Number(row.landed_cost_per_unit))}
       </td>
@@ -387,7 +407,7 @@ function SkuRow({ row }: { row: ShipmentPerformanceDetailRow }) {
   );
 }
 
-function SkuTotalsRow({ skus }: { skus: ShipmentPerformanceDetailRow[] }) {
+function SkuTotalsRow({ skus, isInitialInventory }: { skus: ShipmentPerformanceDetailRow[]; isInitialInventory: boolean }) {
   const totals = skus.reduce(
     (acc, r) => ({
       units_in: acc.units_in + Number(r.units_in),
@@ -409,8 +429,12 @@ function SkuTotalsRow({ skus }: { skus: ShipmentPerformanceDetailRow[] }) {
       <td className="px-4 py-3">
         <SellThroughBar pct={stPct} />
       </td>
-      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{fmt(totals.cogs_sold)}</td>
-      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{fmt(totals.remaining_inventory_value)}</td>
+      {!isInitialInventory && (
+        <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{fmt(totals.cogs_sold)}</td>
+      )}
+      {!isInitialInventory && (
+        <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{fmt(totals.remaining_inventory_value)}</td>
+      )}
       <td className="px-4 py-3" />
       <td className="px-4 py-3" />
     </tr>

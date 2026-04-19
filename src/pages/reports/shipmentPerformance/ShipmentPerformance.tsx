@@ -1,11 +1,17 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Truck, Package, DollarSign, TrendingUp,
   ArrowRight, ChevronUp, ChevronDown,
   AlertCircle, Search, CheckCircle, XCircle, Archive,
+  EyeOff, Eye,
 } from 'lucide-react';
-import { fetchShipmentPerformanceList } from './service';
+import {
+  fetchShipmentPerformanceList,
+  fetchHiddenShipmentIds,
+  hideShipment,
+  unhideShipment,
+} from './service';
 import type { ShipmentPerformanceRow } from './types';
 
 function fmt(n: number) {
@@ -56,27 +62,61 @@ function StatusBadge({ status }: { status: string }) {
 export default function ShipmentPerformance() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<ShipmentPerformanceRow[]>([]);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [showHidden, setShowHidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('received_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchShipmentPerformanceList()
-      .then(setRows)
+    Promise.all([
+      fetchShipmentPerformanceList(),
+      fetchHiddenShipmentIds(),
+    ])
+      .then(([list, hidden]) => {
+        setRows(list);
+        setHiddenIds(hidden);
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  const handleToggleHide = useCallback(async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setTogglingId(id);
+    try {
+      if (hiddenIds.has(id)) {
+        await unhideShipment(id);
+        setHiddenIds(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      } else {
+        await hideShipment(id);
+        setHiddenIds(prev => new Set(prev).add(id));
+      }
+    } catch {
+      // silently ignore toggle errors
+    } finally {
+      setTogglingId(null);
+    }
+  }, [hiddenIds]);
 
   const suppliers = useMemo(
     () => [...new Set(rows.map(r => r.supplier_name).filter(Boolean))].sort(),
     [rows]
   );
 
+  const visibleRows = useMemo(() => rows.filter(r => !hiddenIds.has(r.shipment_db_id)), [rows, hiddenIds]);
+
   const filtered = useMemo(() => {
-    let data = [...rows];
+    const source = showHidden ? rows : visibleRows;
+    let data = [...source];
     if (search) {
       const q = search.toLowerCase();
       data = data.filter(r =>
@@ -95,16 +135,17 @@ export default function ShipmentPerformance() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return data;
-  }, [rows, search, supplierFilter, sortKey, sortDir]);
+  }, [rows, visibleRows, showHidden, search, supplierFilter, sortKey, sortDir]);
 
   const kpis = useMemo(() => {
-    const totalCapital = rows.reduce((s, r) => s + Number(r.total_landed_cost) + Number(r.shipping_cost_bdt), 0);
-    const totalRemaining = rows.reduce((s, r) => s + Number(r.remaining_inventory_value), 0);
-    const totalIn = rows.reduce((s, r) => s + Number(r.units_in), 0);
-    const totalSold = rows.reduce((s, r) => s + Number(r.units_sold), 0);
+    const base = visibleRows;
+    const totalCapital = base.reduce((s, r) => s + Number(r.total_landed_cost) + Number(r.shipping_cost_bdt), 0);
+    const totalRemaining = base.reduce((s, r) => s + Number(r.remaining_inventory_value), 0);
+    const totalIn = base.reduce((s, r) => s + Number(r.units_in), 0);
+    const totalSold = base.reduce((s, r) => s + Number(r.units_sold), 0);
     const blendedST = totalIn > 0 ? (totalSold / totalIn) * 100 : 0;
-    return { totalCapital, totalRemaining, blendedST, totalShipments: rows.length };
-  }, [rows]);
+    return { totalCapital, totalRemaining, blendedST, totalShipments: base.length };
+  }, [visibleRows]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -138,6 +179,8 @@ export default function ShipmentPerformance() {
     );
   }
 
+  const hiddenCount = hiddenIds.size;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -168,7 +211,7 @@ export default function ShipmentPerformance() {
         <KpiCard
           label="Total Shipments"
           value={loading ? null : kpis.totalShipments.toString()}
-          sub="All time"
+          sub="Visible shipments"
           icon={Truck}
           accent="blue"
         />
@@ -189,7 +232,7 @@ export default function ShipmentPerformance() {
         <KpiCard
           label="Blended Sell-through"
           value={loading ? null : `${kpis.blendedST.toFixed(1)}%`}
-          sub="Across all shipments"
+          sub="Across visible shipments"
           icon={TrendingUp}
           accent={kpis.blendedST >= 70 ? 'emerald' : kpis.blendedST >= 40 ? 'amber' : 'red'}
         />
@@ -222,6 +265,26 @@ export default function ShipmentPerformance() {
             Clear
           </button>
         )}
+
+        {!loading && hiddenCount > 0 && (
+          <button
+            onClick={() => setShowHidden(v => !v)}
+            className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border transition-colors ${
+              showHidden
+                ? 'bg-gray-800 border-gray-800 text-white'
+                : 'bg-white border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
+            }`}
+          >
+            {showHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            {showHidden ? 'Showing hidden' : 'Show hidden'}
+            <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-xs font-bold ${
+              showHidden ? 'bg-white text-gray-800' : 'bg-gray-200 text-gray-600'
+            }`}>
+              {hiddenCount}
+            </span>
+          </button>
+        )}
+
         <span className="ml-auto text-xs text-gray-400">{filtered.length} shipment{filtered.length !== 1 ? 's' : ''}</span>
       </div>
 
@@ -250,7 +313,7 @@ export default function ShipmentPerformance() {
                 <Th label="Inv. Value" k="remaining_inventory_value" right />
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Paid</th>
-                <th className="w-10" />
+                <th className="w-20" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -276,6 +339,9 @@ export default function ShipmentPerformance() {
                     <ShipmentRow
                       key={row.shipment_db_id}
                       row={row}
+                      isHidden={hiddenIds.has(row.shipment_db_id)}
+                      isToggling={togglingId === row.shipment_db_id}
+                      onToggleHide={handleToggleHide}
                       onClick={() => navigate(`/reports/shipment-performance/${row.shipment_db_id}`)}
                     />
                   ))
@@ -288,7 +354,19 @@ export default function ShipmentPerformance() {
   );
 }
 
-function ShipmentRow({ row, onClick }: { row: ShipmentPerformanceRow; onClick: () => void }) {
+function ShipmentRow({
+  row,
+  isHidden,
+  isToggling,
+  onToggleHide,
+  onClick,
+}: {
+  row: ShipmentPerformanceRow;
+  isHidden: boolean;
+  isToggling: boolean;
+  onToggleHide: (e: React.MouseEvent, id: string) => void;
+  onClick: () => void;
+}) {
   const receivedDate = new Date(row.received_date).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
   });
@@ -296,7 +374,7 @@ function ShipmentRow({ row, onClick }: { row: ShipmentPerformanceRow; onClick: (
   return (
     <tr
       onClick={onClick}
-      className="cursor-pointer hover:bg-gray-50 transition-colors group"
+      className={`cursor-pointer hover:bg-gray-50 transition-colors group ${isHidden ? 'opacity-40' : ''}`}
     >
       <td className="px-4 py-3.5">
         <div>
@@ -357,7 +435,24 @@ function ShipmentRow({ row, onClick }: { row: ShipmentPerformanceRow; onClick: (
         }
       </td>
       <td className="px-4 py-3.5">
-        <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 transition-colors" />
+        <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={e => onToggleHide(e, row.shipment_db_id)}
+            disabled={isToggling}
+            title={isHidden ? 'Unhide shipment' : 'Hide shipment'}
+            className={`p-1.5 rounded-md transition-all ${
+              isHidden
+                ? 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+                : 'opacity-0 group-hover:opacity-100 text-gray-300 hover:text-gray-600 hover:bg-gray-100'
+            } disabled:opacity-30`}
+          >
+            {isHidden
+              ? <Eye className="w-4 h-4" />
+              : <EyeOff className="w-4 h-4" />
+            }
+          </button>
+          <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 transition-colors" />
+        </div>
       </td>
     </tr>
   );

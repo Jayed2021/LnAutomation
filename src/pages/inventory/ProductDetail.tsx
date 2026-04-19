@@ -76,7 +76,8 @@ interface AllLocation {
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { canSeeCosts } = useAuth();
+  const { canSeeCosts, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -109,6 +110,10 @@ export default function ProductDetail() {
   const [adjustSaving, setAdjustSaving] = useState(false);
   const [barcodeSettings, setBarcodeSettings] = useState<BarcodeLabelSettings | null>(null);
   const [adjustError, setAdjustError] = useState<string | null>(null);
+  const [showEditLotModal, setShowEditLotModal] = useState(false);
+  const [editLotForm, setEditLotForm] = useState({ lotId: '', lotNumber: '', barcode: '' });
+  const [editLotSaving, setEditLotSaving] = useState(false);
+  const [editLotError, setEditLotError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) loadAll(id);
@@ -416,6 +421,35 @@ export default function ProductDetail() {
       setAdjustError(err?.message || 'Failed to add initial stock');
     } finally {
       setAdjustSaving(false);
+    }
+  };
+
+  const handleEditLot = async () => {
+    if (!id || !editLotForm.lotId || !editLotForm.lotNumber.trim()) return;
+    setEditLotSaving(true);
+    setEditLotError(null);
+    try {
+      const { error } = await supabase
+        .from('inventory_lots')
+        .update({
+          lot_number: editLotForm.lotNumber.trim(),
+          barcode: editLotForm.barcode.trim() || null,
+        })
+        .eq('id', editLotForm.lotId);
+      if (error) {
+        if (error.code === '23505') {
+          setEditLotError(`Lot ID "${editLotForm.lotNumber.trim()}" already exists. Please use a unique value.`);
+        } else {
+          throw error;
+        }
+        return;
+      }
+      setShowEditLotModal(false);
+      loadAll(id);
+    } catch (err: any) {
+      setEditLotError(err?.message || 'Failed to save changes');
+    } finally {
+      setEditLotSaving(false);
     }
   };
 
@@ -1026,6 +1060,7 @@ export default function ProductDetail() {
                   <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Initial Qty</th>
                   <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Remaining Qty</th>
                   <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Lot Value</th>
+                  {isAdmin && <th className="px-5 py-3"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -1078,6 +1113,25 @@ export default function ProductDetail() {
                           ? <span className="font-medium text-gray-900">৳ {lotValue.toLocaleString('en-BD', { maximumFractionDigits: 2 })}</span>
                           : <span className="text-gray-400 italic text-xs">Restricted</span>}
                       </td>
+                      {isAdmin && (
+                        <td className="px-5 py-3 text-right">
+                          <button
+                            onClick={() => {
+                              setEditLotForm({
+                                lotId: lot.id,
+                                lotNumber: lot.lot_number,
+                                barcode: lot.barcode || '',
+                              });
+                              setEditLotError(null);
+                              setShowEditLotModal(true);
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                            title="Edit Lot ID and Shipment Barcode"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -1240,6 +1294,73 @@ export default function ProductDetail() {
                 className="bg-emerald-700 text-white hover:bg-emerald-800"
               >
                 {adjustSaving ? 'Saving...' : 'Add Stock'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditLotModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Edit Shipment</h2>
+                <p className="text-xs text-gray-500 mt-0.5 font-mono">{product.sku}</p>
+              </div>
+              <button onClick={() => setShowEditLotModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-800">
+                  Changing the Lot ID or Shipment Barcode affects barcode labels and stock tracking records. Proceed with care.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                  Lot ID <span className="font-normal text-gray-400">(must be unique)</span>
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-gray-400 focus:border-transparent"
+                  value={editLotForm.lotNumber}
+                  onChange={e => setEditLotForm(f => ({ ...f, lotNumber: e.target.value }))}
+                  placeholder="e.g. LOT-001"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                  Shipment Barcode <span className="font-normal text-gray-400">(leave blank to use Lot ID as barcode)</span>
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-gray-400 focus:border-transparent"
+                  value={editLotForm.barcode}
+                  onChange={e => setEditLotForm(f => ({ ...f, barcode: e.target.value }))}
+                  placeholder={`e.g. ${editLotForm.lotNumber || 'LN_1054'}`}
+                />
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Preview: <span className="font-mono font-medium text-gray-600">{editLotForm.barcode.trim() || editLotForm.lotNumber.trim() || '—'}</span>
+                </p>
+              </div>
+              {editLotError && (
+                <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  {editLotError}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <Button variant="outline" onClick={() => setShowEditLotModal(false)}>Cancel</Button>
+              <Button
+                onClick={handleEditLot}
+                disabled={editLotSaving || !editLotForm.lotNumber.trim()}
+                className="bg-gray-900 text-white hover:bg-gray-700"
+              >
+                {editLotSaving ? 'Saving...' : 'Save Changes'}
               </Button>
             </div>
           </div>

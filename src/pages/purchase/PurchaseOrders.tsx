@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRefresh } from '../../contexts/RefreshContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
-import { Plus, Search, FileText, Check, Clock, Package, Archive, ArchiveRestore, AlertTriangle } from 'lucide-react';
+import { Plus, Search, FileText, Check, Clock, Package, Archive, ArchiveRestore, AlertTriangle, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface PurchaseOrder {
@@ -41,66 +41,55 @@ const STATUS_COLORS: Record<string, string> = {
   closed: 'emerald',
 };
 
-interface ArchiveConfirmState {
-  orderId: string;
-  poNumber: string;
-  archiving: boolean;
-}
-
-function ArchiveConfirmPopover({
-  state,
-  anchorRef,
+function BulkArchiveModal({
+  count,
+  archiving,
+  working,
   onConfirm,
   onCancel,
 }: {
-  state: ArchiveConfirmState;
-  anchorRef: React.RefObject<HTMLDivElement | null>;
+  count: number;
+  archiving: boolean;
+  working: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const rect = anchorRef.current?.getBoundingClientRect();
-  const top = rect ? rect.bottom + window.scrollY + 8 : 0;
-  const left = rect ? rect.left + window.scrollX : 0;
-
   return (
-    <div
-      className="fixed z-50"
-      style={{ top, left }}
-    >
-      <div className="bg-white border border-gray-200 rounded-xl shadow-xl p-4 w-72">
-        <div className="flex items-start gap-3">
-          <div className="p-2 rounded-lg bg-amber-50 shrink-0">
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
+        <div className="flex items-start gap-3 mb-4">
+          <div className={`p-2.5 rounded-xl shrink-0 ${archiving ? 'bg-amber-50' : 'bg-blue-50'}`}>
+            <AlertTriangle className={`w-5 h-5 ${archiving ? 'text-amber-500' : 'text-blue-500'}`} />
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-800">
-              {state.archiving ? 'Archive Purchase Order?' : 'Unarchive Purchase Order?'}
+          <div>
+            <p className="text-sm font-semibold text-gray-900">
+              {archiving ? `Archive ${count} Purchase Order${count !== 1 ? 's' : ''}?` : `Unarchive ${count} Purchase Order${count !== 1 ? 's' : ''}?`}
             </p>
             <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-              <span className="font-medium text-gray-700">{state.poNumber}</span>
-              {state.archiving
-                ? ' will be hidden from the orders list and shipment performance report.'
-                : ' will be restored and visible again in all views.'
+              {archiving
+                ? `The selected ${count === 1 ? 'order' : 'orders'} will be hidden from all standard views and the shipment performance report.`
+                : `The selected ${count === 1 ? 'order' : 'orders'} will be restored and visible again in all views.`
               }
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 mt-4 justify-end">
+        <div className="flex items-center gap-2 justify-end">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+            disabled={working}
+            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors ${
-              state.archiving
-                ? 'bg-amber-500 hover:bg-amber-600'
-                : 'bg-blue-600 hover:bg-blue-700'
+            disabled={working}
+            className={`px-4 py-1.5 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 ${
+              archiving ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {state.archiving ? 'Archive' : 'Unarchive'}
+            {working && <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+            {archiving ? 'Archive' : 'Unarchive'}
           </button>
         </div>
       </div>
@@ -119,28 +108,21 @@ export default function PurchaseOrders() {
   const [showArchived, setShowArchived] = useState(false);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [archiveConfirm, setArchiveConfirm] = useState<ArchiveConfirmState | null>(null);
-  const [archiveWorking, setArchiveWorking] = useState(false);
-  const archiveBtnRef = useRef<HTMLDivElement | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkWorking, setBulkWorking] = useState(false);
 
   useEffect(() => {
     fetchOrders();
   }, [lastRefreshed, showArchived]);
 
   useEffect(() => {
-    if (!archiveConfirm) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (archiveBtnRef.current && !archiveBtnRef.current.contains(e.target as Node)) {
-        setArchiveConfirm(null);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [archiveConfirm]);
+    setSelectedIds(new Set());
+  }, [showArchived]);
 
   const fetchOrders = async () => {
     setLoading(true);
-    const query = supabase
+    const { data, error } = await supabase
       .from('purchase_orders')
       .select(`
         id,
@@ -156,8 +138,6 @@ export default function PurchaseOrders() {
       `)
       .eq('is_archived', showArchived)
       .order('created_at', { ascending: false });
-
-    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching purchase orders:', error);
@@ -192,23 +172,19 @@ export default function PurchaseOrders() {
     setRefreshing(false);
   };
 
-  const handleArchiveToggle = async (order: PurchaseOrder, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const btn = (e.currentTarget as HTMLElement).closest('[data-archive-btn]') as HTMLDivElement | null;
-    archiveBtnRef.current = btn;
-    setArchiveConfirm({ orderId: order.id, poNumber: order.po_number, archiving: !order.is_archived });
-  };
-
-  const confirmArchive = async () => {
-    if (!archiveConfirm || archiveWorking) return;
-    setArchiveWorking(true);
+  const confirmBulkArchive = async () => {
+    if (bulkWorking || selectedIds.size === 0) return;
+    setBulkWorking(true);
     const { error } = await supabase
       .from('purchase_orders')
-      .update({ is_archived: archiveConfirm.archiving })
-      .eq('id', archiveConfirm.orderId);
-    setArchiveWorking(false);
-    setArchiveConfirm(null);
-    if (!error) fetchOrders();
+      .update({ is_archived: !showArchived })
+      .in('id', [...selectedIds]);
+    setBulkWorking(false);
+    if (!error) {
+      setShowBulkModal(false);
+      setSelectedIds(new Set());
+      fetchOrders();
+    }
   };
 
   const filtered = orders.filter((o) => {
@@ -219,6 +195,26 @@ export default function PurchaseOrders() {
     const matchStatus = statusFilter === 'all' || o.status === statusFilter;
     return matchSearch && matchStatus;
   });
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every((o) => selectedIds.has(o.id));
+  const someSelected = selectedIds.size > 0;
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((o) => o.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const formatCurrency = (amount: number, currency: string) => {
     const symbols: Record<string, string> = { USD: '$', CNY: '¥', BDT: '৳' };
@@ -242,12 +238,13 @@ export default function PurchaseOrders() {
 
   return (
     <div className="space-y-6">
-      {archiveConfirm && (
-        <ArchiveConfirmPopover
-          state={archiveConfirm}
-          anchorRef={archiveBtnRef}
-          onConfirm={confirmArchive}
-          onCancel={() => setArchiveConfirm(null)}
+      {showBulkModal && (
+        <BulkArchiveModal
+          count={selectedIds.size}
+          archiving={!showArchived}
+          working={bulkWorking}
+          onConfirm={confirmBulkArchive}
+          onCancel={() => setShowBulkModal(false)}
         />
       )}
 
@@ -322,6 +319,35 @@ export default function PurchaseOrders() {
               ))}
             </div>
           )}
+
+          {isAdmin && someSelected && (
+            <div className="flex items-center gap-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+              <span className="text-sm font-medium text-blue-700">
+                {selectedIds.size} selected
+              </span>
+              <div className="h-4 w-px bg-blue-200" />
+              <button
+                onClick={() => setShowBulkModal(true)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                  showArchived
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-amber-500 hover:bg-amber-600 text-white'
+                }`}
+              >
+                {showArchived
+                  ? <><ArchiveRestore className="w-3.5 h-3.5" /> Unarchive Selected</>
+                  : <><Archive className="w-3.5 h-3.5" /> Archive Selected</>
+                }
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="ml-auto inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+                Clear
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -360,6 +386,16 @@ export default function PurchaseOrders() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  {isAdmin && (
+                    <th className="pl-4 pr-2 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAll}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer focus:ring-blue-500"
+                      />
+                    </th>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PO Number</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shipment</th>
@@ -371,74 +407,85 @@ export default function PurchaseOrders() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filtered.map((order) => (
-                  <tr
-                    key={order.id}
-                    className={`hover:bg-gray-50 transition-colors cursor-pointer ${
-                      order.is_archived ? 'opacity-70' : ''
-                    }`}
-                    onClick={() =>
-                      !order.is_archived && (
-                        order.status === 'draft'
-                          ? navigate(`/purchase/orders/${order.id}/edit`)
-                          : navigate(`/purchase/orders/${order.id}`)
-                      )
-                    }
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                        <span className="font-medium text-gray-900">{order.po_number}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {order.supplier_code && (
-                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">
-                            {order.supplier_code}
-                          </span>
-                        )}
-                        <span className="text-sm text-gray-900">{order.supplier_name}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-600">{order.shipment_name || '—'}</span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-500">
-                        {new Date(order.created_at).toLocaleDateString('en-GB', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-900">{order.items_count} items</span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm font-medium text-gray-900">
-                        {formatCurrency(order.total_value, order.currency)} {order.currency}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant={STATUS_COLORS[order.status] as any}>
-                          <span className="flex items-center gap-1">
-                            {getStatusIcon(order.status)}
-                            {STATUS_LABELS[order.status] || order.status}
-                          </span>
-                        </Badge>
-                        {order.status === 'closed' && order.closed_as_partial && (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
-                            <Clock className="w-3 h-3" />
-                            Partial
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
+                {filtered.map((order) => {
+                  const isSelected = selectedIds.has(order.id);
+                  return (
+                    <tr
+                      key={order.id}
+                      className={`hover:bg-gray-50 transition-colors cursor-pointer ${
+                        isSelected ? 'bg-blue-50/60' : ''
+                      } ${order.is_archived ? 'opacity-70' : ''}`}
+                      onClick={() =>
+                        !order.is_archived && (
+                          order.status === 'draft'
+                            ? navigate(`/purchase/orders/${order.id}/edit`)
+                            : navigate(`/purchase/orders/${order.id}`)
+                        )
+                      }
+                    >
+                      {isAdmin && (
+                        <td className="pl-4 pr-2 py-4 w-10" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(order.id)}
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer focus:ring-blue-500"
+                          />
+                        </td>
+                      )}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          <span className="font-medium text-gray-900">{order.po_number}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          {order.supplier_code && (
+                            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">
+                              {order.supplier_code}
+                            </span>
+                          )}
+                          <span className="text-sm text-gray-900">{order.supplier_name}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="text-sm text-gray-600">{order.shipment_name || '—'}</span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="text-sm text-gray-500">
+                          {new Date(order.created_at).toLocaleDateString('en-GB', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="text-sm text-gray-900">{order.items_count} items</span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="text-sm font-medium text-gray-900">
+                          {formatCurrency(order.total_value, order.currency)} {order.currency}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant={STATUS_COLORS[order.status] as any}>
+                            <span className="flex items-center gap-1">
+                              {getStatusIcon(order.status)}
+                              {STATUS_LABELS[order.status] || order.status}
+                            </span>
+                          </Badge>
+                          {order.status === 'closed' && order.closed_as_partial && (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                              <Clock className="w-3 h-3" />
+                              Partial
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         {!order.is_archived && (
                           <Button
                             variant="ghost"
@@ -452,28 +499,10 @@ export default function PurchaseOrders() {
                             {order.status === 'draft' ? 'Continue Editing' : 'View Details'}
                           </Button>
                         )}
-                        {isAdmin && (
-                          <div data-archive-btn>
-                            <button
-                              onClick={(e) => handleArchiveToggle(order, e)}
-                              title={order.is_archived ? 'Unarchive' : 'Archive'}
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                                order.is_archived
-                                  ? 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100'
-                                  : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-600'
-                              }`}
-                            >
-                              {order.is_archived
-                                ? <><ArchiveRestore className="w-3.5 h-3.5" /> Unarchive</>
-                                : <><Archive className="w-3.5 h-3.5" /> Archive</>
-                              }
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

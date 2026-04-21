@@ -31,8 +31,31 @@ interface LocationRow {
   location_type: string;
   barcode: string | null;
   is_active: boolean;
+  capacity: number | null;
   sku_count: number;
   unit_count: number;
+  slots_used: number;
+}
+
+function CapacityCell({ capacity, slotsUsed }: { capacity: number | null; slotsUsed: number }) {
+  if (capacity === null) {
+    return <span className="text-xs text-gray-300 italic">—</span>;
+  }
+  const pct = Math.min(100, (slotsUsed / capacity) * 100);
+  const remaining = Math.max(0, capacity - slotsUsed);
+  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-500';
+  const textColor = pct >= 90 ? 'text-red-600' : pct >= 70 ? 'text-amber-600' : 'text-gray-700';
+  return (
+    <div className="flex flex-col items-end gap-1 min-w-[80px]">
+      <span className={`text-xs font-medium ${textColor}`}>
+        {Math.round(slotsUsed)}/{capacity}
+        <span className="text-gray-400 font-normal ml-1">({Math.round(remaining)} left)</span>
+      </span>
+      <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
 }
 
 const LOCATION_TYPES = ['storage', 'receiving', 'return_hold', 'damaged'];
@@ -127,7 +150,8 @@ function EditLocationModal({ location, onClose, onSaved }: EditModalProps) {
   const [form, setForm] = useState({
     name: location.name,
     location_type: location.location_type,
-    barcode: location.barcode ?? ''
+    barcode: location.barcode ?? '',
+    capacity: location.capacity !== null ? String(location.capacity) : '',
   });
   const [saving, setSaving] = useState(false);
   const barcodeChanged = form.barcode !== (location.barcode ?? '');
@@ -136,11 +160,13 @@ function EditLocationModal({ location, onClose, onSaved }: EditModalProps) {
     if (!form.name) return;
     setSaving(true);
     try {
+      const capacityVal = form.capacity.trim() === '' ? null : parseInt(form.capacity, 10);
       const { error } = await supabase.from('warehouse_locations').update({
         name: form.name,
         location_type: form.location_type,
         barcode: form.barcode || null,
-        code: form.barcode ? form.barcode.toUpperCase() : location.code
+        code: form.barcode ? form.barcode.toUpperCase() : location.code,
+        capacity: capacityVal,
       }).eq('id', location.id);
       if (error) throw error;
       onSaved();
@@ -181,6 +207,26 @@ function EditLocationModal({ location, onClose, onSaved }: EditModalProps) {
                 <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1).replace('_', ' ')}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700">Capacity (slots)</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={form.capacity}
+              onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))}
+              placeholder="e.g. 100"
+            />
+            <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+              <p className="text-xs text-gray-500 leading-relaxed">
+                <span className="font-medium text-gray-700">What is a slot?</span> A slot is the basic unit of space in this location.
+                By default, 1 unit of any product takes 1 slot — so a capacity of 100 means 100 units.
+                If a product is physically larger, you can set its "Slots per unit" on the product page
+                (e.g. a bulky item = 2 slots, so only 50 fit). Leave blank for no limit.
+              </p>
+            </div>
           </div>
           <div>
             <label className="text-xs font-medium text-gray-700">Barcode</label>
@@ -384,25 +430,31 @@ export default function WarehouseLocations() {
     try {
       const { data: whs } = await supabase.from('warehouses').select('*').order('name');
       const { data: locs } = await supabase.from('warehouse_locations').select('*').order('name');
-      const { data: lots } = await supabase.from('inventory_lots').select('location_id, product_id, remaining_quantity');
+      const { data: lots } = await supabase
+        .from('inventory_lots')
+        .select('location_id, product_id, remaining_quantity, products(slots_per_unit)');
 
-      const locStockMap: Record<string, { skus: Set<string>; units: number }> = {};
-      (lots || []).forEach(lot => {
-        if (!locStockMap[lot.location_id]) locStockMap[lot.location_id] = { skus: new Set(), units: 0 };
+      const locStockMap: Record<string, { skus: Set<string>; units: number; slots: number }> = {};
+      (lots || []).forEach((lot: any) => {
+        if (!locStockMap[lot.location_id]) locStockMap[lot.location_id] = { skus: new Set(), units: 0, slots: 0 };
         if (lot.remaining_quantity > 0) {
+          const spu = lot.products?.slots_per_unit ?? 1;
           locStockMap[lot.location_id].skus.add(lot.product_id);
           locStockMap[lot.location_id].units += lot.remaining_quantity;
+          locStockMap[lot.location_id].slots += lot.remaining_quantity * spu;
         }
       });
 
       const locsByWh: Record<string, LocationRow[]> = {};
       (locs || []).forEach((l: any) => {
         if (!locsByWh[l.warehouse_id]) locsByWh[l.warehouse_id] = [];
-        const stock = locStockMap[l.id] || { skus: new Set(), units: 0 };
+        const stock = locStockMap[l.id] || { skus: new Set(), units: 0, slots: 0 };
         locsByWh[l.warehouse_id].push({
           id: l.id, code: l.code, name: l.name, location_type: l.location_type,
           barcode: l.barcode, is_active: l.is_active,
-          sku_count: stock.skus.size, unit_count: stock.units
+          capacity: l.capacity ?? null,
+          sku_count: stock.skus.size, unit_count: stock.units,
+          slots_used: Math.round(stock.slots * 100) / 100,
         });
       });
 
@@ -648,6 +700,7 @@ export default function WarehouseLocations() {
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">SKUs</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Units</th>
+                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Capacity</th>
                         <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
                         <th className="px-4 py-3 w-10"></th>
                       </tr>
@@ -682,6 +735,9 @@ export default function WarehouseLocations() {
                           </td>
                           <td className="px-4 py-3 text-right text-sm text-gray-900">{loc.sku_count}</td>
                           <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">{loc.unit_count}</td>
+                          <td className="px-4 py-3 text-right">
+                            <CapacityCell capacity={loc.capacity} slotsUsed={loc.slots_used} />
+                          </td>
                           <td className="px-4 py-3 text-center">
                             <Badge variant={loc.is_active ? 'emerald' : 'gray'}>{loc.is_active ? 'Active' : 'Disabled'}</Badge>
                           </td>

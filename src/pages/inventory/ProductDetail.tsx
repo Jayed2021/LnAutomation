@@ -24,6 +24,7 @@ interface Product {
   selling_price: number | null;
   image_url: string | null;
   low_stock_threshold: number;
+  slots_per_unit: number | null;
   is_active: boolean;
   product_type: ProductType;
   woo_attributes: Array<Record<string, string>> | null;
@@ -217,6 +218,7 @@ export default function ProductDetail() {
         selling_price: editForm.selling_price,
         image_url: editForm.image_url,
         low_stock_threshold: editForm.low_stock_threshold,
+        slots_per_unit: editForm.slots_per_unit ?? null,
         product_type: editForm.product_type,
         updated_at: new Date().toISOString(),
       }).eq('id', id);
@@ -879,15 +881,31 @@ export default function ProductDetail() {
               )}
 
               {editing && (
-                <div className="border-t border-gray-100 pt-5">
-                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">Low Stock Alert Threshold</label>
-                  <input
-                    type="number"
-                    className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-400 focus:border-transparent"
-                    value={editForm.low_stock_threshold || 20}
-                    onChange={e => setEditForm(f => ({ ...f, low_stock_threshold: parseInt(e.target.value) }))}
-                  />
-                </div>
+                <>
+                  <div className="border-t border-gray-100 pt-5">
+                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">Low Stock Alert Threshold</label>
+                    <input
+                      type="number"
+                      className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-400 focus:border-transparent"
+                      value={editForm.low_stock_threshold || 20}
+                      onChange={e => setEditForm(f => ({ ...f, low_stock_threshold: parseInt(e.target.value) }))}
+                    />
+                  </div>
+                  <div className="border-t border-gray-100 pt-5">
+                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">Slots per Unit</label>
+                    <input
+                      type="number"
+                      min="0.1"
+                      step="0.1"
+                      className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-400 focus:border-transparent"
+                      value={editForm.slots_per_unit ?? 1}
+                      onChange={e => setEditForm(f => ({ ...f, slots_per_unit: parseFloat(e.target.value) || 1 }))}
+                    />
+                    <p className="text-xs text-gray-400 mt-1.5 leading-relaxed max-w-xs">
+                      How many slots in a storage location this product occupies per unit. Default is 1. Set higher for physically larger items (e.g. 2 means only half as many fit in a location).
+                    </p>
+                  </div>
+                </>
               )}
             </div>
           </Card>

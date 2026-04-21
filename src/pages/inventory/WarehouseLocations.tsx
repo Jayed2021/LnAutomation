@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
+import { getAppSetting } from '../../lib/appSettings';
 import { useRefresh } from '../../contexts/RefreshContext';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -370,6 +371,11 @@ export default function WarehouseLocations() {
   const [deleteLocation, setDeleteLocation] = useState<LocationRow | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [showImportTools, setShowImportTools] = useState(false);
+
+  useEffect(() => {
+    getAppSetting<boolean>('show_location_import_tools').then(val => setShowImportTools(val === true));
+  }, []);
 
   useEffect(() => { loadData(); }, [lastRefreshed]);
 
@@ -507,15 +513,19 @@ export default function WarehouseLocations() {
           <p className="text-sm text-gray-500 mt-1">Manage warehouses and storage locations</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={exportLocations} className="flex items-center gap-2">
-            <Download className="w-4 h-4" /> Export Locations
-          </Button>
-          <Button variant="outline" onClick={() => setShowImport(true)} className="flex items-center gap-2">
-            <Upload className="w-4 h-4" /> Import Locations
-          </Button>
-          <Button variant="outline" onClick={() => setShowImportQuants(true)} className="flex items-center gap-2">
-            <PackageCheck className="w-4 h-4" /> Import Stock Quants
-          </Button>
+          {showImportTools && (
+            <>
+              <Button variant="outline" onClick={exportLocations} className="flex items-center gap-2">
+                <Download className="w-4 h-4" /> Export Locations
+              </Button>
+              <Button variant="outline" onClick={() => setShowImport(true)} className="flex items-center gap-2">
+                <Upload className="w-4 h-4" /> Import Locations
+              </Button>
+              <Button variant="outline" onClick={() => setShowImportQuants(true)} className="flex items-center gap-2">
+                <PackageCheck className="w-4 h-4" /> Import Stock Quants
+              </Button>
+            </>
+          )}
           <Button onClick={() => setShowAddWarehouse(true)} className="flex items-center gap-2">
             <Plus className="w-4 h-4" /> Add Warehouse
           </Button>

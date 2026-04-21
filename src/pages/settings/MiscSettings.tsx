@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, CheckCircle2, Package, Lock, Archive } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, Package, Lock, Archive, Upload } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { getAppSetting, setAppSetting } from '../../lib/appSettings';
@@ -8,6 +8,7 @@ import { LensBrandManager } from './LensBrandManager';
 
 interface MiscSettingsState {
   require_packaging_dispatch_gate: boolean;
+  show_location_import_tools: boolean;
   initial_inventory_date: string;
   initial_inventory_shipment_name: string;
   initial_inventory_supplier_name: string;
@@ -15,6 +16,7 @@ interface MiscSettingsState {
 
 const DEFAULT_STATE: MiscSettingsState = {
   require_packaging_dispatch_gate: true,
+  show_location_import_tools: false,
   initial_inventory_date: '',
   initial_inventory_shipment_name: 'Initial Inventory',
   initial_inventory_supplier_name: 'Pre-existing Stock',
@@ -37,14 +39,16 @@ export default function MiscSettings() {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const [gateVal, invDate, invName, invSupplier] = await Promise.all([
+      const [gateVal, showImportTools, invDate, invName, invSupplier] = await Promise.all([
         getAppSetting<boolean>('require_packaging_dispatch_gate'),
+        getAppSetting<boolean>('show_location_import_tools'),
         getAppSetting<string>('initial_inventory_date'),
         getAppSetting<string>('initial_inventory_shipment_name'),
         getAppSetting<string>('initial_inventory_supplier_name'),
       ]);
       const loaded: MiscSettingsState = {
         require_packaging_dispatch_gate: gateVal !== false,
+        show_location_import_tools: showImportTools === true,
         initial_inventory_date: invDate ?? '',
         initial_inventory_shipment_name: invName ?? 'Initial Inventory',
         initial_inventory_supplier_name: invSupplier ?? 'Pre-existing Stock',
@@ -63,6 +67,7 @@ export default function MiscSettings() {
     try {
       await Promise.all([
         setAppSetting('require_packaging_dispatch_gate', settings.require_packaging_dispatch_gate),
+        setAppSetting('show_location_import_tools', settings.show_location_import_tools),
         setAppSetting('initial_inventory_date', settings.initial_inventory_date),
         setAppSetting('initial_inventory_shipment_name', settings.initial_inventory_shipment_name),
         setAppSetting('initial_inventory_supplier_name', settings.initial_inventory_supplier_name),
@@ -166,6 +171,47 @@ export default function MiscSettings() {
               aria-checked={settings.require_packaging_dispatch_gate}
             >
               <span className={thumbClass(settings.require_packaging_dispatch_gate)} />
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="divide-y divide-gray-100">
+        <div className="px-5 py-4 flex items-center gap-3 bg-gray-50/50">
+          <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+            <Upload className="w-4 h-4 text-slate-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Inventory Setup Tools</h3>
+            <p className="text-xs text-gray-500">Controls for one-time data migration buttons on the Locations page</p>
+          </div>
+        </div>
+
+        <div className="px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-7 h-7 rounded-md bg-blue-100 flex items-center justify-center shrink-0 mt-0.5">
+                <Upload className="w-3.5 h-3.5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-900">Show location import/export tools</p>
+                <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
+                  When enabled, the "Export Locations", "Import Locations", and "Import Stock Quants" buttons
+                  will be visible on the Warehouse Locations page. These are one-time setup tools used during
+                  initial data migration and can be hidden once the setup is complete.
+                </p>
+                <div className={`mt-2 inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${settings.show_location_import_tools ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {settings.show_location_import_tools ? 'Visible — import/export buttons shown' : 'Hidden — import/export buttons are not shown'}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setSettings(prev => ({ ...prev, show_location_import_tools: !prev.show_location_import_tools }))}
+              className={toggleClass(settings.show_location_import_tools)}
+              role="switch"
+              aria-checked={settings.show_location_import_tools}
+            >
+              <span className={thumbClass(settings.show_location_import_tools)} />
             </button>
           </div>
         </div>

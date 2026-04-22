@@ -1004,15 +1004,25 @@ Deno.serve(async (req: Request) => {
       if (products && products.length > 0) {
         const product = products[0];
         if (product.type === "variable") {
-          const varRes = await wooFetch(store_url, consumer_key, consumer_secret, `products/${product.id}/variations`, { sku: product_sku, per_page: 10 });
-          if (varRes.ok) {
+          // WooCommerce variations endpoint does not support SKU filtering — fetch all pages
+          // and match client-side to reliably find the correct variation.
+          let page = 1;
+          let found = false;
+          while (!found) {
+            const varRes = await wooFetch(store_url, consumer_key, consumer_secret, `products/${product.id}/variations`, { per_page: 100, page });
+            if (!varRes.ok) break;
             const variations: any[] = await varRes.json();
+            if (!variations || variations.length === 0) break;
             const match = variations.find((v: any) => v.sku === product_sku);
             if (match) {
               matchedId = match.id;
               currentStock = match.stock_quantity ?? 0;
               endpoint = `products/${product.id}/variations/${match.id}`;
+              found = true;
             }
+            const totalPages = parseInt(varRes.headers.get("X-WP-TotalPages") || "1", 10);
+            if (page >= totalPages) break;
+            page++;
           }
         } else if (product.sku === product_sku) {
           matchedId = product.id;

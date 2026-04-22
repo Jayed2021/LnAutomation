@@ -9,6 +9,7 @@ interface ReturnItemData {
   qc_status: string | null;
   receive_status: string;
   hold_location_id: string | null;
+  restock_location_id: string | null;
   product_id: string;
   order_item_id: string | null;
   order_item: { product_name: string } | null;
@@ -144,10 +145,22 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
 
         const holdCode = item.hold_location_id ? (holdLocMap[item.hold_location_id] ?? 'Return Hold') : 'Return Hold';
 
+        // If user pre-assigned a restock location, honour it over the recommendation
+        let initialLocationId = bestLocationId;
+        let initialLotId = bestLotId;
+        if (item.restock_location_id) {
+          initialLocationId = item.restock_location_id;
+          // Find an existing lot at the pre-assigned location
+          const preLot = storageLots.find(
+            l => l.location_id === item.restock_location_id && (l.remaining_quantity ?? 0) > 0
+          );
+          initialLotId = preLot ? preLot.id : null;
+        }
+
         states.push({
           item,
-          selectedLocationId: bestLocationId,
-          targetLotId: bestLotId,
+          selectedLocationId: initialLocationId,
+          targetLotId: initialLotId,
           recommendedLocationId: bestLocationId,
           recommendedStockQty: bestStockQty,
           holdLocationCode: holdCode,
@@ -334,6 +347,12 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           .update({ hold_location_id: state.selectedLocationId })
           .eq('id', item.id);
       }
+
+      // Clear staging location — no longer needed once restocked
+      await supabase
+        .from('return_items')
+        .update({ restock_location_id: null })
+        .eq('return_id', returnData.id);
 
       await supabase
         .from('returns')

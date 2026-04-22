@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   PackageX, Search, Package, PackageCheck, PackageOpen,
   ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin, Trash2, X, Camera,
-  ChevronDown, ChevronRight
+  ChevronDown, ChevronRight, Download, Square, CheckSquare, Loader2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
@@ -16,6 +16,11 @@ import { QCReviewModal } from '../../components/fulfillment/QCReviewModal';
 import { BarcodeScannerModal } from '../../components/fulfillment/BarcodeScannerModal';
 import { ReceivePackagingModal } from '../../components/fulfillment/ReceivePackagingModal';
 import { STATUS_CONFIG } from './orders/types';
+import {
+  exportRestockSheet,
+  type RestockExportItem,
+  type RestockExportLocationStock,
+} from '../../utils/exportRestockSheet';
 
 interface ReturnItem {
   id: string;
@@ -24,12 +29,14 @@ interface ReturnItem {
   qc_status: string | null;
   receive_status: string;
   hold_location_id: string | null;
+  restock_location_id: string | null;
   expected_barcode: string | null;
   product_id: string;
   order_item_id: string | null;
   order_item: { product_name: string; unit_price: number } | null;
   product: { name: string; sku: string } | null;
   hold_location: { code: string; name: string; location_type: string } | null;
+  restock_location: { code: string; name: string } | null;
 }
 
 interface Return {
@@ -47,6 +54,20 @@ interface Return {
   exchange_order: { order_number: string; woo_order_id: number | null } | null;
   customer: { full_name: string; phone_primary: string | null } | null;
   items: ReturnItem[];
+}
+
+interface WarehouseLocation {
+  id: string;
+  code: string;
+  name: string;
+  location_type: string;
+}
+
+// Per-SKU recommended location resolved from inventory_lots (same algorithm as RestockModal)
+interface SkuRecommendation {
+  locationId: string;
+  locationCode: string;
+  currentStock: number;
 }
 
 interface DateGroup {
@@ -68,69 +89,23 @@ interface StatusCard {
 }
 
 const STATUS_CARDS: StatusCard[] = [
-  {
-    key: 'expected',
-    label: 'Expected',
-    icon: <Package className="w-5 h-5" />,
-    numberColor: 'text-amber-600',
-    activeRing: 'ring-2 ring-amber-400',
-    activeBg: 'bg-amber-50 border-amber-300',
-  },
-  {
-    key: 'received',
-    label: 'Received',
-    icon: <PackageOpen className="w-5 h-5" />,
-    numberColor: 'text-blue-600',
-    activeRing: 'ring-2 ring-blue-400',
-    activeBg: 'bg-blue-50 border-blue-300',
-  },
-  {
-    key: 'qc_passed',
-    label: 'QC Passed',
-    icon: <PackageCheck className="w-5 h-5" />,
-    numberColor: 'text-green-600',
-    activeRing: 'ring-2 ring-green-400',
-    activeBg: 'bg-green-50 border-green-300',
-  },
-  {
-    key: 'qc_failed',
-    label: 'QC Failed',
-    icon: <ClipboardList className="w-5 h-5" />,
-    numberColor: 'text-red-600',
-    activeRing: 'ring-2 ring-red-400',
-    activeBg: 'bg-red-50 border-red-300',
-  },
-  {
-    key: 'restocked',
-    label: 'Restocked',
-    icon: <RotateCcw className="w-5 h-5" />,
-    numberColor: 'text-emerald-600',
-    activeRing: 'ring-2 ring-emerald-400',
-    activeBg: 'bg-emerald-50 border-emerald-300',
-  },
-  {
-    key: 'damaged',
-    label: 'Damaged',
-    icon: <Wrench className="w-5 h-5" />,
-    numberColor: 'text-gray-600',
-    activeRing: 'ring-2 ring-gray-400',
-    activeBg: 'bg-gray-50 border-gray-300',
-  },
+  { key: 'expected',  label: 'Expected',  icon: <Package className="w-5 h-5" />,      numberColor: 'text-amber-600',   activeRing: 'ring-2 ring-amber-400',   activeBg: 'bg-amber-50 border-amber-300' },
+  { key: 'received',  label: 'Received',  icon: <PackageOpen className="w-5 h-5" />,   numberColor: 'text-blue-600',    activeRing: 'ring-2 ring-blue-400',    activeBg: 'bg-blue-50 border-blue-300' },
+  { key: 'qc_passed', label: 'QC Passed', icon: <PackageCheck className="w-5 h-5" />,  numberColor: 'text-green-600',   activeRing: 'ring-2 ring-green-400',   activeBg: 'bg-green-50 border-green-300' },
+  { key: 'qc_failed', label: 'QC Failed', icon: <ClipboardList className="w-5 h-5" />, numberColor: 'text-red-600',     activeRing: 'ring-2 ring-red-400',     activeBg: 'bg-red-50 border-red-300' },
+  { key: 'restocked', label: 'Restocked', icon: <RotateCcw className="w-5 h-5" />,     numberColor: 'text-emerald-600', activeRing: 'ring-2 ring-emerald-400', activeBg: 'bg-emerald-50 border-emerald-300' },
+  { key: 'damaged',   label: 'Damaged',   icon: <Wrench className="w-5 h-5" />,        numberColor: 'text-gray-600',    activeRing: 'ring-2 ring-gray-400',    activeBg: 'bg-gray-50 border-gray-300' },
 ];
 
 const RETURN_STATUS_LABELS: Record<string, string> = {
-  expected: 'Expected',
-  received: 'Received',
-  qc_passed: 'QC Passed',
-  qc_failed: 'QC Failed',
-  restocked: 'Restocked',
-  damaged: 'Damaged',
+  expected: 'Expected', received: 'Received', qc_passed: 'QC Passed',
+  qc_failed: 'QC Failed', restocked: 'Restocked', damaged: 'Damaged',
 };
 
 const ITEM_QC_BADGE: Record<string, { label: string; cls: string }> = {
-  passed:  { label: 'QC Pass',  cls: 'text-green-700 bg-green-50 border-green-200' },
-  failed:  { label: 'QC Fail',  cls: 'text-red-700 bg-red-50 border-red-200' },
-  pending: { label: 'Pending',  cls: 'text-amber-700 bg-amber-50 border-amber-200' },
+  passed:  { label: 'QC Pass', cls: 'text-green-700 bg-green-50 border-green-200' },
+  failed:  { label: 'QC Fail', cls: 'text-red-700 bg-red-50 border-red-200' },
+  pending: { label: 'Pending', cls: 'text-amber-700 bg-amber-50 border-amber-200' },
 };
 
 const ITEM_RECEIVE_BADGE: Record<string, { label: string; cls: string }> = {
@@ -139,7 +114,6 @@ const ITEM_RECEIVE_BADGE: Record<string, { label: string; cls: string }> = {
   pending:  { label: 'Expected', cls: 'text-gray-600 bg-gray-50 border-gray-200' },
 };
 
-// Statuses where we group by updated_at (the action date) rather than created_at
 const GROUP_BY_UPDATED: Set<FilterStatus> = new Set(['restocked', 'damaged']);
 
 function formatDateLabel(dateStr: string): string {
@@ -159,50 +133,117 @@ function formatTime(iso: string): string {
 function buildDateGroups(returns: Return[], status: FilterStatus): DateGroup[] {
   const useUpdated = GROUP_BY_UPDATED.has(status);
   const map = new Map<string, Return[]>();
-
   for (const r of returns) {
     const ts = useUpdated ? r.updated_at : r.created_at;
     const date = ts ? ts.slice(0, 10) : '1970-01-01';
     if (!map.has(date)) map.set(date, []);
     map.get(date)!.push(r);
   }
-
   const groups: DateGroup[] = [];
   for (const [date, rs] of map) {
     const totalUnits = rs.reduce((sum, r) => sum + (r.items?.reduce((s, i) => s + i.quantity, 0) ?? 0), 0);
     groups.push({ date, label: formatDateLabel(date), returns: rs, totalUnits });
   }
-
   return groups.sort((a, b) => b.date.localeCompare(a.date));
 }
+
+function getItemDisplay(r: Return): string {
+  if (!r.items?.length) return '—';
+  const names = r.items.map(i => i.order_item?.product_name || i.product?.name || i.sku);
+  if (names.length === 1) return names[0];
+  return `${names[0]} +${names.length - 1} more`;
+}
+
+// ── Inline Location Cell for QC Passed ──────────────────────────────────────
+
+interface LocationCellProps {
+  item: ReturnItem;
+  locations: WarehouseLocation[];
+  skuRecommendations: Map<string, SkuRecommendation>;
+  saving: boolean;
+  onSave: (itemId: string, locationId: string) => void;
+}
+
+function LocationCell({ item, locations, skuRecommendations, saving, onSave }: LocationCellProps) {
+  const rec = skuRecommendations.get(item.sku);
+  const currentId = item.restock_location_id ?? rec?.locationId ?? '';
+  const currentCode = item.restock_location?.code ?? rec?.locationCode ?? '';
+
+  const isUserSet = !!item.restock_location_id;
+
+  return (
+    <div className="flex items-center gap-1.5 min-w-[120px]">
+      <MapPin className={`w-3 h-3 shrink-0 ${isUserSet ? 'text-emerald-500' : 'text-gray-300'}`} />
+      <select
+        value={currentId}
+        disabled={saving}
+        onChange={e => onSave(item.id, e.target.value)}
+        onClick={e => e.stopPropagation()}
+        className="flex-1 min-w-0 px-1.5 py-1 text-xs border rounded-md bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:opacity-50 border-gray-200"
+        title={isUserSet ? `Set: ${currentCode}` : `Recommended: ${currentCode || 'unknown'}`}
+      >
+        <option value="">Select location...</option>
+        {locations.map(loc => {
+          const stock = skuRecommendations.get(item.sku)?.locationId === loc.id
+            ? skuRecommendations.get(item.sku)?.currentStock
+            : undefined;
+          return (
+            <option key={loc.id} value={loc.id}>
+              {loc.code}{stock !== undefined ? ` (${stock})` : ''}
+            </option>
+          );
+        })}
+      </select>
+      {saving && <Loader2 className="w-3 h-3 animate-spin text-gray-400 shrink-0" />}
+    </div>
+  );
+}
+
+// ── Date Group Accordion ─────────────────────────────────────────────────────
 
 interface DateGroupAccordionProps {
   group: DateGroup;
   status: FilterStatus;
   defaultOpen: boolean;
   expandedRows: Set<string>;
+  selectedIds: Set<string>;
   deleteConfirmId: string | null;
   deleting: boolean;
   isAdmin: boolean;
   rowRefs: React.MutableRefObject<Map<string, HTMLTableRowElement>>;
+  locations: WarehouseLocation[];
+  skuRecommendations: Map<string, SkuRecommendation>;
+  savingItemId: string | null;
   onToggleExpand: (id: string) => void;
+  onToggleSelect: (id: string) => void;
+  onToggleSelectAll: (ids: string[], checked: boolean) => void;
   onReceive: (r: Return) => void;
   onQc: (r: Return) => void;
   onRestock: (r: Return) => void;
   onWriteOff: (id: string) => void;
   onDeleteConfirm: (id: string | null) => void;
   onDeleteExecute: (id: string) => void;
+  onSaveLocation: (itemId: string, locationId: string) => void;
 }
 
 function DateGroupAccordion({
   group, status, defaultOpen,
-  expandedRows, deleteConfirmId, deleting, isAdmin, rowRefs,
-  onToggleExpand, onReceive, onQc, onRestock, onWriteOff, onDeleteConfirm, onDeleteExecute,
+  expandedRows, selectedIds, deleteConfirmId, deleting, isAdmin, rowRefs,
+  locations, skuRecommendations, savingItemId,
+  onToggleExpand, onToggleSelect, onToggleSelectAll,
+  onReceive, onQc, onRestock, onWriteOff, onDeleteConfirm, onDeleteExecute, onSaveLocation,
 }: DateGroupAccordionProps) {
   const [open, setOpen] = useState(defaultOpen);
   const useUpdated = GROUP_BY_UPDATED.has(status);
+  const isQcPassed = status === 'qc_passed';
+
+  const groupReturnIds = group.returns.map(r => r.id);
+  const selectedInGroup = groupReturnIds.filter(id => selectedIds.has(id));
+  const allSelected = selectedInGroup.length === groupReturnIds.length;
+  const someSelected = selectedInGroup.length > 0 && !allSelected;
 
   const dateColLabel = useUpdated ? 'Restocked At' : 'Received At';
+  const colSpanFull = isQcPassed ? 9 : 8;
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -215,13 +256,12 @@ function DateGroupAccordion({
         </span>
         <span className="font-semibold text-gray-900 text-sm w-28 shrink-0">{group.label}</span>
         <div className="flex items-center gap-4 text-xs text-gray-500 flex-1">
-          <span>
-            <span className="font-semibold text-gray-800">{group.returns.length}</span> return{group.returns.length !== 1 ? 's' : ''}
-          </span>
+          <span><span className="font-semibold text-gray-800">{group.returns.length}</span> return{group.returns.length !== 1 ? 's' : ''}</span>
           {group.totalUnits > 0 && (
-            <span>
-              <span className="font-semibold text-gray-800">{group.totalUnits}</span> unit{group.totalUnits !== 1 ? 's' : ''}
-            </span>
+            <span><span className="font-semibold text-gray-800">{group.totalUnits}</span> unit{group.totalUnits !== 1 ? 's' : ''}</span>
+          )}
+          {isQcPassed && selectedInGroup.length > 0 && (
+            <span className="text-emerald-600 font-semibold">{selectedInGroup.length} selected</span>
           )}
         </div>
         <span className="text-xs text-gray-400 shrink-0">{group.date}</span>
@@ -232,12 +272,30 @@ function DateGroupAccordion({
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
+                {isQcPassed && (
+                  <th className="px-3 py-2.5 w-8" onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={() => onToggleSelectAll(groupReturnIds, !allSelected)}
+                      className="flex items-center justify-center text-gray-400 hover:text-emerald-600 transition-colors"
+                      title={allSelected ? 'Deselect all' : 'Select all'}
+                    >
+                      {allSelected
+                        ? <CheckSquare className="w-4 h-4 text-emerald-600" />
+                        : someSelected
+                        ? <div className="w-4 h-4 border-2 border-emerald-500 rounded bg-emerald-100 flex items-center justify-center"><div className="w-2 h-0.5 bg-emerald-500 rounded" /></div>
+                        : <Square className="w-4 h-4" />}
+                    </button>
+                  </th>
+                )}
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Return ID</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order Date</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order Status</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Items</th>
+                {isQcPassed && (
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Location</th>
+                )}
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">{dateColLabel}</th>
                 <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
               </tr>
@@ -246,6 +304,7 @@ function DateGroupAccordion({
               {group.returns.map(r => {
                 const itemCount = r.items?.length ?? 0;
                 const isExpanded = expandedRows.has(r.id);
+                const isSelected = selectedIds.has(r.id);
                 const hasLostItems = r.items?.some(i => i.receive_status === 'lost');
                 const isConfirmingDelete = deleteConfirmId === r.id;
                 const actionTs = useUpdated ? r.updated_at : r.created_at;
@@ -258,15 +317,31 @@ function DateGroupAccordion({
                         if (el) rowRefs.current.set(r.id, el);
                         else rowRefs.current.delete(r.id);
                       }}
-                      className={`hover:bg-gray-50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-50' : ''}`}
+                      className={`transition-colors cursor-pointer ${
+                        isSelected
+                          ? 'bg-emerald-50 hover:bg-emerald-100'
+                          : isExpanded
+                          ? 'bg-gray-50 hover:bg-gray-100'
+                          : 'hover:bg-gray-50'
+                      }`}
                       onClick={() => itemCount > 0 && onToggleExpand(r.id)}
                     >
+                      {isQcPassed && (
+                        <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
+                          <button
+                            onClick={() => onToggleSelect(r.id)}
+                            className="flex items-center justify-center text-gray-400 hover:text-emerald-600 transition-colors"
+                          >
+                            {isSelected
+                              ? <CheckSquare className="w-4 h-4 text-emerald-600" />
+                              : <Square className="w-4 h-4" />}
+                          </button>
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
                           <span className="font-mono text-xs font-semibold text-gray-800">{r.return_number}</span>
-                          {hasLostItems && (
-                            <AlertTriangle className="w-3.5 h-3.5 text-red-400" title="Has lost items" />
-                          )}
+                          {hasLostItems && <AlertTriangle className="w-3.5 h-3.5 text-red-400" title="Has lost items" />}
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -294,9 +369,7 @@ function DateGroupAccordion({
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
                               {cfg.label}
                             </span>
-                          ) : (
-                            <span className="text-xs text-gray-500">{r.order.cs_status}</span>
-                          );
+                          ) : <span className="text-xs text-gray-500">{r.order.cs_status}</span>;
                         })() : <span className="text-gray-400 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3">
@@ -309,86 +382,59 @@ function DateGroupAccordion({
                         {itemCount > 0 ? (
                           <div>
                             <span className="text-gray-800 text-xs">{getItemDisplay(r)}</span>
-                            {itemCount > 1 && (
-                              <span className="ml-1 text-xs text-gray-400">({itemCount})</span>
-                            )}
+                            {itemCount > 1 && <span className="ml-1 text-xs text-gray-400">({itemCount})</span>}
                           </div>
-                        ) : (
-                          <span className="text-gray-400 text-xs">No items</span>
-                        )}
+                        ) : <span className="text-gray-400 text-xs">No items</span>}
                       </td>
+                      {isQcPassed && (
+                        <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
+                          {r.items?.filter(i => i.qc_status === 'passed').map(item => (
+                            <LocationCell
+                              key={item.id}
+                              item={item}
+                              locations={locations}
+                              skuRecommendations={skuRecommendations}
+                              saving={savingItemId === item.id}
+                              onSave={onSaveLocation}
+                            />
+                          ))}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
                         {actionTs ? formatTime(actionTs) : '—'}
                       </td>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
                           {r.status === 'expected' && (
-                            <Button
-                              size="sm"
-                              onClick={() => onReceive(r)}
-                              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5"
-                            >
-                              <ScanLine className="w-3.5 h-3.5" />
-                              Receive
+                            <Button size="sm" onClick={() => onReceive(r)} className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5">
+                              <ScanLine className="w-3.5 h-3.5" />Receive
                             </Button>
                           )}
                           {r.status === 'received' && (
-                            <Button
-                              size="sm"
-                              onClick={() => onQc(r)}
-                              className="gap-1 bg-amber-500 hover:bg-amber-600 text-white text-xs px-2.5 py-1.5"
-                            >
-                              <ClipboardList className="w-3.5 h-3.5" />
-                              QC Review
+                            <Button size="sm" onClick={() => onQc(r)} className="gap-1 bg-amber-500 hover:bg-amber-600 text-white text-xs px-2.5 py-1.5">
+                              <ClipboardList className="w-3.5 h-3.5" />QC Review
                             </Button>
                           )}
                           {r.status === 'qc_passed' && (
-                            <Button
-                              size="sm"
-                              onClick={() => onRestock(r)}
-                              className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5" />
-                              Restock
+                            <Button size="sm" onClick={() => onRestock(r)} className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5">
+                              <RotateCcw className="w-3.5 h-3.5" />Restock
                             </Button>
                           )}
                           {r.status === 'qc_failed' && (
-                            <Button
-                              size="sm"
-                              onClick={() => onWriteOff(r.id)}
-                              className="gap-1 bg-gray-700 hover:bg-gray-800 text-white text-xs px-3 py-1.5"
-                            >
-                              <Wrench className="w-3.5 h-3.5" />
-                              Write Off
+                            <Button size="sm" onClick={() => onWriteOff(r.id)} className="gap-1 bg-gray-700 hover:bg-gray-800 text-white text-xs px-3 py-1.5">
+                              <Wrench className="w-3.5 h-3.5" />Write Off
                             </Button>
                           )}
-
                           {isAdmin && !isConfirmingDelete && (
-                            <button
-                              onClick={() => onDeleteConfirm(r.id)}
-                              title="Delete return record"
-                              className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all"
-                            >
+                            <button onClick={() => onDeleteConfirm(r.id)} title="Delete return record" className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
-
                           {isAdmin && isConfirmingDelete && (
                             <div className="flex items-center gap-1">
                               <span className="text-xs text-red-600 font-medium">Delete?</span>
-                              <button
-                                onClick={() => onDeleteExecute(r.id)}
-                                disabled={deleting}
-                                className="px-2 py-1 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                              >
-                                Yes
-                              </button>
-                              <button
-                                onClick={() => onDeleteConfirm(null)}
-                                className="px-2 py-1 text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
-                              >
-                                No
-                              </button>
+                              <button onClick={() => onDeleteExecute(r.id)} disabled={deleting} className="px-2 py-1 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50">Yes</button>
+                              <button onClick={() => onDeleteConfirm(null)} className="px-2 py-1 text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors">No</button>
                             </div>
                           )}
                         </div>
@@ -397,20 +443,18 @@ function DateGroupAccordion({
 
                     {isExpanded && r.items && r.items.length > 0 && (
                       <tr key={`${r.id}-expanded`} className="bg-gray-50 border-b border-gray-100">
-                        <td colSpan={8} className="px-6 py-3">
+                        <td colSpan={colSpanFull} className="px-6 py-3">
                           <div className="space-y-1.5">
                             {r.items.map(item => {
                               const receiveBadge = ITEM_RECEIVE_BADGE[item.receive_status] ?? ITEM_RECEIVE_BADGE.pending;
                               const qcBadge = item.qc_status ? (ITEM_QC_BADGE[item.qc_status] ?? null) : null;
                               return (
                                 <div key={item.id} className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    <div className="min-w-0">
-                                      <div className="font-medium text-gray-900 text-xs truncate">
-                                        {item.order_item?.product_name || item.product?.name || item.sku}
-                                      </div>
-                                      <div className="text-xs text-gray-400">SKU: {item.sku} | Qty: {item.quantity}</div>
+                                  <div className="min-w-0">
+                                    <div className="font-medium text-gray-900 text-xs truncate">
+                                      {item.order_item?.product_name || item.product?.name || item.sku}
                                     </div>
+                                    <div className="text-xs text-gray-400">SKU: {item.sku} | Qty: {item.quantity}</div>
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">
                                     {item.hold_location && (
@@ -418,8 +462,7 @@ function DateGroupAccordion({
                                         <MapPin className="w-3 h-3" />
                                         <span className={`font-medium ${
                                           item.hold_location.location_type === 'return_hold' ? 'text-blue-600' :
-                                          item.hold_location.location_type === 'damaged' ? 'text-red-600' :
-                                          'text-emerald-600'
+                                          item.hold_location.location_type === 'damaged' ? 'text-red-600' : 'text-emerald-600'
                                         }`}>{item.hold_location.code}</span>
                                       </div>
                                     )}
@@ -450,12 +493,7 @@ function DateGroupAccordion({
   );
 }
 
-function getItemDisplay(r: Return): string {
-  if (!r.items?.length) return '—';
-  const names = r.items.map(i => i.order_item?.product_name || i.product?.name || i.sku);
-  if (names.length === 1) return names[0];
-  return `${names[0]} +${names.length - 1} more`;
-}
+// ── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Returns() {
   const { lastRefreshed } = useRefresh();
@@ -470,11 +508,18 @@ export default function Returns() {
   const [restockingReturn, setRestockingReturn] = useState<Return | null>(null);
   const [qcReturn, setQcReturn] = useState<Return | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [scanNotFound, setScanNotFound] = useState<string | null>(null);
   const [showReceivePackaging, setShowReceivePackaging] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // For QC passed inline location editor
+  const [storageLocations, setStorageLocations] = useState<WarehouseLocation[]>([]);
+  const [skuRecommendations, setSkuRecommendations] = useState<Map<string, SkuRecommendation>>(new Map());
+  const [savingItemId, setSavingItemId] = useState<string | null>(null);
 
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
@@ -504,12 +549,14 @@ export default function Returns() {
             qc_status,
             receive_status,
             hold_location_id,
+            restock_location_id,
             expected_barcode,
             product_id,
             order_item_id,
             order_item:order_items!order_item_id(product_name, unit_price),
             product:products!product_id(name, sku),
-            hold_location:warehouse_locations!hold_location_id(code, name, location_type)
+            hold_location:warehouse_locations!hold_location_id(code, name, location_type),
+            restock_location:warehouse_locations!restock_location_id(code, name)
           )
         `)
         .neq('return_reason', 'Refund')
@@ -524,6 +571,69 @@ export default function Returns() {
     }
   }, []);
 
+  // Load storage locations + build SKU recommendations when switching to qc_passed
+  useEffect(() => {
+    if (activeFilter !== 'qc_passed') return;
+
+    (async () => {
+      const { data: locs } = await supabase
+        .from('warehouse_locations')
+        .select('id, code, name, location_type')
+        .eq('is_active', true)
+        .eq('location_type', 'storage')
+        .order('code');
+      const locations: WarehouseLocation[] = locs ?? [];
+      setStorageLocations(locations);
+
+      // Get the qc_passed returns currently in view to know which SKUs we need
+      const qcReturns = returns.filter(r => r.status === 'qc_passed');
+      const skus = [...new Set(
+        qcReturns.flatMap(r => (r.items ?? []).filter(i => i.qc_status === 'passed').map(i => i.sku))
+      )];
+      if (skus.length === 0) return;
+
+      const { data: lots } = await supabase
+        .from('inventory_lots')
+        .select('barcode, location_id, received_quantity, remaining_quantity')
+        .in('barcode', skus)
+        .in('location_id', locations.map(l => l.id));
+
+      const locMap = new Map(locations.map(l => [l.id, l]));
+      const recMap = new Map<string, SkuRecommendation>();
+
+      // Group by sku → location, pick location with highest remaining
+      const perSku = new Map<string, Map<string, { remaining: number; received: number }>>();
+      for (const lot of lots ?? []) {
+        if (!lot.location_id) continue;
+        if (!perSku.has(lot.barcode)) perSku.set(lot.barcode, new Map());
+        const locData = perSku.get(lot.barcode)!;
+        if (!locData.has(lot.location_id)) locData.set(lot.location_id, { remaining: 0, received: 0 });
+        const d = locData.get(lot.location_id)!;
+        d.remaining += lot.remaining_quantity ?? 0;
+        d.received += lot.received_quantity ?? 0;
+      }
+
+      for (const [sku, locData] of perSku) {
+        let bestLocId = '';
+        let bestRemaining = -1;
+        let bestReceived = -1;
+        for (const [locId, d] of locData) {
+          if (d.remaining > bestRemaining || (d.remaining === bestRemaining && d.received > bestReceived)) {
+            bestRemaining = d.remaining;
+            bestReceived = d.received;
+            bestLocId = locId;
+          }
+        }
+        const loc = locMap.get(bestLocId);
+        if (loc) {
+          recMap.set(sku, { locationId: bestLocId, locationCode: loc.code, currentStock: bestRemaining });
+        }
+      }
+
+      setSkuRecommendations(recMap);
+    })();
+  }, [activeFilter, returns]);
+
   useEffect(() => { fetchReturns(); }, [lastRefreshed]);
 
   useEffect(() => {
@@ -533,6 +643,9 @@ export default function Returns() {
       .subscribe();
     return () => { sub.unsubscribe(); };
   }, [fetchReturns]);
+
+  // Clear selection when changing tabs
+  useEffect(() => { setSelectedIds(new Set()); }, [activeFilter]);
 
   const statusCounts = {
     expected:  returns.filter(r => r.status === 'expected').length,
@@ -564,6 +677,50 @@ export default function Returns() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = (ids: string[], checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) ids.forEach(id => next.add(id));
+      else ids.forEach(id => next.delete(id));
+      return next;
+    });
+  };
+
+  const handleSaveLocation = async (itemId: string, locationId: string) => {
+    setSavingItemId(itemId);
+    try {
+      await supabase
+        .from('return_items')
+        .update({ restock_location_id: locationId || null })
+        .eq('id', itemId);
+      // Optimistically update local state
+      setReturns(prev => prev.map(r => ({
+        ...r,
+        items: (r.items ?? []).map(i => {
+          if (i.id !== itemId) return i;
+          const loc = storageLocations.find(l => l.id === locationId);
+          return {
+            ...i,
+            restock_location_id: locationId || null,
+            restock_location: loc ? { code: loc.code, name: loc.name } : null,
+          };
+        }),
+      })));
+    } catch (err) {
+      console.error('Failed to save restock location:', err);
+    } finally {
+      setSavingItemId(null);
+    }
   };
 
   const handleWriteOff = async (returnId: string) => {
@@ -599,19 +756,15 @@ export default function Returns() {
   const handleCameraScan = (barcode: string) => {
     setShowScanner(false);
     setScanNotFound(null);
-
     const matched = matchReturn(barcode);
-
     if (!matched) {
       setScanNotFound(`No return found matching "${barcode}"`);
       setTimeout(() => setScanNotFound(null), 4000);
       return;
     }
-
     const targetTab = matched.status as FilterStatus;
     setActiveFilter(targetTab);
     setSearchQuery('');
-
     if (matched.status === 'expected') {
       setReceivingReturn(matched);
     } else {
@@ -621,19 +774,81 @@ export default function Returns() {
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
           el.classList.add('ring-2', 'ring-blue-400', 'ring-inset');
-          setTimeout(() => {
-            el.classList.remove('ring-2', 'ring-blue-400', 'ring-inset');
-          }, 2500);
+          setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400', 'ring-inset'), 2500);
         }
       }, 120);
     }
   };
 
-  // For the 'expected' tab, no date grouping — show flat list with its own table
+  const handleExport = async () => {
+    const selectedReturns = filteredReturns.filter(r => selectedIds.has(r.id));
+    if (selectedReturns.length === 0) return;
+
+    setExporting(true);
+    try {
+      const exportItems: RestockExportItem[] = [];
+      const locationStockSet = new Map<string, RestockExportLocationStock>();
+
+      for (const r of selectedReturns) {
+        const orderId = r.order?.woo_order_id
+          ? `#${r.order.woo_order_id}`
+          : (r.order?.order_number ?? r.return_number);
+
+        for (const item of (r.items ?? []).filter(i => i.qc_status === 'passed')) {
+          const rec = skuRecommendations.get(item.sku);
+          const restockLocCode = item.restock_location?.code ?? rec?.locationCode ?? null;
+          const restockLocName = item.restock_location?.name ?? null;
+          const currentStock = rec?.currentStock ?? 0;
+
+          exportItems.push({
+            returnId: r.id,
+            returnNumber: r.return_number,
+            orderId,
+            customerName: r.customer?.full_name ?? '—',
+            sku: item.sku,
+            productName: item.order_item?.product_name || item.product?.name || item.sku,
+            quantity: item.quantity,
+            restockLocationCode: restockLocCode,
+            restockLocationName: restockLocName,
+            qcPassedAt: r.updated_at,
+          });
+
+          if (restockLocCode) {
+            const key = `${item.sku}|${restockLocCode}`;
+            if (!locationStockSet.has(key)) {
+              locationStockSet.set(key, {
+                sku: item.sku,
+                locationCode: restockLocCode,
+                currentStock,
+              });
+            }
+          }
+        }
+      }
+
+      const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      await exportRestockSheet(exportItems, [...locationStockSet.values()], today);
+    } catch (err) {
+      console.error('Export failed:', err);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const useGrouping = activeFilter !== 'expected';
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const dateGroups = useGrouping ? buildDateGroups(filteredReturns, activeFilter) : [];
+
+  const selectedCount = selectedIds.size;
+  const selectedUnits = filteredReturns
+    .filter(r => selectedIds.has(r.id))
+    .reduce((sum, r) => sum + (r.items?.filter(i => i.qc_status === 'passed').reduce((s, i) => s + i.quantity, 0) ?? 0), 0);
+  const unsetLocationCount = filteredReturns
+    .filter(r => selectedIds.has(r.id))
+    .flatMap(r => (r.items ?? []).filter(i => i.qc_status === 'passed'))
+    .filter(i => !i.restock_location_id && !skuRecommendations.has(i.sku))
+    .length;
 
   return (
     <div className="p-6 max-w-full">
@@ -643,19 +858,11 @@ export default function Returns() {
           <p className="text-sm text-gray-500 mt-1">Manage product returns, quality control, and restocking</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="outline"
-            onClick={() => setShowReceivePackaging(true)}
-            className="gap-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
-          >
+          <Button variant="outline" onClick={() => setShowReceivePackaging(true)} className="gap-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300">
             <Package className="h-4 w-4" />
             <span className="hidden sm:inline">Receive Packaging</span>
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => setShowScanner(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
-          >
+          <Button variant="primary" onClick={() => setShowScanner(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
             <Camera className="h-4 w-4" />
             <span className="hidden sm:inline">Open Barcode Scanner</span>
             <span className="sm:hidden">Scan</span>
@@ -681,29 +888,21 @@ export default function Returns() {
               key={card.key}
               onClick={() => setActiveFilter(card.key)}
               className={`relative p-4 rounded-xl border text-left transition-all duration-150 focus:outline-none ${
-                isActive
-                  ? `${card.activeBg} ${card.activeRing} shadow-sm`
-                  : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                isActive ? `${card.activeBg} ${card.activeRing} shadow-sm` : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
               }`}
             >
-              <div className={`mb-2 ${isActive ? card.numberColor : 'text-gray-400'}`}>
-                {card.icon}
-              </div>
+              <div className={`mb-2 ${isActive ? card.numberColor : 'text-gray-400'}`}>{card.icon}</div>
               <div className="text-xs text-gray-500 mb-0.5 font-medium">{card.label}</div>
-              <div className={`text-2xl font-bold ${card.numberColor}`}>
-                {statusCounts[card.key]}
-              </div>
-              {isActive && (
-                <div className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl ${card.numberColor.replace('text-', 'bg-')}`} />
-              )}
+              <div className={`text-2xl font-bold ${card.numberColor}`}>{statusCounts[card.key]}</div>
+              {isActive && <div className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl ${card.numberColor.replace('text-', 'bg-')}`} />}
             </button>
           );
         })}
       </div>
 
       <Card className="overflow-hidden">
-        <div className="p-4 border-b border-gray-100">
-          <div className="relative">
+        <div className="p-4 border-b border-gray-100 flex items-center gap-3">
+          <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
               placeholder="Search by return ID, order ID, exchange order ID, customer, or reason..."
@@ -712,6 +911,33 @@ export default function Returns() {
               className="pl-10"
             />
           </div>
+          {activeFilter === 'qc_passed' && (
+            <button
+              onClick={handleExport}
+              disabled={selectedCount === 0 || exporting}
+              title={unsetLocationCount > 0 ? `${unsetLocationCount} item(s) have no location set` : undefined}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border transition-all shrink-0 ${
+                selectedCount > 0
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-sm'
+                  : 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
+              }`}
+            >
+              {exporting
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Download className="w-4 h-4" />}
+              Export
+              {selectedCount > 0 && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                  selectedCount > 0 ? 'bg-white/20 text-white' : ''
+                }`}>
+                  {selectedCount}
+                </span>
+              )}
+              {unsetLocationCount > 0 && (
+                <AlertTriangle className="w-3.5 h-3.5 text-yellow-300" />
+              )}
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -723,10 +949,12 @@ export default function Returns() {
             <p className="text-gray-400 text-sm mt-1">Returns matching this status will appear here</p>
           </div>
         ) : useGrouping ? (
-          /* Date-grouped accordion view for all statuses except Expected */
           <div className="p-4 space-y-2">
             <p className="text-xs text-gray-400 mb-3">
               {filteredReturns.length} return{filteredReturns.length !== 1 ? 's' : ''} across {dateGroups.length} day{dateGroups.length !== 1 ? 's' : ''}
+              {activeFilter === 'qc_passed' && selectedCount > 0 && (
+                <span className="ml-3 text-emerald-600 font-semibold">{selectedCount} selected · {selectedUnits} unit{selectedUnits !== 1 ? 's' : ''}</span>
+              )}
             </p>
             {dateGroups.map(group => (
               <DateGroupAccordion
@@ -735,22 +963,29 @@ export default function Returns() {
                 status={activeFilter}
                 defaultOpen={group.date === today || group.date === yesterday}
                 expandedRows={expandedRows}
+                selectedIds={selectedIds}
                 deleteConfirmId={deleteConfirmId}
                 deleting={deleting}
                 isAdmin={isAdmin}
                 rowRefs={rowRefs}
+                locations={storageLocations}
+                skuRecommendations={skuRecommendations}
+                savingItemId={savingItemId}
                 onToggleExpand={toggleExpand}
+                onToggleSelect={toggleSelect}
+                onToggleSelectAll={toggleSelectAll}
                 onReceive={setReceivingReturn}
                 onQc={setQcReturn}
                 onRestock={setRestockingReturn}
                 onWriteOff={handleWriteOff}
                 onDeleteConfirm={setDeleteConfirmId}
                 onDeleteExecute={handleDeleteReturn}
+                onSaveLocation={handleSaveLocation}
               />
             ))}
           </div>
         ) : (
-          /* Flat table for Expected — no meaningful date to group by */
+          /* Flat table for Expected */
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -787,9 +1022,7 @@ export default function Returns() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             <span className="font-mono text-xs font-semibold text-gray-800">{r.return_number}</span>
-                            {hasLostItems && (
-                              <AlertTriangle className="w-3.5 h-3.5 text-red-400" title="Has lost items" />
-                            )}
+                            {hasLostItems && <AlertTriangle className="w-3.5 h-3.5 text-red-400" title="Has lost items" />}
                           </div>
                         </td>
                         <td className="px-4 py-3">
@@ -817,28 +1050,20 @@ export default function Returns() {
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
                                 {cfg.label}
                               </span>
-                            ) : (
-                              <span className="text-xs text-gray-500">{r.order.cs_status}</span>
-                            );
+                            ) : <span className="text-xs text-gray-500">{r.order.cs_status}</span>;
                           })() : <span className="text-gray-400 text-xs">—</span>}
                         </td>
                         <td className="px-4 py-3">
                           <div className="text-gray-800 font-medium">{r.customer?.full_name ?? '—'}</div>
-                          {r.customer?.phone_primary && (
-                            <div className="text-xs text-gray-400 mt-0.5">{r.customer.phone_primary}</div>
-                          )}
+                          {r.customer?.phone_primary && <div className="text-xs text-gray-400 mt-0.5">{r.customer.phone_primary}</div>}
                         </td>
                         <td className="px-4 py-3">
                           {itemCount > 0 ? (
                             <div>
                               <span className="text-gray-800 text-xs">{getItemDisplay(r)}</span>
-                              {itemCount > 1 && (
-                                <span className="ml-1 text-xs text-gray-400">({itemCount})</span>
-                              )}
+                              {itemCount > 1 && <span className="ml-1 text-xs text-gray-400">({itemCount})</span>}
                             </div>
-                          ) : (
-                            <span className="text-gray-400 text-xs">No items</span>
-                          )}
+                          ) : <span className="text-gray-400 text-xs">No items</span>}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
@@ -858,40 +1083,20 @@ export default function Returns() {
                         <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-1.5">
                             {r.status === 'expected' && (
-                              <Button
-                                size="sm"
-                                onClick={() => setReceivingReturn(r)}
-                                className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5"
-                              >
-                                <ScanLine className="w-3.5 h-3.5" />
-                                Receive
+                              <Button size="sm" onClick={() => setReceivingReturn(r)} className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5">
+                                <ScanLine className="w-3.5 h-3.5" />Receive
                               </Button>
                             )}
                             {isAdmin && !isConfirmingDelete && (
-                              <button
-                                onClick={() => setDeleteConfirmId(r.id)}
-                                title="Delete return record"
-                                className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all"
-                              >
+                              <button onClick={() => setDeleteConfirmId(r.id)} className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
                             {isAdmin && isConfirmingDelete && (
                               <div className="flex items-center gap-1">
                                 <span className="text-xs text-red-600 font-medium">Delete?</span>
-                                <button
-                                  onClick={() => handleDeleteReturn(r.id)}
-                                  disabled={deleting}
-                                  className="px-2 py-1 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                                >
-                                  Yes
-                                </button>
-                                <button
-                                  onClick={() => setDeleteConfirmId(null)}
-                                  className="px-2 py-1 text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
-                                >
-                                  No
-                                </button>
+                                <button onClick={() => handleDeleteReturn(r.id)} disabled={deleting} className="px-2 py-1 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50">Yes</button>
+                                <button onClick={() => setDeleteConfirmId(null)} className="px-2 py-1 text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors">No</button>
                               </div>
                             )}
                           </div>
@@ -907,13 +1112,11 @@ export default function Returns() {
                                 const qcBadge = item.qc_status ? (ITEM_QC_BADGE[item.qc_status] ?? null) : null;
                                 return (
                                   <div key={item.id} className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
-                                    <div className="flex items-center gap-2.5 min-w-0">
-                                      <div className="min-w-0">
-                                        <div className="font-medium text-gray-900 text-xs truncate">
-                                          {item.order_item?.product_name || item.product?.name || item.sku}
-                                        </div>
-                                        <div className="text-xs text-gray-400">SKU: {item.sku} | Qty: {item.quantity}</div>
+                                    <div className="min-w-0">
+                                      <div className="font-medium text-gray-900 text-xs truncate">
+                                        {item.order_item?.product_name || item.product?.name || item.sku}
                                       </div>
+                                      <div className="text-xs text-gray-400">SKU: {item.sku} | Qty: {item.quantity}</div>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                       {item.hold_location && (
@@ -921,8 +1124,7 @@ export default function Returns() {
                                           <MapPin className="w-3 h-3" />
                                           <span className={`font-medium ${
                                             item.hold_location.location_type === 'return_hold' ? 'text-blue-600' :
-                                            item.hold_location.location_type === 'damaged' ? 'text-red-600' :
-                                            'text-emerald-600'
+                                            item.hold_location.location_type === 'damaged' ? 'text-red-600' : 'text-emerald-600'
                                           }`}>{item.hold_location.code}</span>
                                         </div>
                                       )}
@@ -955,47 +1157,28 @@ export default function Returns() {
         <ReceiveReturnModal
           returnData={receivingReturn}
           onClose={() => setReceivingReturn(null)}
-          onReceived={() => {
-            setReceivingReturn(null);
-            fetchReturns();
-          }}
+          onReceived={() => { setReceivingReturn(null); fetchReturns(); }}
         />
       )}
-
       {qcReturn && (
         <QCReviewModal
           returnData={qcReturn}
           onClose={() => setQcReturn(null)}
-          onQcComplete={() => {
-            setQcReturn(null);
-            fetchReturns();
-          }}
+          onQcComplete={() => { setQcReturn(null); fetchReturns(); }}
         />
       )}
-
       {restockingReturn && (
         <RestockModal
           returnData={restockingReturn}
           onClose={() => setRestockingReturn(null)}
-          onRestocked={() => {
-            setRestockingReturn(null);
-            fetchReturns();
-          }}
+          onRestocked={() => { setRestockingReturn(null); fetchReturns(); }}
         />
       )}
-
       {showScanner && (
-        <BarcodeScannerModal
-          onScan={handleCameraScan}
-          onClose={() => setShowScanner(false)}
-        />
+        <BarcodeScannerModal onScan={handleCameraScan} onClose={() => setShowScanner(false)} />
       )}
-
       {showReceivePackaging && (
-        <ReceivePackagingModal
-          onClose={() => setShowReceivePackaging(false)}
-          onSuccess={() => setShowReceivePackaging(false)}
-        />
+        <ReceivePackagingModal onClose={() => setShowReceivePackaging(false)} onSuccess={() => setShowReceivePackaging(false)} />
       )}
     </div>
   );

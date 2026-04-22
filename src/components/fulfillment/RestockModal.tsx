@@ -10,6 +10,7 @@ interface ReturnItemData {
   receive_status: string;
   hold_location_id: string | null;
   restock_location_id: string | null;
+  restocked_at: string | null;
   product_id: string;
   order_item_id: string | null;
   order_item: { product_name: string } | null;
@@ -48,11 +49,13 @@ interface WooSyncResult {
 
 interface Props {
   returnData: ReturnData;
+  /** When provided, only restock these specific item IDs (partial restock). */
+  itemIds?: string[];
   onClose: () => void;
   onRestocked: () => void;
 }
 
-export function RestockModal({ returnData, onClose, onRestocked }: Props) {
+export function RestockModal({ returnData, itemIds, onClose, onRestocked }: Props) {
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<WarehouseLocation[]>([]);
   const [itemStates, setItemStates] = useState<ItemRestockState[]>([]);
@@ -62,9 +65,14 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
   const [wooSyncResults, setWooSyncResults] = useState<WooSyncResult[]>([]);
   const [wooSyncDone, setWooSyncDone] = useState(false);
 
-  const items = (returnData.items ?? []).filter(
-    i => i.qc_status === 'passed' && i.receive_status === 'received'
-  );
+  // Items eligible for restock: QC passed + received + not already restocked
+  // If itemIds provided, further filter to just those IDs
+  const items = (returnData.items ?? []).filter(i => {
+    if (i.qc_status !== 'passed' || i.receive_status !== 'received') return false;
+    if (i.restocked_at) return false;
+    if (itemIds && itemIds.length > 0) return itemIds.includes(i.id);
+    return true;
+  });
 
   useEffect(() => {
     loadData();
@@ -145,12 +153,10 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
 
         const holdCode = item.hold_location_id ? (holdLocMap[item.hold_location_id] ?? 'Return Hold') : 'Return Hold';
 
-        // If user pre-assigned a restock location, honour it over the recommendation
         let initialLocationId = bestLocationId;
         let initialLotId = bestLotId;
         if (item.restock_location_id) {
           initialLocationId = item.restock_location_id;
-          // Find an existing lot at the pre-assigned location
           const preLot = storageLots.find(
             l => l.location_id === item.restock_location_id && (l.remaining_quantity ?? 0) > 0
           );
@@ -199,7 +205,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     ));
   };
 
-  const syncWooCommerceStock = async (): Promise<WooSyncResult[]> => {
+  const syncWooCommerceStock = async (statesToSync: ItemRestockState[]): Promise<WooSyncResult[]> => {
     const { data: wooConfig } = await supabase
       .from('woocommerce_config')
       .select('store_url, consumer_key, consumer_secret')
@@ -207,7 +213,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
       .maybeSingle();
 
     if (!wooConfig?.store_url || !wooConfig?.consumer_key || !wooConfig?.consumer_secret) {
-      return itemStates.map(s => ({
+      return statesToSync.map(s => ({
         sku: s.item.product?.sku || s.item.sku,
         success: false,
         error: 'WooCommerce not configured',
@@ -216,10 +222,9 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
 
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
     const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
     const results: WooSyncResult[] = [];
 
-    for (const state of itemStates) {
+    for (const state of statesToSync) {
       const productSku = state.item.product?.sku;
       if (!productSku) {
         results.push({ sku: state.item.sku, success: false, error: 'No product SKU found' });
@@ -261,6 +266,9 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     try {
       setProcessing(true);
       setError('');
+
+      const now = new Date().toISOString();
+      const processedStates: ItemRestockState[] = [];
 
       for (const state of itemStates) {
         if (!state.selectedLocationId) continue;
@@ -306,8 +314,6 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
             .eq('id', existingLot.id);
         } else {
           previousQty = 0;
-          // Append a short timestamp suffix to guarantee uniqueness even if the same
-          // return is processed more than once (e.g. after a partial failure).
           const lotNumber = `RET-STOCK-${returnData.return_number}-${barcode}-${Date.now()}`;
           const { data: newLot, error: lotErr } = await supabase
             .from('inventory_lots')
@@ -316,7 +322,7 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
               barcode,
               product_id: productId,
               location_id: state.selectedLocationId,
-              received_date: new Date().toISOString().split('T')[0],
+              received_date: now.split('T')[0],
               received_quantity: item.quantity,
               remaining_quantity: item.quantity,
               landed_cost_per_unit: 0,
@@ -342,28 +348,35 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
           });
         }
 
+        // Stamp per-item restocked_at and clear staging location
         await supabase
           .from('return_items')
-          .update({ hold_location_id: state.selectedLocationId })
+          .update({ hold_location_id: state.selectedLocationId, restock_location_id: null, restocked_at: now })
           .eq('id', item.id);
+
+        processedStates.push(state);
       }
 
-      // Clear staging location — no longer needed once restocked
-      await supabase
+      // Only mark the whole return as restocked when every QC-passed item is done
+      const { data: remaining } = await supabase
         .from('return_items')
-        .update({ restock_location_id: null })
-        .eq('return_id', returnData.id);
+        .select('id')
+        .eq('return_id', returnData.id)
+        .eq('qc_status', 'passed')
+        .eq('receive_status', 'received')
+        .is('restocked_at', null);
 
-      const now = new Date().toISOString();
-      await supabase
-        .from('returns')
-        .update({ status: 'restocked', updated_at: now, restocked_at: now })
-        .eq('id', returnData.id);
+      if (!remaining || remaining.length === 0) {
+        await supabase
+          .from('returns')
+          .update({ status: 'restocked', updated_at: now, restocked_at: now })
+          .eq('id', returnData.id);
+      }
 
       setProcessing(false);
       setWooSyncing(true);
 
-      const syncResults = await syncWooCommerceStock();
+      const syncResults = await syncWooCommerceStock(processedStates);
       setWooSyncResults(syncResults);
       setWooSyncDone(true);
       setWooSyncing(false);
@@ -387,9 +400,9 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
     ? `#${returnData.order.woo_order_id}`
     : returnData.order?.order_number ?? returnData.return_number;
 
+  const isPartial = itemIds && itemIds.length > 0;
   const allLocationsSelected = itemStates.every(s => s.selectedLocationId);
   const isBlocked = processing || wooSyncing;
-
   const failedSyncs = wooSyncResults.filter(r => !r.success);
 
   return (
@@ -402,10 +415,12 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
             </div>
             <div>
               <h2 className="font-semibold text-gray-900 text-base">
-                Restock Return — Order {orderLabel}
+                {isPartial ? 'Restock Item' : 'Restock Return'} — Order {orderLabel}
               </h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Select the destination for each item. Stock will transfer from Return Hold to the chosen location.
+                {isPartial
+                  ? 'Select the destination for this item.'
+                  : 'Select the destination for each item. Stock will transfer from Return Hold to the chosen location.'}
               </p>
             </div>
           </div>
@@ -432,16 +447,10 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
                     <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                      <div className="flex items-center gap-1.5">
-                        <Package className="w-3.5 h-3.5" />
-                        Item
-                      </div>
+                      <div className="flex items-center gap-1.5"><Package className="w-3.5 h-3.5" />Item</div>
                     </th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                      <div className="flex items-center gap-1.5">
-                        <MapPin className="w-3.5 h-3.5" />
-                        Transfer To
-                      </div>
+                      <div className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" />Transfer To</div>
                     </th>
                   </tr>
                 </thead>
@@ -564,20 +573,11 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
                 className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2"
               >
                 {processing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Restocking...
-                  </>
+                  <><Loader2 className="w-4 h-4 animate-spin" />Restocking...</>
                 ) : wooSyncing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Syncing to WooCommerce...
-                  </>
+                  <><Loader2 className="w-4 h-4 animate-spin" />Syncing to WooCommerce...</>
                 ) : (
-                  <>
-                    <RotateCcw className="w-4 h-4" />
-                    Confirm Restock ({items.length} item{items.length !== 1 ? 's' : ''})
-                  </>
+                  <><RotateCcw className="w-4 h-4" />Confirm Restock ({items.length} item{items.length !== 1 ? 's' : ''})</>
                 )}
               </button>
             </>

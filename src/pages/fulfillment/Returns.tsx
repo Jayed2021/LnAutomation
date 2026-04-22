@@ -48,6 +48,9 @@ interface Return {
   refund_status: string | null;
   created_at: string;
   updated_at: string;
+  received_at: string | null;
+  qc_completed_at: string | null;
+  restocked_at: string | null;
   order_id: string;
   exchange_order_id: string | null;
   order: { order_number: string; woo_order_id: number | null; cs_status: string; order_date: string | null } | null;
@@ -114,7 +117,15 @@ const ITEM_RECEIVE_BADGE: Record<string, { label: string; cls: string }> = {
   pending:  { label: 'Expected', cls: 'text-gray-600 bg-gray-50 border-gray-200' },
 };
 
-const GROUP_BY_UPDATED: Set<FilterStatus> = new Set(['restocked', 'damaged']);
+// Maps each status to: which timestamp to group/display by, and the column header label
+const STATUS_TS_CONFIG: Record<FilterStatus, { field: (r: Return) => string | null; label: string }> = {
+  expected:   { field: r => r.created_at,                                  label: 'Created At'     },
+  received:   { field: r => r.received_at ?? r.updated_at,                 label: 'Received At'    },
+  qc_passed:  { field: r => r.qc_completed_at ?? r.updated_at,             label: 'QC Passed At'   },
+  qc_failed:  { field: r => r.qc_completed_at ?? r.updated_at,             label: 'QC Failed At'   },
+  restocked:  { field: r => r.restocked_at ?? r.updated_at,                label: 'Restocked At'   },
+  damaged:    { field: r => r.updated_at,                                   label: 'Damaged At'     },
+};
 
 function formatDateLabel(dateStr: string): string {
   const today = new Date().toISOString().slice(0, 10);
@@ -131,10 +142,10 @@ function formatTime(iso: string): string {
 }
 
 function buildDateGroups(returns: Return[], status: FilterStatus): DateGroup[] {
-  const useUpdated = GROUP_BY_UPDATED.has(status);
+  const { field } = STATUS_TS_CONFIG[status];
   const map = new Map<string, Return[]>();
   for (const r of returns) {
-    const ts = useUpdated ? r.updated_at : r.created_at;
+    const ts = field(r);
     const date = ts ? ts.slice(0, 10) : '1970-01-01';
     if (!map.has(date)) map.set(date, []);
     map.get(date)!.push(r);
@@ -234,15 +245,13 @@ function DateGroupAccordion({
   onReceive, onQc, onRestock, onWriteOff, onDeleteConfirm, onDeleteExecute, onSaveLocation,
 }: DateGroupAccordionProps) {
   const [open, setOpen] = useState(defaultOpen);
-  const useUpdated = GROUP_BY_UPDATED.has(status);
   const isQcPassed = status === 'qc_passed';
+  const { field: getActionTs, label: dateColLabel } = STATUS_TS_CONFIG[status];
 
   const groupReturnIds = group.returns.map(r => r.id);
   const selectedInGroup = groupReturnIds.filter(id => selectedIds.has(id));
   const allSelected = selectedInGroup.length === groupReturnIds.length;
   const someSelected = selectedInGroup.length > 0 && !allSelected;
-
-  const dateColLabel = useUpdated ? 'Restocked At' : 'Received At';
   const colSpanFull = isQcPassed ? 9 : 8;
 
   return (
@@ -307,7 +316,7 @@ function DateGroupAccordion({
                 const isSelected = selectedIds.has(r.id);
                 const hasLostItems = r.items?.some(i => i.receive_status === 'lost');
                 const isConfirmingDelete = deleteConfirmId === r.id;
-                const actionTs = useUpdated ? r.updated_at : r.created_at;
+                const actionTs = getActionTs(r);
 
                 return (
                   <>
@@ -537,6 +546,9 @@ export default function Returns() {
           refund_status,
           created_at,
           updated_at,
+          received_at,
+          qc_completed_at,
+          restocked_at,
           order_id,
           exchange_order_id,
           order:orders!order_id(order_number, woo_order_id, cs_status, order_date),

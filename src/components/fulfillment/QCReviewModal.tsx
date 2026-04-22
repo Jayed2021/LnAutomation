@@ -185,9 +185,10 @@ export function QCReviewModal({ returnData, onClose, onQcComplete }: Props) {
         ? 'qc_failed'
         : 'qc_passed';
 
+      const now = new Date().toISOString();
       await supabase
         .from('returns')
-        .update({ status: newReturnStatus, updated_at: new Date().toISOString() })
+        .update({ status: newReturnStatus, updated_at: now, qc_completed_at: now })
         .eq('id', returnData.id);
 
       onQcComplete();

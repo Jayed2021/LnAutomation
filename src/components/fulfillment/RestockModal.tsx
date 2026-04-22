@@ -354,9 +354,10 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
         .update({ restock_location_id: null })
         .eq('return_id', returnData.id);
 
+      const now = new Date().toISOString();
       await supabase
         .from('returns')
-        .update({ status: 'restocked', updated_at: new Date().toISOString() })
+        .update({ status: 'restocked', updated_at: now, restocked_at: now })
         .eq('id', returnData.id);
 
       setProcessing(false);

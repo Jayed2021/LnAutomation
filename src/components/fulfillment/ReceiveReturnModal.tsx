@@ -346,16 +346,17 @@ export function ReceiveReturnModal({ returnData, onClose, onReceived }: Props) {
       const allLost = lostIds.size === totalItems;
       const newStatus = allLost ? 'expected' : 'received';
 
+      const now = new Date().toISOString();
       await supabase
         .from('returns')
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .update({ status: newStatus, updated_at: now, received_at: now })
         .eq('id', returnData.id);
 
       if (!hasReceived && allLost) {
       } else {
         await supabase
           .from('returns')
-          .update({ status: 'received', updated_at: new Date().toISOString() })
+          .update({ status: 'received', updated_at: now, received_at: now })
           .eq('id', returnData.id);
       }
 

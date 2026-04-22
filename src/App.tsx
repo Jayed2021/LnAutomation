@@ -2,7 +2,6 @@ import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { RefreshProvider } from './contexts/RefreshContext';
-import { NotificationProvider } from './contexts/NotificationContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
@@ -57,8 +56,6 @@ const CsAssignment = lazy(() => import('./pages/settings/CsAssignment'));
 const FraudAlertSettings = lazy(() => import('./pages/settings/FraudAlertSettings'));
 const ApiAccessSettings = lazy(() => import('./pages/settings/ApiAccessSettings'));
 const MiscSettings = lazy(() => import('./pages/settings/MiscSettings'));
-const NotificationSettings = lazy(() => import('./pages/settings/NotificationSettings'));
-const Notifications = lazy(() => import('./pages/Notifications'));
 
 const ComingSoon = lazy(() => import('./pages/ComingSoon'));
 const Customers = lazy(() => import('./pages/customers/Customers'));
@@ -77,7 +74,6 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <RefreshProvider>
-          <NotificationProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
@@ -145,11 +141,8 @@ function App() {
               <Route path="settings/fraud-alert" element={<Suspense fallback={<PageLoader />}><FraudAlertSettings /></Suspense>} />
               <Route path="settings/api-access" element={<Suspense fallback={<PageLoader />}><ApiAccessSettings /></Suspense>} />
               <Route path="settings/misc" element={<Suspense fallback={<PageLoader />}><MiscSettings /></Suspense>} />
-              <Route path="settings/notifications" element={<Suspense fallback={<PageLoader />}><NotificationSettings /></Suspense>} />
-              <Route path="notifications" element={<Suspense fallback={<PageLoader />}><Notifications /></Suspense>} />
             </Route>
           </Routes>
-          </NotificationProvider>
         </RefreshProvider>
       </AuthProvider>
     </BrowserRouter>

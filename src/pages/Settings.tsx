@@ -108,8 +108,7 @@ export default function Settings() {
       title: 'Notifications',
       description: 'Configure system notifications and alerts',
       icon: Bell,
-      color: 'teal',
-      route: '/settings/notifications'
+      color: 'teal'
     },
   ];
 

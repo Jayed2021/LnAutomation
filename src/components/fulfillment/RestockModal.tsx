@@ -293,8 +293,10 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
             .eq('id', existingLot.id);
         } else {
           previousQty = 0;
-          const lotNumber = `RET-STOCK-${returnData.return_number}-${barcode}`;
-          const { data: newLot } = await supabase
+          // Append a short timestamp suffix to guarantee uniqueness even if the same
+          // return is processed more than once (e.g. after a partial failure).
+          const lotNumber = `RET-STOCK-${returnData.return_number}-${barcode}-${Date.now()}`;
+          const { data: newLot, error: lotErr } = await supabase
             .from('inventory_lots')
             .insert({
               lot_number: lotNumber,
@@ -309,9 +311,8 @@ export function RestockModal({ returnData, onClose, onRestocked }: Props) {
             .select('id')
             .single();
 
-          if (newLot) {
-            resolvedLotId = newLot.id;
-          }
+          if (lotErr) throw new Error(`Failed to create inventory lot for ${barcode}: ${lotErr.message}`);
+          resolvedLotId = newLot.id;
         }
 
         if (resolvedLotId) {

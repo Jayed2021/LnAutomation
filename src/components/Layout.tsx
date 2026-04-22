@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useRefresh } from '../contexts/RefreshContext';
+import { useNotifications } from '../contexts/NotificationContext';
 import { supabase } from '../lib/supabase';
 import {
   LayoutDashboard,
@@ -18,8 +19,10 @@ import {
   ChevronDown,
   RefreshCw,
   KeyRound,
+  Bell,
 } from 'lucide-react';
 import bcrypt from 'bcryptjs';
+import { NotificationToast } from './NotificationToast';
 
 interface NavItem {
   name: string;
@@ -32,6 +35,7 @@ interface NavItem {
 export const Layout: React.FC = () => {
   const { user, setUser, hasModuleAccess } = useAuth();
   const { triggerRefresh, isRefreshing } = useRefresh();
+  const { unreadCount } = useNotifications();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [receiveGoodsCount, setReceiveGoodsCount] = useState(0);
@@ -332,6 +336,18 @@ export const Layout: React.FC = () => {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={() => navigate('/notifications')}
+              title="Notifications"
+              className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Bell className="w-5 h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+            <button
               onClick={triggerRefresh}
               disabled={isRefreshing}
               title="Refresh data"
@@ -352,6 +368,8 @@ export const Layout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      <NotificationToast />
 
       {showPasswordModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

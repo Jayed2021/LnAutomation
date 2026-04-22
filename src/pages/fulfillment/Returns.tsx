@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   PackageX, Search, Package, PackageCheck, PackageOpen,
-  ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin, Trash2, X, Camera
+  ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin, Trash2, X, Camera,
+  ChevronDown, ChevronRight
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
@@ -39,12 +40,20 @@ interface Return {
   refund_amount: number | null;
   refund_status: string | null;
   created_at: string;
+  updated_at: string;
   order_id: string;
   exchange_order_id: string | null;
   order: { order_number: string; woo_order_id: number | null; cs_status: string; order_date: string | null } | null;
   exchange_order: { order_number: string; woo_order_id: number | null } | null;
   customer: { full_name: string; phone_primary: string | null } | null;
   items: ReturnItem[];
+}
+
+interface DateGroup {
+  date: string;
+  label: string;
+  returns: Return[];
+  totalUnits: number;
 }
 
 type FilterStatus = 'expected' | 'received' | 'qc_passed' | 'qc_failed' | 'restocked' | 'damaged';
@@ -130,6 +139,324 @@ const ITEM_RECEIVE_BADGE: Record<string, { label: string; cls: string }> = {
   pending:  { label: 'Expected', cls: 'text-gray-600 bg-gray-50 border-gray-200' },
 };
 
+// Statuses where we group by updated_at (the action date) rather than created_at
+const GROUP_BY_UPDATED: Set<FilterStatus> = new Set(['restocked', 'damaged']);
+
+function formatDateLabel(dateStr: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  if (dateStr === today) return 'Today';
+  if (dateStr === yesterday) return 'Yesterday';
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-BD', {
+    weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+  });
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-BD', { hour: '2-digit', minute: '2-digit' });
+}
+
+function buildDateGroups(returns: Return[], status: FilterStatus): DateGroup[] {
+  const useUpdated = GROUP_BY_UPDATED.has(status);
+  const map = new Map<string, Return[]>();
+
+  for (const r of returns) {
+    const ts = useUpdated ? r.updated_at : r.created_at;
+    const date = ts ? ts.slice(0, 10) : '1970-01-01';
+    if (!map.has(date)) map.set(date, []);
+    map.get(date)!.push(r);
+  }
+
+  const groups: DateGroup[] = [];
+  for (const [date, rs] of map) {
+    const totalUnits = rs.reduce((sum, r) => sum + (r.items?.reduce((s, i) => s + i.quantity, 0) ?? 0), 0);
+    groups.push({ date, label: formatDateLabel(date), returns: rs, totalUnits });
+  }
+
+  return groups.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+interface DateGroupAccordionProps {
+  group: DateGroup;
+  status: FilterStatus;
+  defaultOpen: boolean;
+  expandedRows: Set<string>;
+  deleteConfirmId: string | null;
+  deleting: boolean;
+  isAdmin: boolean;
+  rowRefs: React.MutableRefObject<Map<string, HTMLTableRowElement>>;
+  onToggleExpand: (id: string) => void;
+  onReceive: (r: Return) => void;
+  onQc: (r: Return) => void;
+  onRestock: (r: Return) => void;
+  onWriteOff: (id: string) => void;
+  onDeleteConfirm: (id: string | null) => void;
+  onDeleteExecute: (id: string) => void;
+}
+
+function DateGroupAccordion({
+  group, status, defaultOpen,
+  expandedRows, deleteConfirmId, deleting, isAdmin, rowRefs,
+  onToggleExpand, onReceive, onQc, onRestock, onWriteOff, onDeleteConfirm, onDeleteExecute,
+}: DateGroupAccordionProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const useUpdated = GROUP_BY_UPDATED.has(status);
+
+  const dateColLabel = useUpdated ? 'Restocked At' : 'Received At';
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+      >
+        <span className="text-gray-400">
+          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        </span>
+        <span className="font-semibold text-gray-900 text-sm w-28 shrink-0">{group.label}</span>
+        <div className="flex items-center gap-4 text-xs text-gray-500 flex-1">
+          <span>
+            <span className="font-semibold text-gray-800">{group.returns.length}</span> return{group.returns.length !== 1 ? 's' : ''}
+          </span>
+          {group.totalUnits > 0 && (
+            <span>
+              <span className="font-semibold text-gray-800">{group.totalUnits}</span> unit{group.totalUnits !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-gray-400 shrink-0">{group.date}</span>
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Return ID</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order Date</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order Status</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Items</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">{dateColLabel}</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {group.returns.map(r => {
+                const itemCount = r.items?.length ?? 0;
+                const isExpanded = expandedRows.has(r.id);
+                const hasLostItems = r.items?.some(i => i.receive_status === 'lost');
+                const isConfirmingDelete = deleteConfirmId === r.id;
+                const actionTs = useUpdated ? r.updated_at : r.created_at;
+
+                return (
+                  <>
+                    <tr
+                      key={r.id}
+                      ref={el => {
+                        if (el) rowRefs.current.set(r.id, el);
+                        else rowRefs.current.delete(r.id);
+                      }}
+                      className={`hover:bg-gray-50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-50' : ''}`}
+                      onClick={() => itemCount > 0 && onToggleExpand(r.id)}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-xs font-semibold text-gray-800">{r.return_number}</span>
+                          {hasLostItems && (
+                            <AlertTriangle className="w-3.5 h-3.5 text-red-400" title="Has lost items" />
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-gray-800">
+                          {r.order?.woo_order_id ? `#${r.order.woo_order_id}` : (r.order?.order_number ?? '—')}
+                        </div>
+                        {r.exchange_order && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="text-xs text-gray-400">Exch:</span>
+                            <span className="text-xs font-medium text-blue-600">
+                              {r.exchange_order.woo_order_id ? `#${r.exchange_order.woo_order_id}` : r.exchange_order.order_number}
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
+                        {r.order?.order_date
+                          ? new Date(r.order.order_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                          : <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.order?.cs_status ? (() => {
+                          const cfg = STATUS_CONFIG[r.order.cs_status];
+                          return cfg ? (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+                              {cfg.label}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500">{r.order.cs_status}</span>
+                          );
+                        })() : <span className="text-gray-400 text-xs">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-gray-800 font-medium">{r.customer?.full_name ?? '—'}</div>
+                        {r.customer?.phone_primary && (
+                          <div className="text-xs text-gray-400 mt-0.5">{r.customer.phone_primary}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {itemCount > 0 ? (
+                          <div>
+                            <span className="text-gray-800 text-xs">{getItemDisplay(r)}</span>
+                            {itemCount > 1 && (
+                              <span className="ml-1 text-xs text-gray-400">({itemCount})</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-xs">No items</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                        {actionTs ? formatTime(actionTs) : '—'}
+                      </td>
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {r.status === 'expected' && (
+                            <Button
+                              size="sm"
+                              onClick={() => onReceive(r)}
+                              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5"
+                            >
+                              <ScanLine className="w-3.5 h-3.5" />
+                              Receive
+                            </Button>
+                          )}
+                          {r.status === 'received' && (
+                            <Button
+                              size="sm"
+                              onClick={() => onQc(r)}
+                              className="gap-1 bg-amber-500 hover:bg-amber-600 text-white text-xs px-2.5 py-1.5"
+                            >
+                              <ClipboardList className="w-3.5 h-3.5" />
+                              QC Review
+                            </Button>
+                          )}
+                          {r.status === 'qc_passed' && (
+                            <Button
+                              size="sm"
+                              onClick={() => onRestock(r)}
+                              className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              Restock
+                            </Button>
+                          )}
+                          {r.status === 'qc_failed' && (
+                            <Button
+                              size="sm"
+                              onClick={() => onWriteOff(r.id)}
+                              className="gap-1 bg-gray-700 hover:bg-gray-800 text-white text-xs px-3 py-1.5"
+                            >
+                              <Wrench className="w-3.5 h-3.5" />
+                              Write Off
+                            </Button>
+                          )}
+
+                          {isAdmin && !isConfirmingDelete && (
+                            <button
+                              onClick={() => onDeleteConfirm(r.id)}
+                              title="Delete return record"
+                              className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {isAdmin && isConfirmingDelete && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-red-600 font-medium">Delete?</span>
+                              <button
+                                onClick={() => onDeleteExecute(r.id)}
+                                disabled={deleting}
+                                className="px-2 py-1 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                onClick={() => onDeleteConfirm(null)}
+                                className="px-2 py-1 text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                              >
+                                No
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+
+                    {isExpanded && r.items && r.items.length > 0 && (
+                      <tr key={`${r.id}-expanded`} className="bg-gray-50 border-b border-gray-100">
+                        <td colSpan={8} className="px-6 py-3">
+                          <div className="space-y-1.5">
+                            {r.items.map(item => {
+                              const receiveBadge = ITEM_RECEIVE_BADGE[item.receive_status] ?? ITEM_RECEIVE_BADGE.pending;
+                              const qcBadge = item.qc_status ? (ITEM_QC_BADGE[item.qc_status] ?? null) : null;
+                              return (
+                                <div key={item.id} className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="min-w-0">
+                                      <div className="font-medium text-gray-900 text-xs truncate">
+                                        {item.order_item?.product_name || item.product?.name || item.sku}
+                                      </div>
+                                      <div className="text-xs text-gray-400">SKU: {item.sku} | Qty: {item.quantity}</div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {item.hold_location && (
+                                      <div className="flex items-center gap-1 text-xs text-gray-500">
+                                        <MapPin className="w-3 h-3" />
+                                        <span className={`font-medium ${
+                                          item.hold_location.location_type === 'return_hold' ? 'text-blue-600' :
+                                          item.hold_location.location_type === 'damaged' ? 'text-red-600' :
+                                          'text-emerald-600'
+                                        }`}>{item.hold_location.code}</span>
+                                      </div>
+                                    )}
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${receiveBadge.cls}`}>
+                                      {receiveBadge.label}
+                                    </span>
+                                    {qcBadge && (
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${qcBadge.cls}`}>
+                                        {qcBadge.label}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getItemDisplay(r: Return): string {
+  if (!r.items?.length) return '—';
+  const names = r.items.map(i => i.order_item?.product_name || i.product?.name || i.sku);
+  if (names.length === 1) return names[0];
+  return `${names[0]} +${names.length - 1} more`;
+}
+
 export default function Returns() {
   const { lastRefreshed } = useRefresh();
   const { user } = useAuth();
@@ -164,6 +491,7 @@ export default function Returns() {
           refund_amount,
           refund_status,
           created_at,
+          updated_at,
           order_id,
           exchange_order_id,
           order:orders!order_id(order_number, woo_order_id, cs_status, order_date),
@@ -229,13 +557,6 @@ export default function Returns() {
       r.return_reason?.toLowerCase().includes(q)
     );
   });
-
-  const getItemDisplay = (r: Return) => {
-    if (!r.items?.length) return '—';
-    const names = r.items.map(i => i.order_item?.product_name || i.product?.name || i.sku);
-    if (names.length === 1) return names[0];
-    return `${names[0]} +${names.length - 1} more`;
-  };
 
   const toggleExpand = (id: string) => {
     setExpandedRows(prev => {
@@ -307,6 +628,12 @@ export default function Returns() {
       }, 120);
     }
   };
+
+  // For the 'expected' tab, no date grouping — show flat list with its own table
+  const useGrouping = activeFilter !== 'expected';
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const dateGroups = useGrouping ? buildDateGroups(filteredReturns, activeFilter) : [];
 
   return (
     <div className="p-6 max-w-full">
@@ -395,7 +722,35 @@ export default function Returns() {
             <p className="text-gray-500 font-medium">No {RETURN_STATUS_LABELS[activeFilter]?.toLowerCase()} returns</p>
             <p className="text-gray-400 text-sm mt-1">Returns matching this status will appear here</p>
           </div>
+        ) : useGrouping ? (
+          /* Date-grouped accordion view for all statuses except Expected */
+          <div className="p-4 space-y-2">
+            <p className="text-xs text-gray-400 mb-3">
+              {filteredReturns.length} return{filteredReturns.length !== 1 ? 's' : ''} across {dateGroups.length} day{dateGroups.length !== 1 ? 's' : ''}
+            </p>
+            {dateGroups.map(group => (
+              <DateGroupAccordion
+                key={group.date}
+                group={group}
+                status={activeFilter}
+                defaultOpen={group.date === today || group.date === yesterday}
+                expandedRows={expandedRows}
+                deleteConfirmId={deleteConfirmId}
+                deleting={deleting}
+                isAdmin={isAdmin}
+                rowRefs={rowRefs}
+                onToggleExpand={toggleExpand}
+                onReceive={setReceivingReturn}
+                onQc={setQcReturn}
+                onRestock={setRestockingReturn}
+                onWriteOff={handleWriteOff}
+                onDeleteConfirm={setDeleteConfirmId}
+                onDeleteExecute={handleDeleteReturn}
+              />
+            ))}
+          </div>
         ) : (
+          /* Flat table for Expected — no meaningful date to group by */
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -512,37 +867,6 @@ export default function Returns() {
                                 Receive
                               </Button>
                             )}
-                            {r.status === 'received' && (
-                              <Button
-                                size="sm"
-                                onClick={() => setQcReturn(r)}
-                                className="gap-1 bg-amber-500 hover:bg-amber-600 text-white text-xs px-2.5 py-1.5"
-                              >
-                                <ClipboardList className="w-3.5 h-3.5" />
-                                QC Review
-                              </Button>
-                            )}
-                            {r.status === 'qc_passed' && (
-                              <Button
-                                size="sm"
-                                onClick={() => setRestockingReturn(r)}
-                                className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5"
-                              >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                                Restock
-                              </Button>
-                            )}
-                            {r.status === 'qc_failed' && (
-                              <Button
-                                size="sm"
-                                onClick={() => handleWriteOff(r.id)}
-                                className="gap-1 bg-gray-700 hover:bg-gray-800 text-white text-xs px-3 py-1.5"
-                              >
-                                <Wrench className="w-3.5 h-3.5" />
-                                Write Off
-                              </Button>
-                            )}
-
                             {isAdmin && !isConfirmingDelete && (
                               <button
                                 onClick={() => setDeleteConfirmId(r.id)}
@@ -552,7 +876,6 @@ export default function Returns() {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
-
                             {isAdmin && isConfirmingDelete && (
                               <div className="flex items-center gap-1">
                                 <span className="text-xs text-red-600 font-medium">Delete?</span>

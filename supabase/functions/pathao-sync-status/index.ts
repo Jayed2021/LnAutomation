@@ -200,6 +200,8 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const now = new Date().toISOString();
+
     // Count total eligible for progress reporting
     let totalEligible = 0;
     if (!specificIdList) {
@@ -250,8 +252,9 @@ Deno.serve(async (req: Request) => {
         } else {
           // cursor=null → start of a new rotation; capture now as the rotation boundary
           // so that orders updated during this run are not re-processed in the same rotation.
+          // Include NULL rows (never synced) as well as rows older than now.
           eligibleQuery = eligibleQuery
-            .lt("courier_status_updated_at", now)
+            .or(`courier_status_updated_at.is.null,courier_status_updated_at.lt.${now}`)
             .order("courier_status_updated_at", { ascending: true, nullsFirst: true })
             .limit(batchSize);
         }
@@ -297,7 +300,6 @@ Deno.serve(async (req: Request) => {
     let partialDeliveryCount = 0;
     const errors: { consignment_id: string; error: string }[] = [];
     const statuses: Record<string, string> = {};
-    const now = new Date().toISOString();
 
     for (let i = 0; i < eligible.length; i++) {
       const row = eligible[i];

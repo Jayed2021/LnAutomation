@@ -1,8 +1,46 @@
 import React, { useState } from 'react';
-import { Phone, FileText } from 'lucide-react';
+import { Phone, FileText, ChevronDown } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderNote, CallLog } from './types';
 import { logActivity } from './service';
+
+// ── Accordion shell ───────────────────────────────────────────────────────────
+
+interface AccordionSectionProps {
+  icon: React.ReactNode;
+  title: string;
+  badge?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+  isLast?: boolean;
+}
+
+export function AccordionSection({ icon, title, badge, defaultOpen = true, children, isLast = false }: AccordionSectionProps) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className={!isLast ? 'border-b border-gray-100' : ''}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors text-left"
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="text-gray-400">{icon}</span>
+          <span className="text-sm font-semibold text-gray-900">{title}</span>
+          {badge}
+        </div>
+        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="px-5 pb-5">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Order Notes ───────────────────────────────────────────────────────────────
 
 interface NotesProps {
   orderId: string;
@@ -33,18 +71,11 @@ export function OrderNotesCard({ orderId, notes, userId, onUpdated }: NotesProps
     }
   };
 
-  const formatDateTime = (d: string) => {
-    const date = new Date(d);
-    return date.toLocaleString('en-BD', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
+  const formatDateTime = (d: string) =>
+    new Date(d).toLocaleString('en-BD', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5">
-      <div className="flex items-center gap-2 mb-4">
-        <FileText className="w-4 h-4 text-gray-500" />
-        <h3 className="font-semibold text-gray-900">Order Notes</h3>
-      </div>
-
+    <>
       <div className="space-y-2 mb-4">
         {notes.map(note => (
           <div key={note.id} className="p-3 bg-amber-50 border border-amber-100 rounded-lg">
@@ -56,7 +87,6 @@ export function OrderNotesCard({ orderId, notes, userId, onUpdated }: NotesProps
         ))}
         {notes.length === 0 && <p className="text-sm text-gray-400">No notes yet.</p>}
       </div>
-
       <textarea
         value={text}
         onChange={e => setText(e.target.value)}
@@ -72,9 +102,11 @@ export function OrderNotesCard({ orderId, notes, userId, onUpdated }: NotesProps
         <FileText className="w-4 h-4" />
         {saving ? 'Saving...' : 'Log Note'}
       </button>
-    </div>
+    </>
   );
 }
+
+// ── Call Log ──────────────────────────────────────────────────────────────────
 
 interface CallLogProps {
   orderId: string;
@@ -109,23 +141,11 @@ export function CallLogCard({ orderId, callLog, userId, onUpdated }: CallLogProp
     }
   };
 
-  const formatDateTime = (d: string) => {
-    const date = new Date(d);
-    return date.toLocaleString('en-BD', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
+  const formatDateTime = (d: string) =>
+    new Date(d).toLocaleString('en-BD', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Phone className="w-4 h-4 text-gray-500" />
-          <h3 className="font-semibold text-gray-900">Call Log</h3>
-        </div>
-        <span className="text-xs bg-gray-900 text-white px-2.5 py-1 rounded-full font-medium">
-          {callLog.length} attempt{callLog.length !== 1 ? 's' : ''}
-        </span>
-      </div>
-
+    <>
       <div className="flex gap-2 mb-4">
         <input
           value={note}
@@ -143,7 +163,6 @@ export function CallLogCard({ orderId, callLog, userId, onUpdated }: CallLogProp
           Log
         </button>
       </div>
-
       <div className="space-y-2">
         {callLog.map(log => (
           <div key={log.id} className="p-3 bg-gray-50 border border-gray-100 rounded-lg">
@@ -155,6 +174,6 @@ export function CallLogCard({ orderId, callLog, userId, onUpdated }: CallLogProp
         ))}
         {callLog.length === 0 && <p className="text-sm text-gray-400">No calls logged.</p>}
       </div>
-    </div>
+    </>
   );
 }

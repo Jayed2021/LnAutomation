@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Trash2, AlertTriangle, X, Lock, PackageX, Banknote } from 'lucide-react';
+import { Trash2, AlertTriangle, X, Lock, PackageX, Banknote, FileText, Phone, Activity } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { REVENUE_CATEGORY_LABELS } from '../../../finance/collection/manualRevenueService';
@@ -19,7 +19,7 @@ import { OrderHeader } from './OrderHeader';
 import { CustomerInfoCard } from './CustomerInfoCard';
 import { CourierPaymentCard } from './CourierPaymentCard';
 import { OrderSourceCard } from './OrderSourceCard';
-import { OrderNotesCard, CallLogCard } from './NotesCallLog';
+import { OrderNotesCard, CallLogCard, AccordionSection } from './NotesCallLog';
 import { OrderItemsCard } from './OrderItemsCard';
 import { PackagingCard } from './PackagingCard';
 import { PrescriptionCard } from './PrescriptionCard';
@@ -320,10 +320,47 @@ export default function OrderDetail() {
         </div>
       </div>
 
-      {/* Notes and Call Log */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <OrderNotesCard orderId={order.id} notes={notes} userId={user?.id ?? null} onUpdated={load} />
-        <CallLogCard orderId={order.id} callLog={callLog} userId={user?.id ?? null} onUpdated={load} />
+      {/* Notes · Call Log · Activity Log accordion */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <AccordionSection
+          icon={<FileText className="w-4 h-4" />}
+          title="Order Notes"
+          badge={notes.length > 0 ? (
+            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+              {notes.length}
+            </span>
+          ) : undefined}
+          defaultOpen
+        >
+          <OrderNotesCard orderId={order.id} notes={notes} userId={user?.id ?? null} onUpdated={load} />
+        </AccordionSection>
+
+        <AccordionSection
+          icon={<Phone className="w-4 h-4" />}
+          title="Call Log"
+          badge={
+            <span className="text-xs bg-gray-900 text-white px-2 py-0.5 rounded-full font-medium">
+              {callLog.length} attempt{callLog.length !== 1 ? 's' : ''}
+            </span>
+          }
+          defaultOpen
+        >
+          <CallLogCard orderId={order.id} callLog={callLog} userId={user?.id ?? null} onUpdated={load} />
+        </AccordionSection>
+
+        <AccordionSection
+          icon={<Activity className="w-4 h-4" />}
+          title="Activity Log"
+          badge={activityLog.length > 0 ? (
+            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
+              {activityLog.length}
+            </span>
+          ) : undefined}
+          defaultOpen={false}
+          isLast
+        >
+          <ActivityLogCard logs={activityLog} />
+        </AccordionSection>
       </div>
 
       {/* Order Items */}
@@ -337,9 +374,6 @@ export default function OrderDetail() {
 
       {/* SMS */}
       <SmsCard phone={order.customer?.phone_primary ?? ''} />
-
-      {/* Activity Log */}
-      <ActivityLogCard logs={activityLog} />
 
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Search, Calendar, Users, TrendingUp, Package, Truck, Download, UploadCloud,
+  Search, Calendar, Users, Package, Truck, Download, UploadCloud,
   ChevronDown, Trash2, AlertTriangle, FlaskConical, CheckSquare, X,
   ChevronLeft, ChevronRight, ChevronUp, Clock, CheckCircle2, AlertCircle, Lock, Info,
-  RefreshCw
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -31,19 +30,8 @@ const PAGE_SIZE = 50;
 const ALL_TIME_TABS: Tab[] = ['needs_action', 'scheduled', 'in_progress', 'lab_orders'];
 const THIS_MONTH_TABS: Tab[] = ['partial'];
 
-const GLOBAL_STATS_CACHE_KEY = 'orders_global_stats_cache';
-const GLOBAL_STATS_TTL_MS = 2 * 60 * 60 * 1000;
-
 const SCROLL_STATE_KEY = 'orders_scroll_state';
 const LAST_VIEWED_ORDER_KEY = 'orders_last_viewed_order_id';
-
-interface GlobalStats {
-  totalOrders: number;
-  totalValue: number;
-  shippedCount: number;
-  shippedValue: number;
-  lastFetched: number;
-}
 
 function getDateRange(range: DateRange): { start: Date | null; end: Date | null } {
   if (range === 'all_time' || range === 'custom') return { start: null, end: null };
@@ -112,15 +100,6 @@ function formatDateLabel(start: Date | null, end: Date | null): string {
   const fmt = (d: Date) =>
     `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
   return `${fmt(start)} - ${fmt(end)}`;
-}
-
-function formatTimeAgo(ts: number): string {
-  const diffMs = Date.now() - ts;
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  return `${diffHr}h ago`;
 }
 
 type Tab = 'all' | 'needs_action' | 'scheduled' | 'in_progress' | 'lab_orders' | 'partial';
@@ -339,23 +318,6 @@ function buildPageNumbers(currentPage: number, totalPages: number): (number | '.
   return pages;
 }
 
-function getCachedGlobalStats(): GlobalStats | null {
-  try {
-    const raw = localStorage.getItem(GLOBAL_STATS_CACHE_KEY);
-    if (!raw) return null;
-    const parsed: GlobalStats = JSON.parse(raw);
-    if (Date.now() - parsed.lastFetched > GLOBAL_STATS_TTL_MS) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function setCachedGlobalStats(stats: GlobalStats) {
-  try {
-    localStorage.setItem(GLOBAL_STATS_CACHE_KEY, JSON.stringify(stats));
-  } catch {}
-}
 
 export default function Orders() {
   const navigate = useNavigate();
@@ -368,9 +330,6 @@ export default function Orders() {
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  const [globalStats, setGlobalStats] = useState<GlobalStats | null>(getCachedGlobalStats);
-  const [globalStatsLoading, setGlobalStatsLoading] = useState(false);
-
   const highlightedOrderIdRef = useRef<string | null>(null);
   const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
   const scrollRestoredRef = useRef(false);
@@ -572,38 +531,6 @@ export default function Orders() {
     }
   }, [startIso, endIso, assignedToMe, user?.id]);
 
-  const fetchGlobalStats = useCallback(async (force = false) => {
-    const cached = getCachedGlobalStats();
-    if (!force && cached) {
-      setGlobalStats(cached);
-      return;
-    }
-    setGlobalStatsLoading(true);
-    try {
-      const { data: ordersData, error: ordersError } = await supabase
-        .from('orders')
-        .select('total_amount, shipped_at')
-        .not('cs_status', 'in', '("cancelled_cbd","cancelled_cad")');
-
-      if (ordersError) throw ordersError;
-
-      const rows = ordersData ?? [];
-      const totalOrders = rows.length;
-      const totalValue = rows.reduce((s: number, r: any) => s + (r.total_amount ?? 0), 0);
-      const shippedRows = rows.filter((r: any) => !!r.shipped_at);
-      const shippedCount = shippedRows.length;
-      const shippedValue = shippedRows.reduce((s: number, r: any) => s + (r.total_amount ?? 0), 0);
-
-      const stats: GlobalStats = { totalOrders, totalValue, shippedCount, shippedValue, lastFetched: Date.now() };
-      setCachedGlobalStats(stats);
-      setGlobalStats(stats);
-    } catch (err) {
-      console.error('Error fetching global stats:', err);
-    } finally {
-      setGlobalStatsLoading(false);
-    }
-  }, []);
-
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchSearchOrders = useCallback(async (q: string) => {
@@ -673,10 +600,6 @@ export default function Orders() {
       fetchOrders();
     }
   }, [fetchOrders, lastRefreshed, isSearchMode]);
-
-  useEffect(() => {
-    fetchGlobalStats();
-  }, [fetchGlobalStats]);
 
   useEffect(() => {
     if (!isSearchMode) {
@@ -794,8 +717,6 @@ export default function Orders() {
   const groups = useMemo(() => groupOrdersByPhone(paginatedOrders), [paginatedOrders]);
 
   const formatAmount = (v: number) => `৳${v.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const formatAmountShort = (v: number) => `৳${v.toLocaleString('en-BD', { maximumFractionDigits: 0 })}`;
-
   const formatDate = (d: string) => {
     const date = new Date(d);
     return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
@@ -875,11 +796,6 @@ export default function Orders() {
   const isAdmin = user?.role === 'admin';
   const COLS = isAdmin ? 8 : 7;
   const isListLoading = isSearchMode ? searchLoading : loading;
-
-  const statsLastFetchedLabel = globalStats ? formatTimeAgo(globalStats.lastFetched) : null;
-  const avgOrderValue = globalStats && globalStats.totalOrders > 0
-    ? globalStats.totalValue / globalStats.totalOrders
-    : 0;
 
   return (
     <div className="space-y-5">
@@ -984,95 +900,6 @@ export default function Orders() {
         )}
       </div>
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Package className="w-5 h-5 text-blue-500" />
-            <span className="text-sm font-medium text-gray-600">Orders</span>
-          </div>
-          <div className="text-2xl font-bold text-gray-900">
-            {globalStatsLoading && !globalStats ? (
-              <div className="h-7 w-16 bg-gray-100 rounded animate-pulse" />
-            ) : (
-              (globalStats?.totalOrders ?? 0).toLocaleString()
-            )}
-          </div>
-          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
-            <span>All orders (excl. cancelled)</span>
-            {statsLastFetchedLabel && (
-              <span className="text-gray-400">{statsLastFetchedLabel}</span>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <TrendingUp className="w-5 h-5 text-green-500" />
-            <span className="text-sm font-medium text-gray-600">Total Value</span>
-          </div>
-          <div className="text-2xl font-bold text-gray-900">
-            {globalStatsLoading && !globalStats ? (
-              <div className="h-7 w-24 bg-gray-100 rounded animate-pulse" />
-            ) : (
-              formatAmount(globalStats?.totalValue ?? 0)
-            )}
-          </div>
-          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
-            <span>All orders (excl. cancelled)</span>
-            {statsLastFetchedLabel && (
-              <span className="text-gray-400">{statsLastFetchedLabel}</span>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <TrendingUp className="w-5 h-5 text-amber-500" />
-            <span className="text-sm font-medium text-gray-600">Avg Order Value</span>
-          </div>
-          <div className="text-2xl font-bold text-gray-900">
-            {globalStatsLoading && !globalStats ? (
-              <div className="h-7 w-20 bg-gray-100 rounded animate-pulse" />
-            ) : (
-              formatAmount(avgOrderValue)
-            )}
-          </div>
-          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
-            <span>Per order (excl. cancelled)</span>
-            {statsLastFetchedLabel && (
-              <span className="text-gray-400">{statsLastFetchedLabel}</span>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Truck className="w-5 h-5 text-teal-500" />
-            <span className="text-sm font-medium text-gray-600">Shipped Orders</span>
-          </div>
-          <div className="text-2xl font-bold text-gray-900">
-            {globalStatsLoading && !globalStats ? (
-              <div className="h-7 w-12 bg-gray-100 rounded animate-pulse" />
-            ) : (
-              (globalStats?.shippedCount ?? 0).toLocaleString()
-            )}
-          </div>
-          <div className="text-xs text-gray-500 mt-1 flex items-center justify-between">
-            <span>{globalStats ? formatAmountShort(globalStats.shippedValue) : '—'} total value</span>
-            {statsLastFetchedLabel && (
-              <button
-                onClick={() => fetchGlobalStats(true)}
-                title="Refresh stats"
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <RefreshCw className={`w-3 h-3 ${globalStatsLoading ? 'animate-spin' : ''}`} />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Main Table Card */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {/* Tabs */}
@@ -1089,7 +916,7 @@ export default function Orders() {
                 }`}
               >
                 {tab.label}
-                {tabCounts[tab.key] > 0 && (
+                {tab.key !== 'all' && tabCounts[tab.key] > 0 && (
                   <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-xs font-bold flex items-center justify-center ${
                     activeTab === tab.key ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
                   }`}>

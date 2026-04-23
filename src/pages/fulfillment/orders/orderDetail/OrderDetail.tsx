@@ -320,34 +320,55 @@ export default function OrderDetail() {
         </div>
       </div>
 
-      {/* Notes · Call Log · Activity Log accordion */}
+      {/* Notes + Call Log — side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <AccordionSection
+            icon={<FileText className="w-4 h-4" />}
+            title="Order Notes"
+            badge={notes.length > 0 ? (
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+                {notes.length}
+              </span>
+            ) : undefined}
+            defaultOpen
+            isLast
+          >
+            <OrderNotesCard orderId={order.id} notes={notes} userId={user?.id ?? null} onUpdated={load} />
+          </AccordionSection>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <AccordionSection
+            icon={<Phone className="w-4 h-4" />}
+            title="Call Log"
+            badge={
+              <span className="text-xs bg-gray-900 text-white px-2 py-0.5 rounded-full font-medium">
+                {callLog.length} attempt{callLog.length !== 1 ? 's' : ''}
+              </span>
+            }
+            defaultOpen
+            isLast
+          >
+            <CallLogCard orderId={order.id} callLog={callLog} userId={user?.id ?? null} onUpdated={load} />
+          </AccordionSection>
+        </div>
+      </div>
+
+      {/* Order Items */}
+      <OrderItemsCard order={order} items={items} prescriptions={prescriptions} userId={user?.id ?? null} onUpdated={load} />
+
+      {/* Packaging */}
+      <PackagingCard orderId={order.id} items={packagingItems} userId={user?.id ?? null} onUpdated={load} />
+
+      {/* Prescription */}
+      <PrescriptionCard orderId={order.id} prescriptions={prescriptions} items={items} userId={user?.id ?? null} onUpdated={load} />
+
+      {/* SMS */}
+      <SmsCard phone={order.customer?.phone_primary ?? ''} />
+
+      {/* Activity Log */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <AccordionSection
-          icon={<FileText className="w-4 h-4" />}
-          title="Order Notes"
-          badge={notes.length > 0 ? (
-            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
-              {notes.length}
-            </span>
-          ) : undefined}
-          defaultOpen
-        >
-          <OrderNotesCard orderId={order.id} notes={notes} userId={user?.id ?? null} onUpdated={load} />
-        </AccordionSection>
-
-        <AccordionSection
-          icon={<Phone className="w-4 h-4" />}
-          title="Call Log"
-          badge={
-            <span className="text-xs bg-gray-900 text-white px-2 py-0.5 rounded-full font-medium">
-              {callLog.length} attempt{callLog.length !== 1 ? 's' : ''}
-            </span>
-          }
-          defaultOpen
-        >
-          <CallLogCard orderId={order.id} callLog={callLog} userId={user?.id ?? null} onUpdated={load} />
-        </AccordionSection>
-
         <AccordionSection
           icon={<Activity className="w-4 h-4" />}
           title="Activity Log"
@@ -362,18 +383,6 @@ export default function OrderDetail() {
           <ActivityLogCard logs={activityLog} />
         </AccordionSection>
       </div>
-
-      {/* Order Items */}
-      <OrderItemsCard order={order} items={items} prescriptions={prescriptions} userId={user?.id ?? null} onUpdated={load} />
-
-      {/* Packaging */}
-      <PackagingCard orderId={order.id} items={packagingItems} userId={user?.id ?? null} onUpdated={load} />
-
-      {/* Prescription */}
-      <PrescriptionCard orderId={order.id} prescriptions={prescriptions} items={items} userId={user?.id ?? null} onUpdated={load} />
-
-      {/* SMS */}
-      <SmsCard phone={order.customer?.phone_primary ?? ''} />
 
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

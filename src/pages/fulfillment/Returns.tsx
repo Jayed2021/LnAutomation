@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   PackageX, Search, Package, PackageCheck, PackageOpen,
   ClipboardList, RotateCcw, Wrench, ScanLine, AlertTriangle, MapPin, Trash2, X, Camera,
-  ChevronDown, ChevronRight, Download, Square, CheckSquare, Loader2,
+  ChevronDown, ChevronRight, Download, Square, CheckSquare, Loader2, Bell,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useRefresh } from '../../contexts/RefreshContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { getAppSetting } from '../../lib/appSettings';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -834,6 +835,12 @@ export default function Returns() {
   const [skuRecommendations, setSkuRecommendations] = useState<Map<string, SkuRecommendation>>(new Map());
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
 
+  const [notifEnabled, setNotifEnabled] = useState(false);
+  const [notifPending, setNotifPending] = useState<Return[]>([]);
+  const [showNotifConfirm, setShowNotifConfirm] = useState(false);
+  const [sendingNotif, setSendingNotif] = useState(false);
+  const [notifSuccess, setNotifSuccess] = useState(false);
+
   const rowRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   const fetchReturns = useCallback(async () => {
@@ -853,6 +860,7 @@ export default function Returns() {
           received_at,
           qc_completed_at,
           restocked_at,
+          notification_sent,
           order_id,
           exchange_order_id,
           order:orders!order_id(order_number, woo_order_id, cs_status, order_date),
@@ -956,6 +964,24 @@ export default function Returns() {
   }, [fetchReturns]);
 
   useEffect(() => { setSelectedIds(new Set()); }, [activeFilter]);
+
+  useEffect(() => {
+    getAppSetting<boolean>('notifications_return_restock_enabled').then(val => {
+      setNotifEnabled(val !== false);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!notifEnabled) { setNotifPending([]); return; }
+    const threshold = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const pending = returns.filter(r =>
+      r.status === 'restocked' &&
+      !(r as any).notification_sent &&
+      r.restocked_at != null &&
+      r.restocked_at >= threshold
+    );
+    setNotifPending(pending);
+  }, [returns, notifEnabled]);
 
   const statusCounts = {
     expected:  returns.filter(r => r.status === 'expected').length,
@@ -1158,6 +1184,63 @@ export default function Returns() {
     }
   };
 
+  const handleSendNotification = async () => {
+    if (!user || notifPending.length === 0) return;
+    setSendingNotif(true);
+    try {
+      const returnsPayload = notifPending.map(r => ({
+        return_number: r.return_number,
+        items: (r.items ?? [])
+          .filter(i => i.receive_status === 'received')
+          .map(i => ({ sku: i.sku, quantity: i.quantity })),
+      }));
+      const totalUnits = returnsPayload.reduce((s, r) => s + r.items.reduce((ss, i) => ss + i.quantity, 0), 0);
+      const title = `${notifPending.length} return${notifPending.length !== 1 ? 's' : ''} restocked — ${totalUnits} unit${totalUnits !== 1 ? 's' : ''} available`;
+
+      const { data: notifRow, error: notifErr } = await supabase
+        .from('notifications')
+        .insert({
+          type: 'return_restock',
+          title,
+          body: { returns: returnsPayload },
+          created_by: user.id,
+          sender_name: user.full_name,
+        })
+        .select('id')
+        .single();
+      if (notifErr) throw notifErr;
+
+      const { data: otherUsers } = await supabase
+        .from('users')
+        .select('id')
+        .eq('is_active', true)
+        .neq('id', user.id);
+      if (otherUsers && otherUsers.length > 0) {
+        await supabase.from('notification_reads').insert(
+          otherUsers.map((u: { id: string }) => ({
+            notification_id: notifRow.id,
+            user_id: u.id,
+            read_at: null,
+          }))
+        );
+      }
+
+      await supabase
+        .from('returns')
+        .update({ notification_sent: true })
+        .in('id', notifPending.map(r => r.id));
+
+      setShowNotifConfirm(false);
+      setNotifSuccess(true);
+      setTimeout(() => setNotifSuccess(false), 3000);
+      fetchReturns();
+    } catch (err) {
+      console.error('Failed to send notification:', err);
+    } finally {
+      setSendingNotif(false);
+    }
+  };
+
   const useGrouping = activeFilter !== 'expected';
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
@@ -1182,6 +1265,22 @@ export default function Returns() {
           <p className="text-sm text-gray-500 mt-1 hidden sm:block">Manage product returns, quality control, and restocking</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {notifEnabled && notifPending.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => setShowNotifConfirm(true)}
+              className="gap-2 border-teal-200 text-teal-700 hover:bg-teal-50 hover:border-teal-300 relative"
+            >
+              <Bell className="h-4 w-4" />
+              <span className="hidden sm:inline">Send Notification</span>
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-teal-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
+                {notifPending.length}
+              </span>
+            </Button>
+          )}
+          {notifSuccess && (
+            <span className="text-xs text-teal-600 font-medium hidden sm:inline">Notification sent!</span>
+          )}
           <Button variant="outline" onClick={() => setShowReceivePackaging(true)} className="gap-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300">
             <Package className="h-4 w-4" />
             <span className="hidden sm:inline">Receive Packaging</span>
@@ -1506,6 +1605,58 @@ export default function Returns() {
       )}
       {showReceivePackaging && (
         <ReceivePackagingModal onClose={() => setShowReceivePackaging(false)} onSuccess={() => setShowReceivePackaging(false)} />
+      )}
+
+      {showNotifConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Send Restock Notification</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Notify all users about these restocked returns</p>
+              </div>
+              <button onClick={() => setShowNotifConfirm(false)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3 max-h-72 overflow-y-auto">
+              {notifPending.map(r => {
+                const items = (r.items ?? []).filter(i => i.receive_status === 'received');
+                return (
+                  <div key={r.id} className="rounded-lg border border-teal-100 bg-teal-50 px-3 py-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-semibold text-gray-800">{r.return_number}</span>
+                      <span className="text-xs text-gray-500">{items.length} SKU{items.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {items.map((item, i) => (
+                        <span key={i} className="text-xs bg-white border border-gray-200 text-gray-600 px-1.5 py-0.5 rounded font-mono">
+                          {item.sku} &times;{item.quantity}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex gap-3 p-5 pt-0">
+              <button
+                onClick={() => setShowNotifConfirm(false)}
+                className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendNotification}
+                disabled={sendingNotif}
+                className="flex-1 px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+              >
+                {sendingNotif ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />}
+                {sendingNotif ? 'Sending...' : 'Send Notification'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

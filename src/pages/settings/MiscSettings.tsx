@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, CheckCircle2, Package, Lock, Archive, Upload } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, Package, Lock, Archive, Upload, RefreshCw } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { getAppSetting, setAppSetting } from '../../lib/appSettings';
@@ -9,6 +9,7 @@ import { LensBrandManager } from './LensBrandManager';
 interface MiscSettingsState {
   require_packaging_dispatch_gate: boolean;
   show_location_import_tools: boolean;
+  woo_stock_sync_on_restock: boolean;
   initial_inventory_date: string;
   initial_inventory_shipment_name: string;
   initial_inventory_supplier_name: string;
@@ -17,6 +18,7 @@ interface MiscSettingsState {
 const DEFAULT_STATE: MiscSettingsState = {
   require_packaging_dispatch_gate: true,
   show_location_import_tools: false,
+  woo_stock_sync_on_restock: true,
   initial_inventory_date: '',
   initial_inventory_shipment_name: 'Initial Inventory',
   initial_inventory_supplier_name: 'Pre-existing Stock',
@@ -39,9 +41,10 @@ export default function MiscSettings() {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const [gateVal, showImportTools, invDate, invName, invSupplier] = await Promise.all([
+      const [gateVal, showImportTools, wooSyncOnRestock, invDate, invName, invSupplier] = await Promise.all([
         getAppSetting<boolean>('require_packaging_dispatch_gate'),
         getAppSetting<boolean>('show_location_import_tools'),
+        getAppSetting<boolean>('woo_stock_sync_on_restock'),
         getAppSetting<string>('initial_inventory_date'),
         getAppSetting<string>('initial_inventory_shipment_name'),
         getAppSetting<string>('initial_inventory_supplier_name'),
@@ -49,6 +52,7 @@ export default function MiscSettings() {
       const loaded: MiscSettingsState = {
         require_packaging_dispatch_gate: gateVal !== false,
         show_location_import_tools: showImportTools === true,
+        woo_stock_sync_on_restock: wooSyncOnRestock !== false,
         initial_inventory_date: invDate ?? '',
         initial_inventory_shipment_name: invName ?? 'Initial Inventory',
         initial_inventory_supplier_name: invSupplier ?? 'Pre-existing Stock',
@@ -68,6 +72,7 @@ export default function MiscSettings() {
       await Promise.all([
         setAppSetting('require_packaging_dispatch_gate', settings.require_packaging_dispatch_gate),
         setAppSetting('show_location_import_tools', settings.show_location_import_tools),
+        setAppSetting('woo_stock_sync_on_restock', settings.woo_stock_sync_on_restock),
         setAppSetting('initial_inventory_date', settings.initial_inventory_date),
         setAppSetting('initial_inventory_shipment_name', settings.initial_inventory_shipment_name),
         setAppSetting('initial_inventory_supplier_name', settings.initial_inventory_supplier_name),
@@ -171,6 +176,35 @@ export default function MiscSettings() {
               aria-checked={settings.require_packaging_dispatch_gate}
             >
               <span className={thumbClass(settings.require_packaging_dispatch_gate)} />
+            </button>
+          </div>
+        </div>
+
+        <div className="px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-7 h-7 rounded-md bg-teal-100 flex items-center justify-center shrink-0 mt-0.5">
+                <RefreshCw className="w-3.5 h-3.5 text-teal-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-900">Auto-sync WooCommerce stock on return restock</p>
+                <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
+                  When enabled, confirming a return restock will automatically increment the matching product's
+                  stock quantity in WooCommerce via the API. Disable this if WooCommerce sync is causing errors
+                  or incorrect stock updates.
+                </p>
+                <div className={`mt-2 inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${settings.woo_stock_sync_on_restock ? 'bg-teal-50 text-teal-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {settings.woo_stock_sync_on_restock ? 'Sync ON — WooCommerce stock updated on restock' : 'Sync OFF — WooCommerce stock not updated on restock'}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setSettings(prev => ({ ...prev, woo_stock_sync_on_restock: !prev.woo_stock_sync_on_restock }))}
+              className={toggleClass(settings.woo_stock_sync_on_restock)}
+              role="switch"
+              aria-checked={settings.woo_stock_sync_on_restock}
+            >
+              <span className={thumbClass(settings.woo_stock_sync_on_restock)} />
             </button>
           </div>
         </div>

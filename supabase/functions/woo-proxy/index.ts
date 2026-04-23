@@ -1004,8 +1004,7 @@ Deno.serve(async (req: Request) => {
       if (products && products.length > 0) {
         const product = products[0];
         if (product.type === "variable") {
-          // WooCommerce variations endpoint does not support SKU filtering — fetch all pages
-          // and match client-side to reliably find the correct variation.
+          // Try to find an exact-SKU variation first.
           let page = 1;
           let found = false;
           while (!found) {
@@ -1023,6 +1022,14 @@ Deno.serve(async (req: Request) => {
             const totalPages = parseInt(varRes.headers.get("X-WP-TotalPages") || "1", 10);
             if (page >= totalPages) break;
             page++;
+          }
+          // No variation matched — fall back to updating the parent product directly.
+          // This handles simple products that WooCommerce internally classifies as variable
+          // but whose stock is managed at the parent level via the main SKU.
+          if (!found && product.sku === product_sku) {
+            matchedId = product.id;
+            currentStock = product.stock_quantity ?? 0;
+            endpoint = `products/${product.id}`;
           }
         } else if (product.sku === product_sku) {
           matchedId = product.id;

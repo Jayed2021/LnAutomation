@@ -374,6 +374,21 @@ export function RestockModal({ returnData, itemIds, onClose, onRestocked }: Prop
       }
 
       setProcessing(false);
+
+      const { data: wooSyncSetting } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'woo_stock_sync_on_restock')
+        .maybeSingle();
+
+      const wooSyncEnabled = wooSyncSetting?.value !== false;
+
+      if (!wooSyncEnabled) {
+        setWooSyncDone(true);
+        setTimeout(() => onRestocked(), 400);
+        return;
+      }
+
       setWooSyncing(true);
 
       const syncResults = await syncWooCommerceStock(processedStates);

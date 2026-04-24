@@ -37,6 +37,7 @@ interface Product {
   product_type: ProductType;
   created_at: string;
   total_quantity: number;
+  total_reserved: number;
   stock_value: number;
   avg_cost: number;
   locations: LocationSummary[];
@@ -141,15 +142,16 @@ export default function Products() {
     try {
       const [allProducts, allLots, suppRes, allProdSupp] = await Promise.all([
         fetchAllRows(supabase.from('products').select('*').eq('is_active', true).order('created_at', { ascending: false })),
-        fetchAllRows(supabase.from('inventory_lots').select('product_id, remaining_quantity, received_quantity, landed_cost_per_unit, location_id, warehouse_locations(code)')),
+        fetchAllRows(supabase.from('inventory_lots').select('product_id, remaining_quantity, reserved_quantity, received_quantity, landed_cost_per_unit, location_id, warehouse_locations(code)')),
         supabase.from('suppliers').select('id, name').eq('is_active', true).order('name'),
         fetchAllRows(supabase.from('product_suppliers').select('product_id, supplier_id')),
       ]);
 
-      const lotMap: Record<string, { qty: number; totalCost: number; locationMap: Record<string, number> }> = {};
+      const lotMap: Record<string, { qty: number; reserved: number; totalCost: number; locationMap: Record<string, number> }> = {};
       allLots.forEach((lot: any) => {
-        if (!lotMap[lot.product_id]) lotMap[lot.product_id] = { qty: 0, totalCost: 0, locationMap: {} };
+        if (!lotMap[lot.product_id]) lotMap[lot.product_id] = { qty: 0, reserved: 0, totalCost: 0, locationMap: {} };
         lotMap[lot.product_id].qty += lot.remaining_quantity;
+        lotMap[lot.product_id].reserved += lot.reserved_quantity ?? 0;
         lotMap[lot.product_id].totalCost += lot.remaining_quantity * lot.landed_cost_per_unit;
         if (lot.remaining_quantity > 0 && lot.warehouse_locations?.code) {
           const code = lot.warehouse_locations.code;
@@ -166,6 +168,7 @@ export default function Products() {
           ...p,
           product_type: (p.product_type as ProductType) || 'saleable_goods',
           total_quantity: lm.qty,
+          total_reserved: lm.reserved,
           stock_value: lm.totalCost,
           avg_cost: lm.qty > 0 ? lm.totalCost / lm.qty : 0,
           locations,
@@ -646,6 +649,8 @@ export default function Products() {
                   >
                     Units<SortIcon field="units" />
                   </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Reserved</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Available</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Cost</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Stock Value</th>
                   <th
@@ -721,6 +726,21 @@ export default function Products() {
                             </div>
                           )}
                         </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                          {p.total_reserved > 0 ? (
+                            <span className="text-sm font-semibold text-amber-600">{p.total_reserved}</span>
+                          ) : (
+                            <span className="text-sm text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                          {(() => {
+                            const available = p.total_quantity - p.total_reserved;
+                            if (available <= 0) return <span className="text-sm font-semibold text-red-600">{available}</span>;
+                            if (p.total_reserved > 0 && available < p.low_stock_threshold) return <span className="text-sm font-semibold text-amber-600">{available}</span>;
+                            return <span className="text-sm font-semibold text-gray-900">{available}</span>;
+                          })()}
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                           {canSeeCosts
                             ? <span className="text-gray-900">৳ {p.avg_cost.toLocaleString('en-BD', { maximumFractionDigits: 0 })}</span>
@@ -761,7 +781,7 @@ export default function Products() {
                       </tr>
                       {isExpanded && (
                         <tr key={`${p.id}-detail`} className="bg-gray-50 border-t border-gray-100">
-                          <td colSpan={9} className="px-6 py-4">
+                          <td colSpan={11} className="px-6 py-4">
                             {expandedProductLoading && !detail ? (
                               <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />

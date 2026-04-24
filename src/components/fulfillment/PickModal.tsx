@@ -50,9 +50,17 @@ interface ItemPickState {
   has_prescription?: boolean;
 }
 
+type OverrideReason = 'product_damaged' | 'physically_unavailable' | 'other';
+
 type ScanScenario =
-  | { type: 'different_lot'; scannedBarcode: string; recommendedBarcode: string }
+  | { type: 'different_lot'; scannedBarcode: string; recommendedBarcode: string; scannedLocationCode?: string }
   | null;
+
+const OVERRIDE_REASON_LABELS: Record<OverrideReason, string> = {
+  product_damaged: 'Product damaged / defective',
+  physically_unavailable: 'Cannot find / physically unavailable',
+  other: 'Other reason',
+};
 
 export function PickModal({ order, isLabPick = false, onClose }: PickModalProps) {
   const [loading, setLoading] = useState(true);
@@ -65,6 +73,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const [scanEnforced, setScanEnforced] = useState(true);
   const [scanScenario, setScanScenario] = useState<ScanScenario>(null);
   const [discrepancyReason, setDiscrepancyReason] = useState('');
+  const [overrideReason, setOverrideReason] = useState<OverrideReason>('physically_unavailable');
   const [noItemsToPick, setNoItemsToPick] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const scannerFiredRef = useRef(false);
@@ -259,7 +268,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
     return newStates;
   };
 
-  const handleScan = (value: string) => {
+  const handleScan = async (value: string) => {
     setScanError('');
     setScanScenario(null);
     const trimmed = value.trim();
@@ -295,7 +304,17 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       const isSameSku = scannedSku.toLowerCase() === currentItem.sku.toLowerCase();
 
       if (isSameSku) {
-        setScanScenario({ type: 'different_lot', scannedBarcode: trimmed, recommendedBarcode: expectedBarcode });
+        // Look up the location of the scanned lot for the override log
+        let scannedLocationCode: string | undefined;
+        try {
+          const { data: scannedLot } = await supabase
+            .from('inventory_lots')
+            .select('warehouse_locations(code)')
+            .eq('barcode', trimmed)
+            .maybeSingle();
+          scannedLocationCode = (scannedLot?.warehouse_locations as any)?.code ?? undefined;
+        } catch (_) { /* ignore — non-critical */ }
+        setScanScenario({ type: 'different_lot', scannedBarcode: trimmed, recommendedBarcode: expectedBarcode, scannedLocationCode });
         setBarcodeInput('');
         return;
       }
@@ -326,19 +345,29 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const handleJustPick = async () => {
     if (!scanScenario || scanScenario.type !== 'different_lot') return;
 
+    const reasonLabel = OVERRIDE_REASON_LABELS[overrideReason];
+    const fullReason = discrepancyReason.trim()
+      ? `${reasonLabel}: ${discrepancyReason.trim()}`
+      : reasonLabel;
+
     await supabase.from('pick_discrepancy_log').insert({
       order_id: order.id,
       order_item_id: currentItem.item_id,
       sku: currentItem.sku,
       product_name: currentItem.product_name,
       recommended_lot_barcode: scanScenario.recommendedBarcode,
+      recommended_location_code: currentLot?.location_code ?? '',
       scanned_barcode: scanScenario.scannedBarcode,
-      reason: discrepancyReason.trim() || 'No reason provided',
+      override_lot_barcode: scanScenario.scannedBarcode,
+      override_location_code: scanScenario.scannedLocationCode ?? '',
+      override_reason: overrideReason,
+      reason: fullReason,
       picked_by: 'operator',
     });
 
     setScanScenario(null);
     setDiscrepancyReason('');
+    setOverrideReason('physically_unavailable');
     const newStates = markCurrentDone();
     advanceToNext(newStates, currentItemIndex);
   };
@@ -586,30 +615,48 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                         <div className="font-bold text-amber-700 font-mono">{scanScenario.scannedBarcode}</div>
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      <label className="block text-xs font-semibold text-amber-800">
+                        Reason (required)
+                      </label>
+                      <div className="space-y-1.5">
+                        {(Object.keys(OVERRIDE_REASON_LABELS) as OverrideReason[]).map(key => (
+                          <label key={key} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${overrideReason === key ? 'border-amber-400 bg-amber-100/60' : 'border-amber-100 bg-white hover:bg-amber-50/60'}`}>
+                            <input
+                              type="radio"
+                              name="override_reason"
+                              value={key}
+                              checked={overrideReason === key}
+                              onChange={() => setOverrideReason(key)}
+                              className="accent-amber-500 flex-shrink-0"
+                            />
+                            <span className="text-sm text-amber-900">{OVERRIDE_REASON_LABELS[key]}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
                     <div>
                       <label className="block text-xs font-semibold text-amber-800 mb-1">
-                        Reason for picking different lot (required to proceed)
+                        Additional notes <span className="font-normal text-amber-700">(optional)</span>
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. Recommended lot was empty"
+                        placeholder="Any extra detail..."
                         value={discrepancyReason}
                         onChange={e => setDiscrepancyReason(e.target.value)}
                         className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                        autoFocus
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <button
-                        onClick={() => { setScanScenario(null); setDiscrepancyReason(''); setBarcodeInput(''); setTimeout(() => inputRef.current?.focus(), 50); }}
+                        onClick={() => { setScanScenario(null); setDiscrepancyReason(''); setOverrideReason('physically_unavailable'); setBarcodeInput(''); setTimeout(() => inputRef.current?.focus(), 50); }}
                         className="py-2.5 border-2 border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-400 transition-colors"
                       >
                         Try Again
                       </button>
                       <button
                         onClick={handleJustPick}
-                        disabled={!discrepancyReason.trim()}
-                        className="py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition-colors"
                       >
                         Just Pick (Log)
                       </button>

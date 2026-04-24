@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock, Eye, Percent, DollarSign } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { CreditCard as Edit2, Trash2, Save, X, ChevronDown, ChevronUp, ExternalLink, Tag, Receipt, Plus, Lock, Eye, Percent, DollarSign, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../../../lib/supabase';
 import { OrderItem, OrderDetail, OrderPrescription, FeeLine } from './types';
 import { logActivity } from './service';
@@ -65,12 +65,35 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
   const [expandedMeta, setExpandedMeta] = useState<Set<string>>(new Set());
   const [showAddProducts, setShowAddProducts] = useState(false);
   const [addingFee, setAddingFee] = useState(false);
+  const [reservedByProduct, setReservedByProduct] = useState<Record<string, number>>({});
 
   const [editShippingFee, setEditShippingFee] = useState<string>('0');
   const [editDiscount, setEditDiscount] = useState<string>('0');
 
   const [showDiscountPanel, setShowDiscountPanel] = useState(false);
   const [discount, setDiscount] = useState<DiscountState>({ type: 'flat', value: '' });
+
+  const RESERVATION_STATUSES = ['new_not_called', 'new_called', 'late_delivery', 'not_printed', 'in_lab', 'send_to_lab', 'printed', 'packed'];
+
+  const loadReservations = async () => {
+    if (!RESERVATION_STATUSES.includes(order.cs_status)) return;
+    const { data } = await supabase
+      .from('order_lot_reservations')
+      .select('product_id, quantity')
+      .eq('order_id', order.id);
+    if (!data) return;
+    const byProduct: Record<string, number> = {};
+    for (const r of data) {
+      if (r.product_id) {
+        byProduct[r.product_id] = (byProduct[r.product_id] ?? 0) + r.quantity;
+      }
+    }
+    setReservedByProduct(byProduct);
+  };
+
+  useEffect(() => {
+    loadReservations();
+  }, [order.id, order.cs_status]);
 
   const startEdit = () => {
     setEditItems(items.map(i => ({ ...i })));
@@ -190,10 +213,9 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
 
       await logActivity(order.id, 'Order items updated', userId);
 
-      // Refresh stock reservations when items change on an active order
-      const RESERVATION_STATUSES = ['new_not_called', 'new_called', 'late_delivery', 'not_printed', 'in_lab', 'send_to_lab', 'printed', 'packed'];
       if (RESERVATION_STATUSES.includes(order.cs_status)) {
         await supabase.rpc('reserve_stock_for_order', { p_order_id: order.id });
+        await loadReservations();
       }
 
       if (itemsChanged || feeRows.length > 0) {
@@ -421,6 +443,9 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
           <tr className="border-b border-gray-100">
             <th className="text-left text-xs font-semibold text-gray-500 pb-2">Product</th>
             <th className="text-center text-xs font-semibold text-gray-500 pb-2 w-20">Quantity</th>
+            {!editing && RESERVATION_STATUSES.includes(order.cs_status) && (
+              <th className="text-center text-xs font-semibold text-gray-500 pb-2 w-20">Reserved</th>
+            )}
             <th className="text-right text-xs font-semibold text-gray-500 pb-2 w-28">Total</th>
             <th className="text-right text-xs font-semibold text-gray-500 pb-2 w-28">Discount</th>
             <th className="text-right text-xs font-semibold text-gray-500 pb-2 w-28">Amount</th>
@@ -493,6 +518,27 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
                     <span className="text-sm text-gray-700">{item.quantity}</span>
                   )}
                 </td>
+                {!editing && RESERVATION_STATUSES.includes(order.cs_status) && item.product_id && (
+                  <td className="py-3 text-center">
+                    {(() => {
+                      const reserved = reservedByProduct[item.product_id!] ?? 0;
+                      const shortage = reserved < item.quantity;
+                      return (
+                        <span className={`inline-flex items-center gap-1 text-xs font-semibold tabular-nums px-1.5 py-0.5 rounded ${
+                          reserved === 0 ? 'text-red-700 bg-red-50' :
+                          shortage ? 'text-amber-700 bg-amber-50' :
+                          'text-emerald-700 bg-emerald-50'
+                        }`}>
+                          {reserved === 0 && <AlertTriangle className="w-3 h-3 flex-shrink-0" />}
+                          {reserved}/{item.quantity}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                )}
+                {!editing && RESERVATION_STATUSES.includes(order.cs_status) && !item.product_id && (
+                  <td className="py-3 text-center"><span className="text-xs text-gray-300">—</span></td>
+                )}
                 <td className="py-3 text-right">
                   {editing ? (
                     <input

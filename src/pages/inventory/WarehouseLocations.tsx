@@ -15,7 +15,7 @@ import {
   Plus, Warehouse, MapPin, X, Download, Upload, Search,
   ScanLine, MoreHorizontal, Pencil, Trash2, ToggleLeft, ToggleRight,
   Printer, CheckSquare, Square, AlertTriangle, PackageCheck,
-  ArrowRight, Layers
+  ArrowRight, Layers, ChevronDown, ChevronRight, Loader2
 } from 'lucide-react';
 
 interface WarehouseRow {
@@ -404,6 +404,126 @@ function BulkDeleteDialog({ selected, onClose, onDeleted }: BulkDeleteDialogProp
   );
 }
 
+// ── Location accordion detail ─────────────────────────────────────────────────
+
+interface LotDetail {
+  sku: string;
+  product_name: string;
+  lot_number: string;
+  units: number;
+  reserved: number;
+}
+
+function LocationStockDetail({ locationId }: { locationId: string }) {
+  const [rows, setRows] = useState<LotDetail[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase
+      .from('inventory_lots')
+      .select('lot_number, remaining_quantity, reserved_quantity, products(sku, name)')
+      .eq('location_id', locationId)
+      .gt('remaining_quantity', 0)
+      .order('received_date', { ascending: true })
+      .then(({ data }) => {
+        setRows(
+          (data || []).map((l: any) => ({
+            sku: l.products?.sku || '?',
+            product_name: l.products?.name || 'Unknown',
+            lot_number: l.lot_number,
+            units: l.remaining_quantity,
+            reserved: l.reserved_quantity ?? 0,
+          }))
+        );
+        setLoading(false);
+      });
+  }, [locationId]);
+
+  if (loading) {
+    return (
+      <tr>
+        <td colSpan={9} className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading stock...
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <tr>
+        <td colSpan={9} className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+          <p className="text-xs text-gray-400 italic">No stock in this location</p>
+        </td>
+      </tr>
+    );
+  }
+
+  // Group by SKU for a clean display
+  const bySkuMap: Record<string, { sku: string; product_name: string; lots: LotDetail[] }> = {};
+  for (const row of rows) {
+    if (!bySkuMap[row.sku]) bySkuMap[row.sku] = { sku: row.sku, product_name: row.product_name, lots: [] };
+    bySkuMap[row.sku].lots.push(row);
+  }
+  const bySku = Object.values(bySkuMap);
+
+  return (
+    <tr>
+      <td colSpan={9} className="bg-gray-50 border-b border-gray-200 p-0">
+        <div className="px-6 py-3">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-400 uppercase">
+                <th className="text-left py-1 pr-4 font-medium w-28">SKU</th>
+                <th className="text-left py-1 pr-4 font-medium">Product</th>
+                <th className="text-left py-1 pr-4 font-medium">Lot</th>
+                <th className="text-right py-1 pr-4 font-medium w-16">Units</th>
+                <th className="text-right py-1 font-medium w-16">Reserved</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {bySku.map(group =>
+                group.lots.map((lot, li) => (
+                  <tr key={`${group.sku}-${lot.lot_number}`} className="hover:bg-gray-100 transition-colors">
+                    <td className="py-1.5 pr-4 font-mono font-semibold text-gray-800">
+                      {li === 0 ? group.sku : ''}
+                    </td>
+                    <td className="py-1.5 pr-4 text-gray-600 truncate max-w-xs">
+                      {li === 0 ? group.product_name : ''}
+                    </td>
+                    <td className="py-1.5 pr-4 font-mono text-gray-500">{lot.lot_number}</td>
+                    <td className="py-1.5 pr-4 text-right font-semibold text-gray-900">{lot.units}</td>
+                    <td className="py-1.5 text-right">
+                      {lot.reserved > 0
+                        ? <span className="text-amber-600 font-semibold">{lot.reserved}</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-gray-200">
+                <td colSpan={3} className="pt-2 text-gray-400 font-medium">Total</td>
+                <td className="pt-2 text-right font-bold text-gray-900 pr-4">
+                  {rows.reduce((s, r) => s + r.units, 0)}
+                </td>
+                <td className="pt-2 text-right font-bold text-amber-600">
+                  {rows.reduce((s, r) => s + r.reserved, 0) > 0
+                    ? rows.reduce((s, r) => s + r.reserved, 0)
+                    : <span className="text-gray-300">—</span>}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function RecentBulkTransfers() {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -463,6 +583,15 @@ export default function WarehouseLocations() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [showImportTools, setShowImportTools] = useState(false);
+  const [expandedLocIds, setExpandedLocIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (id: string) => {
+    setExpandedLocIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     getAppSetting<boolean>('show_location_import_tools').then(val => setShowImportTools(val === true));
@@ -837,53 +966,75 @@ export default function WarehouseLocations() {
                         <th className="px-4 py-3 w-10"></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {wh.locations.map(loc => (
-                        <tr key={loc.id} className={`hover:bg-gray-50 transition-colors ${!loc.is_active ? 'opacity-50' : ''} ${selectedIds.has(loc.id) ? 'bg-blue-50 hover:bg-blue-50' : ''}`}>
-                          <td className="px-4 py-3">
-                            <button onClick={() => toggleSelect(loc.id)} className="text-gray-400 hover:text-blue-600 transition-colors">
-                              {selectedIds.has(loc.id)
-                                ? <CheckSquare className="w-4 h-4 text-blue-600" />
-                                : <Square className="w-4 h-4" />}
-                            </button>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="text-sm font-medium text-gray-900">{loc.name}</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            {loc.barcode ? (
-                              <span className="flex items-center gap-1.5 font-mono text-sm text-gray-700">
-                                <ScanLine className="w-3.5 h-3.5 text-gray-400" />
-                                {loc.barcode}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-gray-300 italic">No barcode</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge variant={typeVariant[loc.location_type] as any}>
-                              {loc.location_type.replace('_', ' ')}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3 text-right text-sm text-gray-900">{loc.sku_count}</td>
-                          <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">{loc.unit_count}</td>
-                          <td className="px-4 py-3 text-right">
-                            <CapacityCell capacity={loc.capacity} slotsUsed={loc.slots_used} />
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <Badge variant={loc.is_active ? 'emerald' : 'gray'}>{loc.is_active ? 'Active' : 'Disabled'}</Badge>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <RowMenu
-                              location={loc}
-                              onEdit={() => setEditLocation(loc)}
-                              onToggle={() => toggleLocation(loc.id, loc.is_active)}
-                              onDownloadBarcode={() => loc.barcode && downloadSingleBarcode(loc.barcode)}
-                              onDelete={() => setDeleteLocation(loc)}
-                            />
-                          </td>
-                        </tr>
-                      ))}
+                    <tbody>
+                      {wh.locations.map(loc => {
+                        const isExpanded = expandedLocIds.has(loc.id);
+                        const hasStock = loc.unit_count > 0;
+                        return (
+                          <>
+                            <tr
+                              key={loc.id}
+                              className={`border-b border-gray-200 transition-colors ${!loc.is_active ? 'opacity-50' : ''} ${selectedIds.has(loc.id) ? 'bg-blue-50' : isExpanded ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
+                            >
+                              <td className="px-4 py-3">
+                                <button onClick={() => toggleSelect(loc.id)} className="text-gray-400 hover:text-blue-600 transition-colors">
+                                  {selectedIds.has(loc.id)
+                                    ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                                    : <Square className="w-4 h-4" />}
+                                </button>
+                              </td>
+                              <td className="px-4 py-3">
+                                <button
+                                  onClick={() => hasStock && toggleExpand(loc.id)}
+                                  className={`flex items-center gap-2 text-left group ${hasStock ? 'cursor-pointer' : 'cursor-default'}`}
+                                >
+                                  {hasStock ? (
+                                    isExpanded
+                                      ? <ChevronDown className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                                      : <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500 flex-shrink-0 transition-colors" />
+                                  ) : (
+                                    <span className="w-3.5 h-3.5 flex-shrink-0" />
+                                  )}
+                                  <span className="text-sm font-medium text-gray-900">{loc.name}</span>
+                                </button>
+                              </td>
+                              <td className="px-4 py-3">
+                                {loc.barcode ? (
+                                  <span className="flex items-center gap-1.5 font-mono text-sm text-gray-700">
+                                    <ScanLine className="w-3.5 h-3.5 text-gray-400" />
+                                    {loc.barcode}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-gray-300 italic">No barcode</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                <Badge variant={typeVariant[loc.location_type] as any}>
+                                  {loc.location_type.replace('_', ' ')}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3 text-right text-sm text-gray-900">{loc.sku_count}</td>
+                              <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">{loc.unit_count}</td>
+                              <td className="px-4 py-3 text-right">
+                                <CapacityCell capacity={loc.capacity} slotsUsed={loc.slots_used} />
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <Badge variant={loc.is_active ? 'emerald' : 'gray'}>{loc.is_active ? 'Active' : 'Disabled'}</Badge>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <RowMenu
+                                  location={loc}
+                                  onEdit={() => setEditLocation(loc)}
+                                  onToggle={() => toggleLocation(loc.id, loc.is_active)}
+                                  onDownloadBarcode={() => loc.barcode && downloadSingleBarcode(loc.barcode)}
+                                  onDelete={() => setDeleteLocation(loc)}
+                                />
+                              </td>
+                            </tr>
+                            {isExpanded && <LocationStockDetail key={`detail-${loc.id}`} locationId={loc.id} />}
+                          </>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}

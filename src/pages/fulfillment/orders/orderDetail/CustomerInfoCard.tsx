@@ -121,8 +121,8 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
     full_name: order.customer?.full_name ?? '',
     phone_primary: order.customer?.phone_primary ?? '',
     phone_secondary: order.customer?.phone_secondary ?? '',
-    address_line1: order.customer?.address_line1 ?? '',
-    district: order.customer?.district ?? '',
+    address_line1: order.billing_address_line1 ?? order.customer?.address_line1 ?? '',
+    district: order.billing_district ?? order.customer?.district ?? '',
     email: order.customer?.email ?? '',
     primary_method: parsed.primary,
     sub_method: parsed.sub,
@@ -174,8 +174,6 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
         full_name: edit.full_name,
         phone_primary: edit.phone_primary,
         phone_secondary: edit.phone_secondary || null,
-        address_line1: edit.address_line1,
-        district: edit.district,
         email: edit.email,
       }).eq('id', order.customer.id);
 
@@ -188,6 +186,8 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
         payment_reference: isNonCod ? edit.payment_reference : null,
         paid_amount: paidAmount,
         customer_note: edit.customer_note || null,
+        billing_address_line1: edit.address_line1 || null,
+        billing_district: edit.district || null,
         updated_at: new Date().toISOString(),
       }).eq('id', order.id);
 
@@ -278,13 +278,13 @@ export function CustomerInfoCard({ order, onUpdated }: Props) {
                 {districts.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             )
-            : <div className="text-sm text-gray-900">{order.customer?.district || '—'}</div>}
+            : <div className="text-sm text-gray-900">{(order.billing_district ?? order.customer?.district) || '—'}</div>}
         </Field>
 
         <Field label="Address">
           {editing
             ? <textarea value={edit.address_line1} onChange={e => setEdit(p => ({ ...p, address_line1: e.target.value }))} rows={2} className={`${inputCls} resize-none`} />
-            : <div className="text-sm text-gray-900">{order.customer?.address_line1 || '—'}</div>}
+            : <div className="text-sm text-gray-900">{(order.billing_address_line1 ?? order.customer?.address_line1) || '—'}</div>}
         </Field>
 
         {(order.customer?.email || editing) && (

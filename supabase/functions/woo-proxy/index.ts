@@ -337,6 +337,9 @@ async function importOrderToDb(supabase: any, payload: any): Promise<{ order_id:
       coupon_lines: couponLines.length > 0 ? couponLines : null,
       fee_lines: feeLines.length > 0 ? feeLines : null,
       customer_note: customerNote,
+      billing_address_line1: address || null,
+      billing_city: city || null,
+      billing_district: district || null,
     })
     .select("id")
     .single();

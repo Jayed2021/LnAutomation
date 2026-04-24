@@ -33,6 +33,13 @@ interface DiscountState {
   value: string;
 }
 
+interface ReservationRow {
+  lot_number: string;
+  barcode: string;
+  location_code: string;
+  quantity: number;
+}
+
 function isLikelyUrl(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
 }
@@ -65,7 +72,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
   const [expandedMeta, setExpandedMeta] = useState<Set<string>>(new Set());
   const [showAddProducts, setShowAddProducts] = useState(false);
   const [addingFee, setAddingFee] = useState(false);
-  const [reservedByProduct, setReservedByProduct] = useState<Record<string, number>>({});
+  const [reservedByItem, setReservedByItem] = useState<Record<string, ReservationRow[]>>({});
 
   const [editShippingFee, setEditShippingFee] = useState<string>('0');
   const [editDiscount, setEditDiscount] = useState<string>('0');
@@ -79,16 +86,31 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
     if (!RESERVATION_STATUSES.includes(order.cs_status)) return;
     const { data } = await supabase
       .from('order_lot_reservations')
-      .select('product_id, quantity')
+      .select(`
+        order_item_id,
+        quantity,
+        inventory_lots (
+          lot_number,
+          barcode,
+          warehouse_locations ( code )
+        )
+      `)
       .eq('order_id', order.id);
     if (!data) return;
-    const byProduct: Record<string, number> = {};
-    for (const r of data) {
-      if (r.product_id) {
-        byProduct[r.product_id] = (byProduct[r.product_id] ?? 0) + r.quantity;
-      }
+    const byItem: Record<string, ReservationRow[]> = {};
+    for (const r of data as any[]) {
+      if (!r.order_item_id) continue;
+      const lot = r.inventory_lots;
+      const row: ReservationRow = {
+        lot_number: lot?.lot_number ?? '—',
+        barcode: lot?.barcode ?? lot?.lot_number ?? '—',
+        location_code: lot?.warehouse_locations?.code ?? '—',
+        quantity: r.quantity,
+      };
+      if (!byItem[r.order_item_id]) byItem[r.order_item_id] = [];
+      byItem[r.order_item_id].push(row);
     }
-    setReservedByProduct(byProduct);
+    setReservedByItem(byItem);
   };
 
   useEffect(() => {
@@ -443,9 +465,6 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
           <tr className="border-b border-gray-100">
             <th className="text-left text-xs font-semibold text-gray-500 pb-2">Product</th>
             <th className="text-center text-xs font-semibold text-gray-500 pb-2 w-20">Quantity</th>
-            {!editing && RESERVATION_STATUSES.includes(order.cs_status) && (
-              <th className="text-center text-xs font-semibold text-gray-500 pb-2 w-20">Reserved</th>
-            )}
             <th className="text-right text-xs font-semibold text-gray-500 pb-2 w-28">Total</th>
             <th className="text-right text-xs font-semibold text-gray-500 pb-2 w-28">Discount</th>
             <th className="text-right text-xs font-semibold text-gray-500 pb-2 w-28">Amount</th>
@@ -462,6 +481,45 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
                 <td className="py-3">
                   <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
                   <div className="text-xs text-blue-600">{item.sku}</div>
+                  {!editing && RESERVATION_STATUSES.includes(order.cs_status) && item.product_id && (() => {
+                    const rows = reservedByItem[item.id] ?? [];
+                    const totalReserved = rows.reduce((s, r) => s + r.quantity, 0);
+                    const needed = item.quantity;
+                    if (rows.length === 0) {
+                      return (
+                        <div className="mt-1 flex items-center gap-1">
+                          <span className="inline-flex items-center gap-1 text-xs text-red-600 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded-full">
+                            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                            No stock reserved
+                          </span>
+                        </div>
+                      );
+                    }
+                    const isShort = totalReserved < needed;
+                    return (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {rows.map((r, i) => (
+                          <span
+                            key={i}
+                            className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full border font-mono ${
+                              isShort
+                                ? 'text-amber-700 bg-amber-50 border-amber-200'
+                                : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isShort ? 'bg-amber-400' : 'bg-emerald-500'}`} />
+                            {r.barcode} · {r.location_code} · {r.quantity}
+                          </span>
+                        ))}
+                        {isShort && (
+                          <span className="inline-flex items-center gap-1 text-xs text-red-600 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded-full">
+                            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                            {needed - totalReserved} short
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {item.pick_location && (
                     <div className="text-xs text-teal-600 mt-0.5">Loc: {item.pick_location}</div>
                   )}
@@ -518,27 +576,6 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
                     <span className="text-sm text-gray-700">{item.quantity}</span>
                   )}
                 </td>
-                {!editing && RESERVATION_STATUSES.includes(order.cs_status) && item.product_id && (
-                  <td className="py-3 text-center">
-                    {(() => {
-                      const reserved = reservedByProduct[item.product_id!] ?? 0;
-                      const shortage = reserved < item.quantity;
-                      return (
-                        <span className={`inline-flex items-center gap-1 text-xs font-semibold tabular-nums px-1.5 py-0.5 rounded ${
-                          reserved === 0 ? 'text-red-700 bg-red-50' :
-                          shortage ? 'text-amber-700 bg-amber-50' :
-                          'text-emerald-700 bg-emerald-50'
-                        }`}>
-                          {reserved === 0 && <AlertTriangle className="w-3 h-3 flex-shrink-0" />}
-                          {reserved}/{item.quantity}
-                        </span>
-                      );
-                    })()}
-                  </td>
-                )}
-                {!editing && RESERVATION_STATUSES.includes(order.cs_status) && !item.product_id && (
-                  <td className="py-3 text-center"><span className="text-xs text-gray-300">—</span></td>
-                )}
                 <td className="py-3 text-right">
                   {editing ? (
                     <input

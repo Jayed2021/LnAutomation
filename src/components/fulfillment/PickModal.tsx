@@ -68,7 +68,7 @@ interface LocationGroup {
 }
 
 type ScanScenario =
-  | { type: 'different_lot'; scannedBarcode: string; recommendedBarcode: string; scannedLocationCode?: string }
+  | { type: 'different_lot'; scannedBarcode: string; recommendedBarcode: string; scannedLocationCode?: string; scannedLotId?: string }
   | { type: 'override_selection'; step: 'location' | 'lot' }
   | null;
 
@@ -326,17 +326,19 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       const isSameSku = scannedSku.toLowerCase() === currentItem.sku.toLowerCase();
 
       if (isSameSku) {
-        // Look up the location of the scanned lot for the override log
+        // Look up lot id and location of the scanned lot for the override log and reservation swap
         let scannedLocationCode: string | undefined;
+        let scannedLotId: string | undefined;
         try {
           const { data: scannedLot } = await supabase
             .from('inventory_lots')
-            .select('warehouse_locations(code)')
+            .select('id, warehouse_locations(code)')
             .eq('barcode', trimmed)
             .maybeSingle();
           scannedLocationCode = (scannedLot?.warehouse_locations as any)?.code ?? undefined;
+          scannedLotId = scannedLot?.id ?? undefined;
         } catch (_) { /* ignore — non-critical */ }
-        setScanScenario({ type: 'different_lot', scannedBarcode: trimmed, recommendedBarcode: expectedBarcode, scannedLocationCode });
+        setScanScenario({ type: 'different_lot', scannedBarcode: trimmed, recommendedBarcode: expectedBarcode, scannedLocationCode, scannedLotId });
         setBarcodeInput('');
         return;
       }
@@ -386,6 +388,16 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
       reason: fullReason,
       picked_by: 'operator',
     });
+
+    // Swap the reservation to the actually-picked lot so ship-time deduction is correct
+    if (currentLot && scanScenario.scannedLotId && scanScenario.scannedLotId !== currentLot.lot_id) {
+      await supabase.rpc('swap_lot_reservation', {
+        p_order_id: order.id,
+        p_order_item_id: currentItem.item_id,
+        p_old_lot_id: currentLot.lot_id,
+        p_new_lot_id: scanScenario.scannedLotId,
+      });
+    }
 
     setScanScenario(null);
     setDiscrepancyReason('');
@@ -487,6 +499,15 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
         override_reason: overrideReason,
         reason: fullReason,
         picked_by: 'operator',
+      });
+
+      // Atomically move the stock reservation from the original lot to the override lot
+      // so that fulfill_stock_reservation deducts from the correct location at ship time
+      await supabase.rpc('swap_lot_reservation', {
+        p_order_id: order.id,
+        p_order_item_id: currentItem.item_id,
+        p_old_lot_id: currentLot.lot_id,
+        p_new_lot_id: selectedOverrideLot.lot_id,
       });
 
       // Swap the active lot in local state so subsequent scans validate against the new lot

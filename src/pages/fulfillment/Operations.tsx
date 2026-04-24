@@ -97,6 +97,7 @@ export default function Operations() {
   const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [packagingDispatchedToday, setPackagingDispatchedToday] = useState(false);
   const [dispatchGateEnabled, setDispatchGateEnabled] = useState(true);
+  const [shippingOrderId, setShippingOrderId] = useState<string | null>(null);
 
   const statusCounts = {
     not_printed: orders.filter(o => o.fulfillment_status === 'not_printed').length,
@@ -411,24 +412,29 @@ export default function Operations() {
   };
 
   const handleMarkAsShipped = async (orderId: string) => {
-    const { error } = await supabase
-      .from('orders')
-      .update({
-        fulfillment_status: 'shipped',
-        cs_status: 'shipped',
-        shipped_at: new Date().toISOString(),
-      })
-      .eq('id', orderId);
-    if (error) { console.error(error); return; }
+    setShippingOrderId(orderId);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          fulfillment_status: 'shipped',
+          cs_status: 'shipped',
+          shipped_at: new Date().toISOString(),
+        })
+        .eq('id', orderId);
+      if (error) { console.error(error); return; }
 
-    await supabase.rpc('fulfill_stock_reservation', { p_order_id: orderId });
+      await supabase.rpc('fulfill_stock_reservation', { p_order_id: orderId });
 
-    await supabase.from('order_activity_log').insert({
-      order_id: orderId,
-      action: 'Marked as shipped - inventory deducted',
-    });
-    fetchOrders();
-    fetchShippedOrders(shippedRange);
+      await supabase.from('order_activity_log').insert({
+        order_id: orderId,
+        action: 'Marked as shipped - inventory deducted',
+      });
+      fetchOrders();
+      fetchShippedOrders(shippedRange);
+    } finally {
+      setShippingOrderId(null);
+    }
   };
 
   const handleLabPickComplete = useCallback(() => {
@@ -709,6 +715,7 @@ export default function Operations() {
                 onNavigate={(id) => navigate(`/fulfillment/orders/${id}`)}
                 packagingDispatchedToday={packagingDispatchedToday}
                 gateEnabled={dispatchGateEnabled}
+                shippingOrderId={shippingOrderId}
               />
             )}
             {activeTab === 'send_to_lab' && (

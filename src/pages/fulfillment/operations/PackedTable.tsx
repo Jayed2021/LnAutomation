@@ -1,4 +1,4 @@
-import { Truck, RotateCcw, Lock } from 'lucide-react';
+import { Truck, RotateCcw, Lock, Loader2 } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import type { OperationsOrder } from './types';
 
@@ -11,6 +11,7 @@ interface Props {
   onNavigate: (id: string) => void;
   packagingDispatchedToday: boolean;
   gateEnabled: boolean;
+  shippingOrderId: string | null;
 }
 
 export function PackedTable({
@@ -22,10 +23,12 @@ export function PackedTable({
   onNavigate,
   packagingDispatchedToday,
   gateEnabled,
+  shippingOrderId,
 }: Props) {
   const isShipBlocked = gateEnabled && !packagingDispatchedToday;
 
   const ShipButton = ({ orderId, fullWidth = false }: { orderId: string; fullWidth?: boolean }) => {
+    const isShipping = shippingOrderId === orderId;
     if (isShipBlocked) {
       return (
         <div className="relative group">
@@ -47,10 +50,14 @@ export function PackedTable({
     return (
       <Button
         size="sm"
-        className={`${fullWidth ? 'flex-1' : ''} bg-slate-700 hover:bg-slate-800 text-white border-0 py-2.5 h-auto`}
+        disabled={isShipping}
+        className={`${fullWidth ? 'flex-1' : ''} bg-slate-700 hover:bg-slate-800 text-white border-0 py-2.5 h-auto disabled:opacity-70`}
         onClick={() => onMarkShipped(orderId)}
       >
-        <Truck className="h-3.5 w-3.5 mr-1.5" /> Mark as Shipped
+        {isShipping
+          ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Shipping...</>
+          : <><Truck className="h-3.5 w-3.5 mr-1.5" /> Mark as Shipped</>
+        }
       </Button>
     );
   };
@@ -161,8 +168,10 @@ export function PackedTable({
                         </div>
                       </div>
                     ) : (
-                      <Button size="sm" className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-3" onClick={() => onMarkShipped(order.id)}>
-                        <Truck className="h-3.5 w-3.5 mr-1" /> Mark Shipped
+                      <Button size="sm" disabled={shippingOrderId === order.id} className="bg-slate-700 hover:bg-slate-800 text-white border-0 px-3 disabled:opacity-70" onClick={() => onMarkShipped(order.id)}>
+                        {shippingOrderId === order.id
+                          ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Shipping...</>
+                          : <><Truck className="h-3.5 w-3.5 mr-1" /> Mark Shipped</>}
                       </Button>
                     )}
                   </div>

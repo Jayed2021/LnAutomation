@@ -403,7 +403,6 @@ export default function Operations() {
     }).eq('id', orderId);
     await supabase.from('order_picks').delete().eq('order_id', orderId);
     await supabase.from('order_items').update({ picked_quantity: 0 }).eq('order_id', orderId);
-    await supabase.rpc('release_stock_reservation', { p_order_id: orderId });
     await supabase.from('order_activity_log').insert({
       order_id: orderId,
       action: `Returned to CS queue as ${newStatus === 'new_called' ? 'New & Called' : 'New Not Called'} (Mark as Processing) — pick data reset`,

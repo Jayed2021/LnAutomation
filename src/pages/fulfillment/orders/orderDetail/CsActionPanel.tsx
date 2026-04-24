@@ -412,7 +412,6 @@ export function CsActionPanel({ order, items, userId, userRole, hasPrescription,
         updates.cs_status = (count ?? 0) > 0 ? 'new_called' : 'new_not_called';
         updates.fulfillment_status = null;
         await callWooProxy('update-order-status', { status: 'processing' });
-        await supabase.rpc('release_stock_reservation', { p_order_id: order.id });
         await supabase.from('order_courier_info').update({
           tracking_number: null,
           consignment_id: null,

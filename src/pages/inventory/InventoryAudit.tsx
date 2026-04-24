@@ -7,10 +7,11 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import LocationSearchGrid from '../../components/inventory/LocationSearchGrid';
+import AuditByProduct from './AuditByProduct';
 import {
   Plus, ClipboardList, Check, X, AlertTriangle, ChevronRight,
   RefreshCw, Calendar, CheckCircle, Clock, ChevronDown, ChevronUp,
-  Info, Flag, History
+  Info, Flag, History, Package
 } from 'lucide-react';
 
 // ────────────────────────────────────────────
@@ -90,7 +91,7 @@ interface Schedule {
 }
 
 type AuditStep = 'list' | 'select_locations' | 'count' | 'review';
-type TabView = 'audits' | 'cycle_counts';
+type TabView = 'audits' | 'cycle_counts' | 'product_audit';
 type CycleView = 'list' | 'new_schedule' | 'start_count';
 
 // ────────────────────────────────────────────
@@ -1087,11 +1088,12 @@ export default function InventoryAudit() {
           <h1 className="text-3xl font-bold text-gray-900">Inventory Audit</h1>
           <p className="text-sm text-gray-500 mt-1">Physical stock counts, cycle counting, and variance tracking</p>
         </div>
-        {tab === 'audits' ? (
+        {tab === 'audits' && (
           <Button onClick={() => setStep('select_locations')} className="flex items-center gap-2">
             <Plus className="w-4 h-4" /> New Audit
           </Button>
-        ) : (
+        )}
+        {tab === 'cycle_counts' && (
           <Button onClick={() => setCycleView('new_schedule')} className="flex items-center gap-2">
             <Plus className="w-4 h-4" /> New Schedule
           </Button>
@@ -1135,6 +1137,19 @@ export default function InventoryAudit() {
                   {overdueCount} overdue
                 </span>
               )}
+            </span>
+          </button>
+          <button
+            onClick={() => setTab('product_audit')}
+            className={`py-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+              tab === 'product_audit'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <Package className="w-4 h-4" />
+              Audit by Product
             </span>
           </button>
         </nav>
@@ -1422,6 +1437,11 @@ export default function InventoryAudit() {
             )}
           </Card>
         </div>
+      )}
+
+      {/* ── Audit by Product tab ── */}
+      {tab === 'product_audit' && (
+        <AuditByProduct onBack={() => setTab('audits')} />
       )}
 
       {/* Flag detail slide-in panel */}

@@ -1073,6 +1073,93 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    if (action === "set-stock") {
+      const { product_sku, absolute_quantity } = body;
+      if (!product_sku || absolute_quantity == null) {
+        return new Response(
+          JSON.stringify({ error: "product_sku and absolute_quantity are required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const searchRes = await wooFetch(store_url, consumer_key, consumer_secret, "products", { sku: product_sku, per_page: 1 });
+      if (!searchRes.ok) {
+        const errText = await searchRes.text();
+        return new Response(
+          JSON.stringify({ error: `WooCommerce product search failed (${searchRes.status}): ${errText}` }),
+          { status: searchRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const products: any[] = await searchRes.json();
+      let matchedId: number | null = null;
+      let endpoint = "";
+      let currentStock = 0;
+
+      if (products && products.length > 0) {
+        const product = products[0];
+        if (product.type === "variable") {
+          let page = 1;
+          let found = false;
+          while (!found) {
+            const varRes = await wooFetch(store_url, consumer_key, consumer_secret, `products/${product.id}/variations`, { per_page: 100, page });
+            if (!varRes.ok) break;
+            const variations: any[] = await varRes.json();
+            if (!variations || variations.length === 0) break;
+            const match = variations.find((v: any) => v.sku === product_sku);
+            if (match) {
+              matchedId = match.id;
+              currentStock = match.stock_quantity ?? 0;
+              endpoint = `products/${product.id}/variations/${match.id}`;
+              found = true;
+            }
+            const totalPages = parseInt(varRes.headers.get("X-WP-TotalPages") || "1", 10);
+            if (page >= totalPages) break;
+            page++;
+          }
+          if (!found && product.sku === product_sku) {
+            matchedId = product.id;
+            currentStock = product.stock_quantity ?? 0;
+            endpoint = `products/${product.id}`;
+          }
+        } else if (product.sku === product_sku) {
+          matchedId = product.id;
+          currentStock = product.stock_quantity ?? 0;
+          endpoint = `products/${product.id}`;
+        }
+      }
+
+      if (!matchedId || !endpoint) {
+        return new Response(
+          JSON.stringify({ error: `No WooCommerce product found with SKU: ${product_sku}` }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const updateUrl = new URL(`${store_url.replace(/\/$/, "")}/wp-json/wc/v3/${endpoint}`);
+      const updateRes = await fetch(updateUrl.toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: buildAuthHeader(consumer_key, consumer_secret),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ stock_quantity: absolute_quantity, manage_stock: true }),
+      });
+
+      if (!updateRes.ok) {
+        const errText = await updateRes.text();
+        return new Response(
+          JSON.stringify({ error: `Failed to update WooCommerce stock (${updateRes.status}): ${errText}` }),
+          { status: updateRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, sku: product_sku, previous_stock: currentStock, new_stock: absolute_quantity }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     return new Response(
       JSON.stringify({ error: `Unknown action: ${action}` }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -9,10 +9,13 @@ import ImportLocationsModal from '../../components/inventory/ImportLocationsModa
 import ImportStockQuantsModal from '../../components/inventory/ImportStockQuantsModal';
 import BarcodeLabel from '../../components/inventory/BarcodeLabel';
 import { printBarcodeLabels, downloadSingleBarcode } from '../../components/inventory/barcodePrint';
+import BulkLocationTransferModal from '../../components/inventory/BulkLocationTransferModal';
+import ConsolidationPanel from '../../components/inventory/ConsolidationPanel';
 import {
   Plus, Warehouse, MapPin, X, Download, Upload, Search,
   ScanLine, MoreHorizontal, Pencil, Trash2, ToggleLeft, ToggleRight,
-  Printer, CheckSquare, Square, AlertTriangle, PackageCheck
+  Printer, CheckSquare, Square, AlertTriangle, PackageCheck,
+  ArrowRight, Layers
 } from 'lucide-react';
 
 interface WarehouseRow {
@@ -401,14 +404,56 @@ function BulkDeleteDialog({ selected, onClose, onDeleted }: BulkDeleteDialogProp
   );
 }
 
+function RecentBulkTransfers() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase
+      .from('bulk_location_transfers')
+      .select(`
+        id, lots_moved, units_moved, reserved_units, created_at,
+        src:warehouse_locations!source_location_id(code),
+        dst:warehouse_locations!dest_location_id(code)
+      `)
+      .order('created_at', { ascending: false })
+      .limit(10)
+      .then(({ data }) => { setRows(data || []); setLoading(false); });
+  }, []);
+
+  if (loading) return <p className="text-sm text-gray-400">Loading...</p>;
+  if (rows.length === 0) return <p className="text-sm text-gray-400">No bulk transfers recorded yet.</p>;
+
+  return (
+    <div className="space-y-2">
+      {rows.map((r: any) => (
+        <div key={r.id} className="flex items-center gap-4 px-4 py-3 bg-gray-50 rounded-xl text-sm">
+          <span className="font-mono font-semibold text-gray-900">{(r.src as any)?.code}</span>
+          <ArrowRight className="w-4 h-4 text-gray-400" />
+          <span className="font-mono font-semibold text-gray-900">{(r.dst as any)?.code}</span>
+          <span className="text-gray-500 ml-2">{r.units_moved} units · {r.lots_moved} lots</span>
+          {r.reserved_units > 0 && <span className="text-amber-600 text-xs">{r.reserved_units} reserved migrated</span>}
+          <span className="ml-auto text-xs text-gray-400">
+            {new Date(r.created_at).toLocaleDateString('en-BD', { day: '2-digit', month: 'short', year: 'numeric' })}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type PageTab = 'locations' | 'consolidation' | 'bulk_transfer';
+
 export default function WarehouseLocations() {
   const { lastRefreshed, setRefreshing } = useRefresh();
+  const [activeTab, setActiveTab] = useState<PageTab>('locations');
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddWarehouse, setShowAddWarehouse] = useState(false);
   const [showAddLocation, setShowAddLocation] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [showImportQuants, setShowImportQuants] = useState(false);
+  const [showBulkTransfer, setShowBulkTransfer] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [whForm, setWhForm] = useState({ name: '', code: '', address: '' });
   const [locForm, setLocForm] = useState({ name: '', location_type: 'storage', barcode: '' });
@@ -557,6 +602,18 @@ export default function WarehouseLocations() {
 
   const warehouseList = warehouses.map(w => ({ id: w.id, name: w.name }));
 
+  // Build flat location list for BulkTransfer modal
+  const allLocationsFlat = warehouses.flatMap(wh =>
+    wh.locations.map(l => ({
+      id: l.id,
+      code: l.code,
+      name: l.name,
+      unit_count: l.unit_count,
+      sku_count: l.sku_count,
+      last_audited_at: null as string | null,
+    }))
+  );
+
   return (
     <div className="space-y-6 pb-24">
       <div className="flex flex-wrap justify-between items-start gap-3">
@@ -565,7 +622,7 @@ export default function WarehouseLocations() {
           <p className="text-sm text-gray-500 mt-1">Manage warehouses and storage locations</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {showImportTools && (
+          {showImportTools && activeTab === 'locations' && (
             <>
               <Button variant="outline" onClick={exportLocations} className="flex items-center gap-2">
                 <Download className="w-4 h-4" /> Export Locations
@@ -578,13 +635,88 @@ export default function WarehouseLocations() {
               </Button>
             </>
           )}
-          <Button onClick={() => setShowAddWarehouse(true)} className="flex items-center gap-2">
-            <Plus className="w-4 h-4" /> Add Warehouse
-          </Button>
+          {activeTab === 'bulk_transfer' && (
+            <Button onClick={() => setShowBulkTransfer(true)} className="flex items-center gap-2">
+              <ArrowRight className="w-4 h-4" /> Start Bulk Transfer
+            </Button>
+          )}
+          {activeTab === 'locations' && (
+            <Button onClick={() => setShowAddWarehouse(true)} className="flex items-center gap-2">
+              <Plus className="w-4 h-4" /> Add Warehouse
+            </Button>
+          )}
         </div>
       </div>
 
-      {showAddWarehouse && (
+      {/* Tab bar */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {([
+          { key: 'locations', label: 'Locations', icon: Warehouse },
+          { key: 'consolidation', label: 'Consolidation', icon: Layers },
+          { key: 'bulk_transfer', label: 'Bulk Transfer', icon: ArrowRight },
+        ] as { key: PageTab; label: string; icon: React.ElementType }[]).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeTab === tab.key
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <tab.icon className="w-4 h-4" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Consolidation tab */}
+      {activeTab === 'consolidation' && (
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-5">
+            <Layers className="w-5 h-5 text-amber-500" />
+            <div>
+              <h2 className="font-semibold text-gray-900">Lot Consolidation</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Products stored across multiple locations that can be brought together</p>
+            </div>
+          </div>
+          <ConsolidationPanel />
+        </Card>
+      )}
+
+      {/* Bulk Transfer tab */}
+      {activeTab === 'bulk_transfer' && (
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <ArrowRight className="w-5 h-5 text-blue-500" />
+            <div>
+              <h2 className="font-semibold text-gray-900">Bulk Location Transfer</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Move all inventory from one box to another — for warehouse renumbering and reorganisation</p>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5 text-sm text-blue-800 space-y-2">
+            <p className="font-medium">How it works</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-blue-700">
+              <li>All lots in the source box move to the destination box atomically</li>
+              <li>Lots with the same lot number are automatically merged</li>
+              <li>Active order reservations follow the lots — no order data is affected</li>
+              <li>A full transfer log is recorded for traceability</li>
+              <li>After transfer, print a new barcode label for the destination box</li>
+            </ul>
+          </div>
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-gray-700">Recent bulk transfers</p>
+            <RecentBulkTransfers />
+          </div>
+          <div className="mt-5">
+            <Button onClick={() => setShowBulkTransfer(true)} className="flex items-center gap-2">
+              <ArrowRight className="w-4 h-4" /> Start Bulk Transfer
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {activeTab === 'locations' && showAddWarehouse && (
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-gray-900">New Warehouse</h3>
@@ -611,7 +743,7 @@ export default function WarehouseLocations() {
         </Card>
       )}
 
-      <div className="relative max-w-sm">
+      {activeTab === 'locations' && <div className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
         <input
           className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -619,9 +751,9 @@ export default function WarehouseLocations() {
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
         />
-      </div>
+      </div>}
 
-      {loading ? (
+      {activeTab === 'locations' && (loading ? (
         <div className="py-16 text-center text-gray-400">Loading...</div>
       ) : warehouses.length === 0 ? (
         <div className="py-16 text-center text-gray-400">No warehouses configured</div>
@@ -759,7 +891,7 @@ export default function WarehouseLocations() {
             );
           })}
         </div>
-      )}
+      ))}
 
       {selectedIds.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30">
@@ -839,6 +971,14 @@ export default function WarehouseLocations() {
         <ImportStockQuantsModal
           onClose={() => setShowImportQuants(false)}
           onImported={loadData}
+        />
+      )}
+
+      {showBulkTransfer && (
+        <BulkLocationTransferModal
+          allLocations={allLocationsFlat}
+          onClose={() => setShowBulkTransfer(false)}
+          onDone={loadData}
         />
       )}
     </div>

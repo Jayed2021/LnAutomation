@@ -190,6 +190,12 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
 
       await logActivity(order.id, 'Order items updated', userId);
 
+      // Refresh stock reservations when items change on an active order
+      const RESERVATION_STATUSES = ['new_not_called', 'new_called', 'late_delivery', 'not_printed', 'in_lab', 'send_to_lab', 'printed', 'packed'];
+      if (RESERVATION_STATUSES.includes(order.cs_status)) {
+        await supabase.rpc('reserve_stock_for_order', { p_order_id: order.id });
+      }
+
       if (itemsChanged || feeRows.length > 0) {
         setSyncStatus('syncing');
         await syncToWooCommerce(addedItems, deletedItems, feeRows);

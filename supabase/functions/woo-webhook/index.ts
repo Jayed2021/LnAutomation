@@ -345,6 +345,11 @@ Deno.serve(async (req: Request) => {
       performed_by: null,
     });
 
+    // Create stock reservations for the new order (best-effort, non-blocking)
+    try {
+      await supabase.rpc("reserve_stock_for_order", { p_order_id: orderId });
+    } catch (_) {}
+
     return new Response(
       JSON.stringify({ message: "Order created successfully", order_id: orderId, order_number: orderNumber }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

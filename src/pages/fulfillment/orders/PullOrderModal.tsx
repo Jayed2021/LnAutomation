@@ -92,6 +92,11 @@ export function PullOrderModal({ onClose, onImported }: Props) {
         return;
       }
 
+      // Create stock reservations for the imported order
+      if (importResult.order_id) {
+        await supabase.rpc('reserve_stock_for_order', { p_order_id: importResult.order_id });
+      }
+
       setSuccess(`Order imported successfully as ${importResult.order_number}.`);
       setTimeout(() => {
         onImported(importResult.order_id);

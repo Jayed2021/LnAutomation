@@ -67,12 +67,15 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Bulk order status update via CSV | `src/pages/fulfillment/orders/bulkUpdate/BulkUpdateOrders.tsx` |
 | Product list, create product, filters | `src/pages/inventory/Products.tsx` |
 | Product detail, images, stock, suppliers | `src/pages/inventory/ProductDetail.tsx` |
-| Warehouse locations | `src/pages/inventory/WarehouseLocations.tsx` |
+| Warehouse locations list, accordion stock detail, bulk transfer, consolidation | `src/pages/inventory/WarehouseLocations.tsx` |
+| Bulk move all lots from one location to another | `src/components/inventory/BulkLocationTransferModal.tsx` |
+| Lot consolidation suggestions (merge near-empty lots) | `src/components/inventory/ConsolidationPanel.tsx` |
 | Stock levels view | `src/pages/inventory/Stock.tsx` |
 | Stock movements history | `src/pages/inventory/StockMovements.tsx` |
 | Goods receipt from PO | `src/pages/inventory/ReceiveGoods.tsx` |
 | Receive flow steps (quantity/quality/complete) | `src/pages/inventory/receive/` |
 | Inventory audit sessions | `src/pages/inventory/InventoryAudit.tsx` |
+| Audit by product mode | `src/pages/inventory/AuditByProduct.tsx` |
 | Audit detail and adjustments | `src/pages/inventory/AuditDetail.tsx` |
 | Cycle count scheduling | `src/pages/inventory/CycleCounts.tsx` |
 | Purchase order list | `src/pages/purchase/PurchaseOrders.tsx` |
@@ -114,13 +117,16 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | API access / token management | `src/pages/settings/ApiAccessSettings.tsx` |
 | Misc operational toggles (dispatch gate, lens settings) | `src/pages/settings/MiscSettings.tsx` |
 | Lens brands and types with pricing | `src/pages/settings/LensBrandManager.tsx` |
+| Notification settings | `src/pages/settings/NotificationSettings.tsx` |
 | Sidebar navigation and layout | `src/components/Layout.tsx` |
 | Login page | `src/pages/Login.tsx` |
 | Dashboard KPIs and charts | `src/pages/Dashboard.tsx` |
+| In-app notification bell and toasts | `src/pages/Notifications.tsx` + `src/components/NotificationToast.tsx` |
 | Role/permission checks | `src/lib/permissions.ts` |
 | App-wide settings (cached) | `src/lib/appSettings.ts` |
 | Barcode decode/parse utilities | `src/lib/barcodeUtils.ts` |
 | Category tree parsing logic | `src/lib/categoryParser.ts` |
+| Restock sheet Excel export | `src/utils/exportRestockSheet.ts` |
 | Shared Button component | `src/components/ui/Button.tsx` |
 | Shared Input component | `src/components/ui/Input.tsx` |
 | Shared Badge component | `src/components/ui/Badge.tsx` |
@@ -130,6 +136,7 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | Shared Tabs component | `src/components/ui/Tabs.tsx` |
 | Route definitions | `src/App.tsx` |
 | Auth state and user context | `src/contexts/AuthContext.tsx` |
+| Notification context (bell count, push) | `src/contexts/NotificationContext.tsx` |
 | Supabase client setup | `src/lib/supabase.ts` |
 
 ---
@@ -245,9 +252,10 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/inventory/ProductDetail.tsx` | ~1,348 | Product detail: images, form, locations, suppliers, stock, lots. |
 | `src/pages/inventory/Stock.tsx` | ~200 | Real-time stock levels by location. |
 | `src/pages/inventory/StockMovements.tsx` | ~300 | Stock transaction history. Type filter is server-side so return_restock movements are never hidden by the 500-row limit. |
-| `src/pages/inventory/WarehouseLocations.tsx` | ~780 | Manage warehouse locations (add, edit, deactivate). |
+| `src/pages/inventory/WarehouseLocations.tsx` | ~1,000 | Manage warehouse locations. Location rows are collapsible accordions — click to reveal per-SKU/lot stock detail. Tabs: Locations, Consolidation, Bulk Transfer. |
 | `src/pages/inventory/Shipments.tsx` | ~200 | Purchase shipment/lot tracking. |
 | `src/pages/inventory/InventoryAudit.tsx` | ~1,437 | Create audit sessions, count products, view flags. |
+| `src/pages/inventory/AuditByProduct.tsx` | ~300 | Alternative audit view — browse all locations a specific product lives in and count per location. |
 | `src/pages/inventory/AuditDetail.tsx` | ~300 | Audit session results and adjustments. |
 | `src/pages/inventory/ReceiveGoods.tsx` | ~100 | Goods receipt launcher (delegates to receive flow). |
 | `src/pages/inventory/CycleCounts.tsx` | ~200 | Cycle count scheduling. |
@@ -276,6 +284,9 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/components/inventory/ImportLocationsModal.tsx` | Import warehouse locations from file. |
 | `src/components/inventory/WooImportModal.tsx` | Import products from WooCommerce. |
 | `src/components/inventory/LocationSearchGrid.tsx` | Location picker with search, used across modules. |
+| `src/components/inventory/BulkLocationTransferModal.tsx` | 3-step modal: pick source → pick destination → preview lots → confirm. Calls `bulk_transfer_location` RPC. Source lots are zeroed (not deleted) to preserve FK history. |
+| `src/components/inventory/ConsolidationPanel.tsx` | Surfaces lots spread across multiple locations for the same SKU. Suggests merge candidates and launches the transfer modal. |
+| `src/components/inventory/InternalTransferModal.tsx` | Move individual lots between locations with quantity selection. |
 
 ---
 
@@ -380,6 +391,7 @@ The bad example forces the AI to search the entire codebase to find the right fi
 | `src/pages/settings/ApiAccessSettings.tsx` | ~200 | API token management for external integrations. |
 | `src/pages/settings/MiscSettings.tsx` | ~300 | Miscellaneous operational toggles (e.g., require daily packaging dispatch, prescription lens brands/types). |
 | `src/pages/settings/LensBrandManager.tsx` | ~400 | Manage prescription lens brands and their associated types with pricing. |
+| `src/pages/settings/NotificationSettings.tsx` | ~200 | Configure which system events trigger in-app notifications per user. |
 
 ---
 
@@ -409,7 +421,7 @@ These files are large and should be referenced precisely. When making a change, 
 |------|-------|----------------|
 | `src/pages/purchase/CreatePurchaseOrder.tsx` | ~1,979 | Header section, Line items table, Summary section, Payment rows, Notes & files, Changelog |
 | `src/pages/fulfillment/orders/Orders.tsx` | ~1,503 | Global stats cards, Tab filters, Search bar, Order table, Pagination, Bulk actions modal |
-| `src/pages/inventory/InventoryAudit.tsx` | ~1,437 | Audit list, Create audit modal, Count workflow, Flags table, Schedule section |
+| `src/pages/inventory/InventoryAudit.tsx` | ~1,437 | Audit list, Create audit modal, Count workflow, Flags table, Schedule section, Audit-by-product mode toggle |
 | `src/pages/settings/WooCommerceSettings.tsx` | ~1,371 | Credentials section, Product sync section, Order sync section, Webhooks section, Sync log table, Image migration section |
 | `src/pages/inventory/ProductDetail.tsx` | ~1,348 | Image upload section, Product form, Locations section, Suppliers section, Stock section, Lots table |
 | `src/pages/settings/CourierSettings.tsx` | ~1,197 | Per-courier cards, API credentials form, Webhook config |
@@ -429,7 +441,7 @@ Supabase Edge Functions live in `supabase/functions/`. Each folder is one functi
 
 | Function | Purpose |
 |----------|---------|
-| `supabase/functions/woo-proxy/` | Proxies WooCommerce API calls (avoids CORS). Actions: `test-connection`, `fetch-products`, `fetch-products-page`, `fetch-orders`, `fetch-single-order`, `import-order`, `cancel-order`, `update-order-status`, `resync-order`, `sync-order-items`, `register-webhook`, `check-webhook`, `reactivate-webhook`, `delete-webhook`, `update-stock` (increments WooCommerce product stock by SKU, supports simple and variable products). |
+| `supabase/functions/woo-proxy/` | Proxies WooCommerce API calls (avoids CORS). Actions: `test-connection`, `fetch-products`, `fetch-products-page`, `fetch-orders`, `fetch-single-order`, `import-order`, `cancel-order`, `update-order-status`, `resync-order`, `sync-order-items`, `register-webhook`, `check-webhook`, `reactivate-webhook`, `delete-webhook`, `update-stock` (increments WooCommerce product stock by SKU, supports simple and variable products), `set-stock` (sets WooCommerce stock to an exact quantity). |
 | `supabase/functions/woo-webhook/` | Receives WooCommerce order.created/updated webhooks. |
 | `supabase/functions/woo-auto-sync/` | Cron-triggered automatic WooCommerce order sync. |
 | `supabase/functions/pathao-create-order/` | Creates shipment orders in Pathao API. |
@@ -470,6 +482,15 @@ All schema changes are in `supabase/migrations/`. Files are named by timestamp a
 | `order_courier_info` | `resolver_reason` | text | Reason recorded when a collection match conflict is manually resolved. |
 | `lens_brands` | — | table | Prescription lens brands (name, active flag, display order). |
 | `lens_brand_types` | — | table | Lens types per brand (name, high index flag, lab price, customer price, active). |
+| `warehouse_locations` | `capacity`, `slots_used` | integer | Capacity limit and current slot usage for capacity-aware location management. |
+| `products` | `default_slot_count` | integer | How many slots a single unit of this product occupies in a warehouse location. |
+| `inventory_lots` | `location_id` | uuid (FK) | Lots are now always associated with a warehouse location. Zeroed lots (from bulk transfer merges) keep their `location_id` pointing to the destination for traceability. |
+| `return_items` | `restock_location_id` | uuid (FK) | The warehouse location where the return item was restocked. |
+| `return_items` | `restocked_at` | timestamptz | Timestamp of when the item was restocked. |
+| `orders` | `billing_address` | jsonb | Billing address fields (name, address, city, postcode, country). |
+| `order_lot_reservations` | — | table | Reservation engine: links each order to the specific lots reserved for it, with quantities. Used by the pick modal to deduct the right lots on fulfillment. |
+| `notifications` | — | table | In-app notification records (user_id, type, title, body, read flag, created_at). Drives the notification bell in the header. |
+| `bulk_location_transfers` | — | table | Audit log of every bulk location transfer (source, destination, lots moved, units moved, reserved units, JSON summary). |
 
 ---
 
@@ -479,3 +500,5 @@ All schema changes are in `supabase/migrations/`. Files are named by timestamp a
 - **Dashboard** and **Login** are eagerly loaded (always needed immediately).
 - Each operations table (NotPrintedTable, PrintedTable, etc.) is now its own file — changing the picked table no longer requires loading the shipped table's code.
 - The Collection sub-module (`src/pages/finance/collection/`) is split across 12 files — reference the specific file for the tab or workflow you need.
+- The notification bell lives in `src/contexts/NotificationContext.tsx` (polling + count) and `src/components/NotificationToast.tsx` (transient toast). The full notification list page is `src/pages/Notifications.tsx`.
+- The `bulk_transfer_location` Postgres RPC **never deletes** source lots — it zeroes them and updates `location_id` to preserve FK integrity across `stock_movements`, `inventory_audit_lines`, `order_picks`, `audit_flags`, `goods_receipt_lines`, and `packaging_dispatch_items`.

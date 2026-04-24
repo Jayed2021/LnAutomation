@@ -173,9 +173,8 @@ export function buildInvoiceHtml(
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;gap:32px;">
       <div style="font-size:12.5px;line-height:1.7;">
         <div style="font-weight:600;font-size:13px;">${esc(order.customer?.full_name)}</div>
-        ${order.customer?.address_line1 ? `<div>${esc(order.customer.address_line1)}</div>` : ''}
-        ${order.customer?.city && order.customer?.district && order.customer.city !== order.customer.district ? `<div>${esc(order.customer.city)}</div>` : ''}
-        ${order.customer?.district ? `<div style="text-transform:uppercase;">${esc(order.customer.district)}</div>` : ''}
+        ${(order.billing_address_line1 ?? order.customer?.address_line1) ? `<div>${esc((order.billing_address_line1 ?? order.customer?.address_line1)!)}</div>` : ''}
+        ${(order.billing_district ?? order.customer?.district) ? `<div style="text-transform:uppercase;">${esc((order.billing_district ?? order.customer?.district)!)}</div>` : ''}
         ${order.customer?.phone_primary ? `<div>${esc(order.customer.phone_primary)}</div>` : ''}
       </div>
       <div style="font-size:12.5px;line-height:1.7;">
@@ -359,9 +358,8 @@ export function buildPackingSlipHtml(
       <div style="flex:1.5;padding:12px 16px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
         <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${esc(order.customer?.full_name)}</div>
         ${order.customer?.phone_primary ? `<div>${esc(order.customer.phone_primary)}</div>` : ''}
-        ${order.customer?.address_line1 ? `<div>${esc(order.customer.address_line1)}</div>` : ''}
-        ${order.customer?.city && order.customer?.district && order.customer.city !== order.customer.district ? `<div>${esc(order.customer.city)}</div>` : ''}
-        ${order.customer?.district ? `<div style="font-weight:600;">${esc(order.customer.district)}</div>` : ''}
+        ${(order.billing_address_line1 ?? order.customer?.address_line1) ? `<div>${esc((order.billing_address_line1 ?? order.customer?.address_line1)!)}</div>` : ''}
+        ${(order.billing_district ?? order.customer?.district) ? `<div style="font-weight:600;">${esc((order.billing_district ?? order.customer?.district)!)}</div>` : ''}
       </div>
     </div>
 

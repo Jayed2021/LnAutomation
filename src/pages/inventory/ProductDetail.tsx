@@ -115,6 +115,7 @@ export default function ProductDetail() {
   const [editLotForm, setEditLotForm] = useState({ lotId: '', lotNumber: '', barcode: '' });
   const [editLotSaving, setEditLotSaving] = useState(false);
   const [editLotError, setEditLotError] = useState<string | null>(null);
+  const [expandedLots, setExpandedLots] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (id) loadAll(id);
@@ -625,7 +626,7 @@ export default function ProductDetail() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => { setAdjustError(null); setAdjustForm({ lotId: lots[0]?.id || '', delta: '', notes: '' }); setShowAdjustModal(true); }}
+                    onClick={() => { setAdjustError(null); setAdjustForm({ lotId: (lots.find(l => l.remaining_quantity > 0) ?? lots[0])?.id || '', delta: '', notes: '' }); setShowAdjustModal(true); }}
                     className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 rounded-md hover:bg-gray-100 transition-colors"
                     title="Adjust stock"
                   >
@@ -1055,9 +1056,25 @@ export default function ProductDetail() {
       </Card>
 
       <Card>
-        <div className="p-5 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-800">Shipments</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Each shipment has a unique barcode for tracking and dispatch</p>
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800">Shipments</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Each shipment has a unique barcode for tracking and dispatch</p>
+          </div>
+          {lots.length > 0 && (
+            <button
+              onClick={() => {
+                if (expandedLots.size === lots.length) {
+                  setExpandedLots(new Set());
+                } else {
+                  setExpandedLots(new Set(lots.map(l => l.id)));
+                }
+              }}
+              className="text-xs text-gray-500 hover:text-gray-700 font-medium transition-colors"
+            >
+              {expandedLots.size === lots.length ? 'Collapse all' : 'Expand all'}
+            </button>
+          )}
         </div>
         {lots.length === 0 ? (
           <div className="p-10 text-center">
@@ -1065,96 +1082,135 @@ export default function ProductDetail() {
             <p className="text-sm text-gray-400">No shipments on record</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shipment Barcode</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lot ID</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Received Date</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PO ID</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
-                  <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Landed Cost</th>
-                  <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Initial Qty</th>
-                  <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Remaining Qty</th>
-                  <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Lot Value</th>
-                  {isAdmin && <th className="px-5 py-3"></th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {lots.map(lot => {
-                  const lotValue = lot.remaining_quantity * lot.landed_cost_per_unit;
-                  const shipmentBarcode = lot.barcode || lot.lot_number;
-                  return (
-                    <tr key={lot.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center px-2 py-0.5 border border-gray-300 rounded text-xs font-mono text-gray-700 bg-white">
-                            {shipmentBarcode}
-                          </span>
-                          <button
-                            onClick={() => barcodeSettings && downloadBarcodePNG(shipmentBarcode, lot.lot_number, barcodeSettings)}
-                            className="text-gray-400 hover:text-gray-600 transition-colors"
-                            title="Download barcode PNG"
-                            disabled={!barcodeSettings}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </button>
+          <div className="divide-y divide-gray-100">
+            {lots.map((lot, idx) => {
+              const lotValue = lot.remaining_quantity * lot.landed_cost_per_unit;
+              const shipmentBarcode = lot.barcode || lot.lot_number;
+              const isOpen = expandedLots.has(lot.id);
+              const toggleOpen = () => setExpandedLots(prev => {
+                const next = new Set(prev);
+                if (next.has(lot.id)) next.delete(lot.id); else next.add(lot.id);
+                return next;
+              });
+              return (
+                <div key={lot.id} className={idx === 0 ? '' : ''}>
+                  {/* Accordion header */}
+                  <button
+                    onClick={toggleOpen}
+                    className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition-colors text-left"
+                  >
+                    <div className={`flex-shrink-0 w-5 h-5 rounded flex items-center justify-center transition-colors ${isOpen ? 'text-gray-700' : 'text-gray-400'}`}>
+                      {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </div>
+                    {/* Lot ID */}
+                    <span className="font-mono text-sm font-semibold text-gray-800 w-28 flex-shrink-0">{lot.lot_number}</span>
+                    {/* Location badge */}
+                    <span className="flex items-center gap-1 text-xs text-gray-500 w-24 flex-shrink-0">
+                      <MapPin className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                      {lot.location ? lot.location.code : <span className="text-gray-300">—</span>}
+                    </span>
+                    {/* Received date */}
+                    <span className="text-xs text-gray-400 flex-shrink-0 hidden sm:block">
+                      {new Date(lot.received_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                    <div className="flex-1" />
+                    {/* Remaining qty pill */}
+                    <span className={`flex-shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold ${lot.remaining_quantity === 0 ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                      {lot.remaining_quantity} remaining
+                    </span>
+                    {/* Lot value */}
+                    {canSeeCosts && (
+                      <span className="flex-shrink-0 text-sm font-medium text-gray-700 w-24 text-right hidden md:block">
+                        ৳ {lotValue.toLocaleString('en-BD', { maximumFractionDigits: 0 })}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Accordion body */}
+                  {isOpen && (
+                    <div className="bg-gray-50 border-t border-gray-100 px-5 py-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Shipment Barcode</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center px-2 py-0.5 border border-gray-300 rounded text-xs font-mono text-gray-700 bg-white">
+                              {shipmentBarcode}
+                            </span>
+                            <button
+                              onClick={() => barcodeSettings && downloadBarcodePNG(shipmentBarcode, lot.lot_number, barcodeSettings)}
+                              className="text-gray-400 hover:text-gray-600 transition-colors"
+                              title="Download barcode PNG"
+                              disabled={!barcodeSettings}
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                      </td>
-                      <td className="px-5 py-3 text-sm font-mono text-gray-700">{lot.lot_number}</td>
-                      <td className="px-5 py-3 text-sm text-gray-600">
-                        {new Date(lot.received_date).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })}
-                      </td>
-                      <td className="px-5 py-3 text-sm font-mono text-gray-600">{lot.po_number || '—'}</td>
-                      <td className="px-5 py-3">
-                        {lot.location ? (
-                          <span className="flex items-center gap-1 text-sm text-gray-700">
-                            <MapPin className="w-3 h-3 text-gray-400" />
-                            {lot.location.code}
-                          </span>
-                        ) : <span className="text-gray-400">—</span>}
-                      </td>
-                      <td className="px-5 py-3 text-right text-sm">
-                        {canSeeCosts
-                          ? <span className="text-gray-900">৳ {lot.landed_cost_per_unit.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          : <span className="text-gray-400 italic text-xs">Restricted</span>}
-                      </td>
-                      <td className="px-5 py-3 text-right text-sm text-gray-700">{lot.received_quantity}</td>
-                      <td className="px-5 py-3 text-right">
-                        <span className={`text-sm font-semibold ${lot.remaining_quantity === 0 ? 'text-red-500' : 'text-gray-900'}`}>
-                          {lot.remaining_quantity}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-right text-sm">
-                        {canSeeCosts
-                          ? <span className="font-medium text-gray-900">৳ {lotValue.toLocaleString('en-BD', { maximumFractionDigits: 2 })}</span>
-                          : <span className="text-gray-400 italic text-xs">Restricted</span>}
-                      </td>
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Received Date</p>
+                          <p className="text-sm text-gray-700">
+                            {new Date(lot.received_date).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">PO ID</p>
+                          <p className="text-sm font-mono text-gray-700">{lot.po_number || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Location</p>
+                          {lot.location ? (
+                            <span className="flex items-center gap-1 text-sm text-gray-700">
+                              <MapPin className="w-3 h-3 text-gray-400" />
+                              {lot.location.code}
+                            </span>
+                          ) : <span className="text-sm text-gray-400">—</span>}
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Landed Cost</p>
+                          <p className="text-sm text-gray-700">
+                            {canSeeCosts
+                              ? `৳ ${lot.landed_cost_per_unit.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : <span className="text-gray-400 italic text-xs">Restricted</span>}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Initial Qty</p>
+                          <p className="text-sm text-gray-700">{lot.received_quantity}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Remaining Qty</p>
+                          <p className={`text-sm font-semibold ${lot.remaining_quantity === 0 ? 'text-red-500' : 'text-gray-900'}`}>
+                            {lot.remaining_quantity}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Lot Value</p>
+                          <p className="text-sm font-medium text-gray-900">
+                            {canSeeCosts
+                              ? `৳ ${lotValue.toLocaleString('en-BD', { maximumFractionDigits: 2 })}`
+                              : <span className="text-gray-400 italic text-xs">Restricted</span>}
+                          </p>
+                        </div>
+                      </div>
                       {isAdmin && (
-                        <td className="px-5 py-3 text-right">
+                        <div className="mt-4 pt-3 border-t border-gray-200 flex justify-end">
                           <button
                             onClick={() => {
-                              setEditLotForm({
-                                lotId: lot.id,
-                                lotNumber: lot.lot_number,
-                                barcode: lot.barcode || '',
-                              });
+                              setEditLotForm({ lotId: lot.id, lotNumber: lot.lot_number, barcode: lot.barcode || '' });
                               setEditLotError(null);
                               setShowEditLotModal(true);
                             }}
-                            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
-                            title="Edit Lot ID and Shipment Barcode"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
                           >
-                            <Pencil className="w-3.5 h-3.5" />
+                            <Pencil className="w-3 h-3" /> Edit Lot / Barcode
                           </button>
-                        </td>
+                        </div>
                       )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>
@@ -1177,11 +1233,11 @@ export default function ProductDetail() {
                 <select
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-400 focus:border-transparent"
                   value={adjustForm.lotId}
-                  onChange={e => setAdjustForm(f => ({ ...f, lotId: e.target.value }))}
+                  onChange={e => { setAdjustError(null); setAdjustForm(f => ({ ...f, lotId: e.target.value, delta: '' })); }}
                 >
-                  {lots.filter(l => l.remaining_quantity > 0).map(l => (
+                  {lots.map(l => (
                     <option key={l.id} value={l.id}>
-                      {l.lot_number} — {l.remaining_quantity} units {l.location ? `@ ${l.location.code}` : ''}
+                      {l.lot_number} — {l.remaining_quantity} units {l.location ? `@ ${l.location.code}` : ''}{l.remaining_quantity === 0 ? ' (depleted)' : ''}
                     </option>
                   ))}
                 </select>

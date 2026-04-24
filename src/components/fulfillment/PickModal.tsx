@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Package, MapPin, CheckCircle2, ScanLine, Camera, AlertTriangle, FlaskConical, Check, Lock } from 'lucide-react';
+import { X, Package, MapPin, CheckCircle2, ScanLine, Camera, AlertTriangle, FlaskConical, Check, Lock, RotateCcw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Dialog, DialogContent } from '../ui/Dialog';
 import { Button } from '../ui/Button';
@@ -52,8 +52,17 @@ interface ItemPickState {
 
 type OverrideReason = 'product_damaged' | 'physically_unavailable' | 'other';
 
+interface AlternativeLot {
+  lot_id: string;
+  barcode: string;
+  lot_number: string;
+  location_code: string;
+  available_quantity: number;
+}
+
 type ScanScenario =
   | { type: 'different_lot'; scannedBarcode: string; recommendedBarcode: string; scannedLocationCode?: string }
+  | { type: 'override_selection' }
   | null;
 
 const OVERRIDE_REASON_LABELS: Record<OverrideReason, string> = {
@@ -75,6 +84,10 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const [discrepancyReason, setDiscrepancyReason] = useState('');
   const [overrideReason, setOverrideReason] = useState<OverrideReason>('physically_unavailable');
   const [noItemsToPick, setNoItemsToPick] = useState(false);
+  const [alternativeLots, setAlternativeLots] = useState<AlternativeLot[]>([]);
+  const [alternativeLotsLoading, setAlternativeLotsLoading] = useState(false);
+  const [selectedOverrideLot, setSelectedOverrideLot] = useState<AlternativeLot | null>(null);
+  const [overrideProcessing, setOverrideProcessing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const scannerFiredRef = useRef(false);
 
@@ -372,6 +385,90 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
     advanceToNext(newStates, currentItemIndex);
   };
 
+  const openOverrideSelection = async () => {
+    if (!currentItem || !currentLot) return;
+    setAlternativeLots([]);
+    setSelectedOverrideLot(null);
+    setOverrideReason('physically_unavailable');
+    setDiscrepancyReason('');
+    setScanScenario({ type: 'override_selection' });
+    setScanError('');
+    setAlternativeLotsLoading(true);
+    try {
+      const { data: lots } = await supabase
+        .from('inventory_lots')
+        .select(`id, lot_number, barcode, remaining_quantity, reserved_quantity, received_date, location:warehouse_locations(code)`)
+        .eq('product_id', currentItem.product_id)
+        .neq('barcode', currentLot.barcode)
+        .order('received_date', { ascending: true });
+
+      const alts: AlternativeLot[] = (lots || [])
+        .filter(l => (l.remaining_quantity - (l.reserved_quantity ?? 0)) > 0)
+        .map(l => ({
+          lot_id: l.id,
+          barcode: l.barcode || l.lot_number,
+          lot_number: l.lot_number,
+          location_code: (l.location as any)?.code || 'N/A',
+          available_quantity: l.remaining_quantity - (l.reserved_quantity ?? 0),
+        }));
+      setAlternativeLots(alts);
+    } catch (err) {
+      console.error('Error fetching alternative lots:', err);
+    } finally {
+      setAlternativeLotsLoading(false);
+    }
+  };
+
+  const handleConfirmOverride = async () => {
+    if (!currentItem || !currentLot || !selectedOverrideLot) return;
+    setOverrideProcessing(true);
+    try {
+      const reasonLabel = OVERRIDE_REASON_LABELS[overrideReason];
+      const fullReason = discrepancyReason.trim()
+        ? `${reasonLabel}: ${discrepancyReason.trim()}`
+        : reasonLabel;
+
+      await supabase.from('pick_discrepancy_log').insert({
+        order_id: order.id,
+        order_item_id: currentItem.item_id,
+        sku: currentItem.sku,
+        product_name: currentItem.product_name,
+        recommended_lot_barcode: currentLot.barcode,
+        recommended_location_code: currentLot.location_code,
+        override_lot_barcode: selectedOverrideLot.barcode,
+        override_location_code: selectedOverrideLot.location_code,
+        override_reason: overrideReason,
+        reason: fullReason,
+        picked_by: 'operator',
+      });
+
+      // Swap the active lot in local state so subsequent scans validate against the new lot
+      const newLot: LotRecommendation = {
+        lot_id: selectedOverrideLot.lot_id,
+        lot_number: selectedOverrideLot.lot_number,
+        barcode: selectedOverrideLot.barcode,
+        location_code: selectedOverrideLot.location_code,
+        available_quantity: selectedOverrideLot.available_quantity,
+        received_date: '',
+        recommended_quantity: currentLot.recommended_quantity,
+      };
+      const newStates = [...itemStates];
+      const updatedLots = [newLot, ...newStates[currentItemIndex].lots.slice(1)];
+      newStates[currentItemIndex] = { ...newStates[currentItemIndex], lots: updatedLots };
+      setItemStates(newStates);
+
+      setScanScenario(null);
+      setSelectedOverrideLot(null);
+      setDiscrepancyReason('');
+      setOverrideReason('physically_unavailable');
+      setTimeout(() => inputRef.current?.focus(), 50);
+    } catch (err) {
+      console.error('Override confirm error:', err);
+    } finally {
+      setOverrideProcessing(false);
+    }
+  };
+
   const handleManualConfirm = () => {
     if (!currentItem || currentItem.done) return;
     setScanError('');
@@ -594,6 +691,95 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                   >
                     {processing ? 'Processing...' : (isLabPick ? 'Send to Lab' : 'Complete Pick')}
                   </Button>
+                </div>
+              ) : scanScenario?.type === 'override_selection' ? (
+                <div className="border border-orange-200 bg-orange-50 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 bg-orange-600 text-white flex items-center gap-2">
+                    <RotateCcw className="h-4 w-4 flex-shrink-0" />
+                    <span className="text-sm font-semibold">Override Recommended Lot</span>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    <div className="bg-white border border-orange-100 rounded-xl p-3">
+                      <div className="text-xs text-gray-500 mb-1 font-semibold">System Recommended</div>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs text-gray-400 mb-0.5">Barcode</div>
+                          <div className="font-bold text-green-700 font-mono text-sm">{currentLot?.barcode}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400 mb-0.5 flex items-center gap-1"><MapPin className="h-3 w-3" /> Location</div>
+                          <div className="font-bold text-blue-700">{currentLot?.location_code}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-semibold text-orange-800">Reason for override (required)</label>
+                      {(Object.keys(OVERRIDE_REASON_LABELS) as OverrideReason[]).filter(k => k !== 'other').map(key => (
+                        <label key={key} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${overrideReason === key ? 'border-orange-400 bg-orange-100/60' : 'border-orange-100 bg-white hover:bg-orange-50/60'}`}>
+                          <input
+                            type="radio"
+                            name="proactive_override_reason"
+                            value={key}
+                            checked={overrideReason === key}
+                            onChange={() => setOverrideReason(key)}
+                            className="accent-orange-500 flex-shrink-0"
+                          />
+                          <span className="text-sm text-orange-900">{OVERRIDE_REASON_LABELS[key]}</span>
+                        </label>
+                      ))}
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-orange-800 mb-1.5">Select alternative lot</label>
+                      {alternativeLotsLoading ? (
+                        <div className="text-xs text-gray-400 py-3 text-center">Loading available lots...</div>
+                      ) : alternativeLots.length === 0 ? (
+                        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+                          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                          No other lots available for this product.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                          {alternativeLots.map(lot => (
+                            <button
+                              key={lot.lot_id}
+                              type="button"
+                              onClick={() => setSelectedOverrideLot(lot)}
+                              className={`w-full flex items-center justify-between p-2.5 rounded-lg border text-left transition-colors ${selectedOverrideLot?.lot_id === lot.lot_id ? 'border-orange-400 bg-orange-100/60' : 'border-orange-100 bg-white hover:bg-orange-50/60'}`}
+                            >
+                              <div>
+                                <div className="font-bold text-gray-800 font-mono text-sm">{lot.barcode}</div>
+                                <div className="flex items-center gap-1 text-xs text-gray-500 mt-0.5">
+                                  <MapPin className="h-3 w-3" /> {lot.location_code}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-xs text-gray-400">Available</div>
+                                <div className="font-bold text-gray-700">{lot.available_quantity}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        onClick={() => { setScanScenario(null); setTimeout(() => inputRef.current?.focus(), 50); }}
+                        className="py-2.5 border-2 border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-400 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleConfirmOverride}
+                        disabled={!selectedOverrideLot || overrideProcessing}
+                        className="py-2.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-sm font-medium transition-colors"
+                      >
+                        {overrideProcessing ? 'Confirming...' : 'Confirm Override'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ) : scanScenario?.type === 'different_lot' ? (
                 <div className="border border-amber-200 bg-amber-50 rounded-xl overflow-hidden">
@@ -818,6 +1004,21 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                         </p>
                       )}
                     </div>
+
+                    {currentLot && (
+                      <div className="pt-1 border-t border-blue-100">
+                        <button
+                          onClick={openOverrideSelection}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 border border-orange-300 text-orange-700 hover:bg-orange-50 active:bg-orange-100 rounded-xl text-sm font-medium transition-colors"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          Override Recommended Lot
+                        </button>
+                        <p className="text-xs text-gray-400 text-center mt-1.5">
+                          Use if the recommended lot is damaged or unavailable
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}

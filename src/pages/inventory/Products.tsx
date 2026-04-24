@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -9,7 +9,7 @@ import { Badge } from '../../components/ui/Badge';
 import WooImportModal from '../../components/inventory/WooImportModal';
 import CsvBulkUpdateModal from '../../components/inventory/CsvBulkUpdateModal';
 import ExportProductsModal from '../../components/inventory/ExportProductsModal';
-import { Search, Plus, Package, AlertTriangle, DollarSign, TrendingDown, ChevronRight, X, ShoppingCart, FileDown, FileUp, ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsUpDown, ChevronUp, ChevronDown, Trash2, Image as ImageIcon, Upload } from 'lucide-react';
+import { Search, Plus, Package, AlertTriangle, DollarSign, TrendingDown, ChevronRight, X, ShoppingCart, FileDown, FileUp, ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsUpDown, ChevronUp, ChevronDown, Trash2, Image as ImageIcon, Upload, ExternalLink, MapPin, Loader2 } from 'lucide-react';
 
 const PAGE_SIZE = 30;
 
@@ -18,6 +18,11 @@ type SortDir = 'asc' | 'desc';
 type ProductType = 'saleable_goods' | 'packaging_material';
 
 const STATUS_ORDER: Record<string, number> = { in_stock: 0, low_stock: 1, out_of_stock: 2 };
+
+interface LocationSummary {
+  code: string;
+  qty: number;
+}
 
 interface Product {
   id: string;
@@ -32,9 +37,23 @@ interface Product {
   product_type: ProductType;
   created_at: string;
   total_quantity: number;
-  lot_count: number;
   stock_value: number;
   avg_cost: number;
+  locations: LocationSummary[];
+}
+
+interface LotDetail {
+  lot_number: string;
+  location_code: string | null;
+  received_date: string | null;
+  received_quantity: number;
+  remaining_quantity: number;
+  landed_cost_per_unit: number;
+}
+
+interface ProductDetail {
+  lots: LotDetail[];
+  suppliers: string[];
 }
 
 interface Supplier {
@@ -90,6 +109,9 @@ export default function Products() {
   const [showCsvUpdate, setShowCsvUpdate] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+  const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+  const [expandedProductData, setExpandedProductData] = useState<Record<string, ProductDetail>>({});
+  const [expandedProductLoading, setExpandedProductLoading] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -119,29 +141,34 @@ export default function Products() {
     try {
       const [allProducts, allLots, suppRes, allProdSupp] = await Promise.all([
         fetchAllRows(supabase.from('products').select('*').eq('is_active', true).order('created_at', { ascending: false })),
-        fetchAllRows(supabase.from('inventory_lots').select('product_id, remaining_quantity, received_quantity, landed_cost_per_unit')),
+        fetchAllRows(supabase.from('inventory_lots').select('product_id, remaining_quantity, received_quantity, landed_cost_per_unit, location_id, warehouse_locations(code)')),
         supabase.from('suppliers').select('id, name').eq('is_active', true).order('name'),
         fetchAllRows(supabase.from('product_suppliers').select('product_id, supplier_id')),
       ]);
 
-      const lots = allLots;
-      const lotMap: Record<string, { qty: number; lotCount: number; totalCost: number }> = {};
-      lots.forEach(lot => {
-        if (!lotMap[lot.product_id]) lotMap[lot.product_id] = { qty: 0, lotCount: 0, totalCost: 0 };
+      const lotMap: Record<string, { qty: number; totalCost: number; locationMap: Record<string, number> }> = {};
+      allLots.forEach((lot: any) => {
+        if (!lotMap[lot.product_id]) lotMap[lot.product_id] = { qty: 0, totalCost: 0, locationMap: {} };
         lotMap[lot.product_id].qty += lot.remaining_quantity;
-        lotMap[lot.product_id].lotCount += 1;
         lotMap[lot.product_id].totalCost += lot.remaining_quantity * lot.landed_cost_per_unit;
+        if (lot.remaining_quantity > 0 && lot.warehouse_locations?.code) {
+          const code = lot.warehouse_locations.code;
+          lotMap[lot.product_id].locationMap[code] = (lotMap[lot.product_id].locationMap[code] || 0) + lot.remaining_quantity;
+        }
       });
 
       const enriched: Product[] = allProducts.map(p => {
-        const lm = lotMap[p.id] || { qty: 0, lotCount: 0, totalCost: 0 };
+        const lm = lotMap[p.id] || { qty: 0, totalCost: 0, locationMap: {} };
+        const locations: LocationSummary[] = Object.entries(lm.locationMap)
+          .map(([code, qty]) => ({ code, qty }))
+          .sort((a, b) => a.code.localeCompare(b.code));
         return {
           ...p,
           product_type: (p.product_type as ProductType) || 'saleable_goods',
           total_quantity: lm.qty,
-          lot_count: lm.lotCount,
           stock_value: lm.totalCost,
-          avg_cost: lm.qty > 0 ? lm.totalCost / lm.qty : 0
+          avg_cost: lm.qty > 0 ? lm.totalCost / lm.qty : 0,
+          locations,
         };
       });
 
@@ -239,6 +266,47 @@ export default function Products() {
     return sortDir === 'asc'
       ? <ChevronUp className="w-3 h-3 text-gray-700 ml-1 inline" />
       : <ChevronDown className="w-3 h-3 text-gray-700 ml-1 inline" />;
+  };
+
+  const loadProductDetail = async (productId: string) => {
+    if (expandedProductId === productId) {
+      setExpandedProductId(null);
+      return;
+    }
+    setExpandedProductId(productId);
+    if (expandedProductData[productId]) return;
+    setExpandedProductLoading(true);
+    try {
+      const [lotsRes, suppRes] = await Promise.all([
+        supabase
+          .from('inventory_lots')
+          .select('lot_number, received_date, received_quantity, remaining_quantity, landed_cost_per_unit, warehouse_locations(code)')
+          .eq('product_id', productId)
+          .gt('remaining_quantity', 0)
+          .order('received_date', { ascending: false }),
+        supabase
+          .from('product_suppliers')
+          .select('suppliers(name)')
+          .eq('product_id', productId),
+      ]);
+
+      const lots: LotDetail[] = (lotsRes.data || []).map((l: any) => ({
+        lot_number: l.lot_number,
+        location_code: l.warehouse_locations?.code ?? null,
+        received_date: l.received_date,
+        received_quantity: l.received_quantity,
+        remaining_quantity: l.remaining_quantity,
+        landed_cost_per_unit: l.landed_cost_per_unit,
+      }));
+
+      const suppliers: string[] = (suppRes.data || [])
+        .map((ps: any) => ps.suppliers?.name)
+        .filter(Boolean);
+
+      setExpandedProductData(prev => ({ ...prev, [productId]: { lots, suppliers } }));
+    } finally {
+      setExpandedProductLoading(false);
+    }
   };
 
   const statusVariant: Record<string, 'emerald' | 'amber' | 'red'> = {
@@ -599,77 +667,186 @@ export default function Products() {
                 {paginated.map(p => {
                   const status = getStockStatus(p);
                   const isSelected = selectedProductIds.has(p.id);
+                  const isExpanded = expandedProductId === p.id;
+                  const detail = expandedProductData[p.id];
                   return (
-                    <tr
-                      key={p.id}
-                      className={`group hover:bg-gray-50 transition-colors cursor-pointer ${isSelected ? 'bg-blue-50/40' : ''} ${highlightedId === p.id ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/60' : ''}`}
-                      onClick={() => navigate(`/inventory/products/${p.id}`)}
-                    >
-                      <td className="px-4 py-4 w-10" onClick={e => toggleSelect(p.id, e)}>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => {}}
-                          className="rounded border-gray-300 text-gray-900 focus:ring-gray-900 cursor-pointer"
-                        />
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0 border border-gray-200">
-                            {p.image_url ? (
-                              <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-gray-300">
-                                <Package className="w-5 h-5" />
-                              </div>
-                            )}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-semibold text-gray-900 text-sm">{p.sku}</p>
-                              {p.product_type === 'packaging_material' && (
-                                <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded">PKG</span>
+                    <React.Fragment key={p.id}>
+                      <tr
+                        className={`group hover:bg-gray-50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-50' : ''} ${isSelected ? 'bg-blue-50/40' : ''} ${highlightedId === p.id ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/60' : ''}`}
+                        onClick={() => loadProductDetail(p.id)}
+                      >
+                        <td className="px-4 py-4 w-10" onClick={e => toggleSelect(p.id, e)}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}}
+                            className="rounded border-gray-300 text-gray-900 focus:ring-gray-900 cursor-pointer"
+                          />
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0 border border-gray-200">
+                              {p.image_url ? (
+                                <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-gray-300">
+                                  <Package className="w-5 h-5" />
+                                </div>
                               )}
                             </div>
-                            <p className="text-xs text-gray-500 mt-0.5">{p.name}</p>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="font-semibold text-gray-900 text-sm">{p.sku}</p>
+                                {p.product_type === 'packaging_material' && (
+                                  <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded">PKG</span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5">{p.name}</p>
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{p.category || '—'}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
-                        <span className={`text-sm font-semibold ${p.total_quantity < p.low_stock_threshold && p.total_quantity > 0 ? 'text-amber-600' : p.total_quantity === 0 ? 'text-red-600' : 'text-gray-900'}`}>
-                          {p.total_quantity}
-                        </span>
-                        {p.lot_count > 0 && <span className="text-xs text-gray-400 ml-1">({p.lot_count} lots)</span>}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                        {canSeeCosts
-                          ? <span className="text-gray-900">৳ {p.avg_cost.toLocaleString('en-BD', { maximumFractionDigits: 0 })}</span>
-                          : <span className="text-gray-400 italic text-xs">Restricted</span>}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                        {canSeeCosts
-                          ? <span className="font-medium text-gray-900">৳ {p.stock_value.toLocaleString('en-BD', { maximumFractionDigits: 0 })}</span>
-                          : <span className="text-gray-400 italic text-xs">Restricted</span>}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                        {p.selling_price ? `৳ ${p.selling_price.toLocaleString('en-BD')}` : '—'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <Badge variant={statusVariant[status]}>{statusLabel[status]}</Badge>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={e => handleDeleteClick(e, p)}
-                            className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors opacity-0 group-hover:opacity-100"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <ChevronRight className="w-4 h-4 text-gray-400" />
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{p.category || '—'}</td>
+                        <td className="px-6 py-4 text-right">
+                          <span className={`text-sm font-semibold ${p.total_quantity < p.low_stock_threshold && p.total_quantity > 0 ? 'text-amber-600' : p.total_quantity === 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                            {p.total_quantity}
+                          </span>
+                          {p.locations.length > 0 && (
+                            <div className="flex flex-wrap gap-1 justify-end mt-1">
+                              {p.locations.map(loc => (
+                                <span key={loc.code} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-gray-100 text-gray-500 text-xs rounded border border-gray-200 whitespace-nowrap">
+                                  <MapPin className="w-2.5 h-2.5 flex-shrink-0" />
+                                  {loc.code} · {loc.qty}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                          {canSeeCosts
+                            ? <span className="text-gray-900">৳ {p.avg_cost.toLocaleString('en-BD', { maximumFractionDigits: 0 })}</span>
+                            : <span className="text-gray-400 italic text-xs">Restricted</span>}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                          {canSeeCosts
+                            ? <span className="font-medium text-gray-900">৳ {p.stock_value.toLocaleString('en-BD', { maximumFractionDigits: 0 })}</span>
+                            : <span className="text-gray-400 italic text-xs">Restricted</span>}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                          {p.selling_price ? `৳ ${p.selling_price.toLocaleString('en-BD')}` : '—'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <Badge variant={statusVariant[status]}>{statusLabel[status]}</Badge>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={e => handleDeleteClick(e, p)}
+                              className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={e => { e.stopPropagation(); navigate(`/inventory/products/${p.id}`); }}
+                              className="p-1.5 text-gray-300 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                              title="Open product detail"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
+                            {isExpanded
+                              ? <ChevronDown className="w-4 h-4 text-gray-500" />
+                              : <ChevronRight className="w-4 h-4 text-gray-400" />
+                            }
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr key={`${p.id}-detail`} className="bg-gray-50 border-t border-gray-100">
+                          <td colSpan={9} className="px-6 py-4">
+                            {expandedProductLoading && !detail ? (
+                              <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                Loading details...
+                              </div>
+                            ) : detail ? (
+                              <div className="space-y-4">
+                                {/* Identity & pricing grid */}
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-2">
+                                  <div>
+                                    <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Barcode</p>
+                                    <p className="text-xs text-gray-700 font-mono">{p.barcode || '—'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Category</p>
+                                    <p className="text-xs text-gray-700">{p.category || '—'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Type</p>
+                                    <p className="text-xs text-gray-700">{p.product_type === 'packaging_material' ? 'Packaging Material' : 'Saleable Goods'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Low Stock Alert</p>
+                                    <p className="text-xs text-gray-700">{p.low_stock_threshold} units</p>
+                                  </div>
+                                  {canSeeCosts && (
+                                    <>
+                                      <div>
+                                        <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Avg Cost</p>
+                                        <p className="text-xs text-gray-700">৳ {p.avg_cost.toLocaleString('en-BD', { maximumFractionDigits: 2 })}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Stock Value</p>
+                                        <p className="text-xs text-gray-700">৳ {p.stock_value.toLocaleString('en-BD', { maximumFractionDigits: 0 })}</p>
+                                      </div>
+                                    </>
+                                  )}
+                                  <div>
+                                    <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Sell Price</p>
+                                    <p className="text-xs text-gray-700">{p.selling_price ? `৳ ${p.selling_price.toLocaleString('en-BD')}` : '—'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Suppliers</p>
+                                    <p className="text-xs text-gray-700">{detail.suppliers.length > 0 ? detail.suppliers.join(', ') : 'None linked'}</p>
+                                  </div>
+                                </div>
+
+                                {/* Lots table */}
+                                {detail.lots.length > 0 && (
+                                  <div>
+                                    <p className="text-xs text-gray-400 uppercase tracking-wider mb-1.5">Active Lots</p>
+                                    <div className="rounded-lg border border-gray-200 overflow-hidden">
+                                      <table className="w-full text-xs">
+                                        <thead className="bg-gray-100">
+                                          <tr>
+                                            <th className="px-3 py-2 text-left text-gray-500 font-medium">Lot</th>
+                                            <th className="px-3 py-2 text-left text-gray-500 font-medium">Location</th>
+                                            <th className="px-3 py-2 text-left text-gray-500 font-medium">Received</th>
+                                            <th className="px-3 py-2 text-right text-gray-500 font-medium">Initial Qty</th>
+                                            <th className="px-3 py-2 text-right text-gray-500 font-medium">Remaining</th>
+                                            {canSeeCosts && <th className="px-3 py-2 text-right text-gray-500 font-medium">Cost/Unit</th>}
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100 bg-white">
+                                          {detail.lots.map((lot, i) => (
+                                            <tr key={i} className="hover:bg-gray-50">
+                                              <td className="px-3 py-1.5 font-mono text-gray-700">{lot.lot_number}</td>
+                                              <td className="px-3 py-1.5 text-gray-600">{lot.location_code || '—'}</td>
+                                              <td className="px-3 py-1.5 text-gray-500">{lot.received_date ? new Date(lot.received_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                                              <td className="px-3 py-1.5 text-right text-gray-700">{lot.received_quantity}</td>
+                                              <td className="px-3 py-1.5 text-right font-semibold text-gray-900">{lot.remaining_quantity}</td>
+                                              {canSeeCosts && <td className="px-3 py-1.5 text-right text-gray-700">৳ {lot.landed_cost_per_unit.toLocaleString('en-BD', { maximumFractionDigits: 2 })}</td>}
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

@@ -116,6 +116,7 @@ export default function ProductDetail() {
   const [editLotSaving, setEditLotSaving] = useState(false);
   const [editLotError, setEditLotError] = useState<string | null>(null);
   const [expandedLots, setExpandedLots] = useState<Set<string>>(new Set());
+  const [shipmentsOpen, setShipmentsOpen] = useState(false);
 
   useEffect(() => {
     if (id) loadAll(id);
@@ -1056,14 +1057,29 @@ export default function ProductDetail() {
       </Card>
 
       <Card>
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-800">Shipments</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Each shipment has a unique barcode for tracking and dispatch</p>
+        <button
+          onClick={() => setShipmentsOpen(o => !o)}
+          className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors text-left"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-gray-400">
+              {shipmentsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">
+                Shipments
+                {lots.length > 0 && (
+                  <span className="ml-2 text-xs font-normal text-gray-400">({lots.length} {lots.length === 1 ? 'lot' : 'lots'})</span>
+                )}
+              </h3>
+              <p className="text-xs text-gray-400 mt-0.5">Each shipment has a unique barcode for tracking and dispatch</p>
+            </div>
           </div>
-          {lots.length > 0 && (
-            <button
-              onClick={() => {
+          {shipmentsOpen && lots.length > 0 && (
+            <span
+              role="button"
+              onClick={e => {
+                e.stopPropagation();
                 if (expandedLots.size === lots.length) {
                   setExpandedLots(new Set());
                 } else {
@@ -1073,16 +1089,17 @@ export default function ProductDetail() {
               className="text-xs text-gray-500 hover:text-gray-700 font-medium transition-colors"
             >
               {expandedLots.size === lots.length ? 'Collapse all' : 'Expand all'}
-            </button>
+            </span>
           )}
-        </div>
-        {lots.length === 0 ? (
-          <div className="p-10 text-center">
+        </button>
+        {shipmentsOpen && lots.length === 0 && (
+          <div className="p-10 text-center border-t border-gray-100">
             <Package className="w-10 h-10 mx-auto mb-2 text-gray-200" />
             <p className="text-sm text-gray-400">No shipments on record</p>
           </div>
-        ) : (
-          <div className="divide-y divide-gray-100">
+        )}
+        {shipmentsOpen && lots.length > 0 && (
+          <div className="divide-y divide-gray-100 border-t border-gray-100">
             {lots.map((lot, idx) => {
               const lotValue = lot.remaining_quantity * lot.landed_cost_per_unit;
               const shipmentBarcode = lot.barcode || lot.lot_number;

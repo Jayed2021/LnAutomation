@@ -275,7 +275,7 @@ Deno.serve(async (req: Request) => {
       if (!dryRun && !specificIdList) {
         await supabase
           .from("app_settings")
-          .upsert({ key: "pathao_sync_cursor", value: null })
+          .update({ value: null })
           .eq("key", "pathao_sync_cursor");
 
         await supabase
@@ -482,7 +482,7 @@ Deno.serve(async (req: Request) => {
         if (poolExhausted) {
           await supabase
             .from("app_settings")
-            .upsert({ key: "pathao_sync_cursor", value: null })
+            .update({ value: null })
             .eq("key", "pathao_sync_cursor");
         } else {
           await supabase

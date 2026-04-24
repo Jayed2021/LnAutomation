@@ -60,9 +60,16 @@ interface AlternativeLot {
   available_quantity: number;
 }
 
+interface LocationGroup {
+  location_code: string;
+  total_available: number;
+  lots: AlternativeLot[];
+  is_recommended: boolean;
+}
+
 type ScanScenario =
   | { type: 'different_lot'; scannedBarcode: string; recommendedBarcode: string; scannedLocationCode?: string }
-  | { type: 'override_selection' }
+  | { type: 'override_selection'; step: 'location' | 'lot' }
   | null;
 
 const OVERRIDE_REASON_LABELS: Record<OverrideReason, string> = {
@@ -85,7 +92,9 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const [overrideReason, setOverrideReason] = useState<OverrideReason>('physically_unavailable');
   const [noItemsToPick, setNoItemsToPick] = useState(false);
   const [alternativeLots, setAlternativeLots] = useState<AlternativeLot[]>([]);
+  const [locationGroups, setLocationGroups] = useState<LocationGroup[]>([]);
   const [alternativeLotsLoading, setAlternativeLotsLoading] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<LocationGroup | null>(null);
   const [selectedOverrideLot, setSelectedOverrideLot] = useState<AlternativeLot | null>(null);
   const [overrideProcessing, setOverrideProcessing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -388,10 +397,12 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
   const openOverrideSelection = async () => {
     if (!currentItem || !currentLot) return;
     setAlternativeLots([]);
+    setLocationGroups([]);
+    setSelectedLocation(null);
     setSelectedOverrideLot(null);
     setOverrideReason('physically_unavailable');
     setDiscrepancyReason('');
-    setScanScenario({ type: 'override_selection' });
+    setScanScenario({ type: 'override_selection', step: 'location' });
     setScanError('');
     setAlternativeLotsLoading(true);
     try {
@@ -399,7 +410,6 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
         .from('inventory_lots')
         .select(`id, lot_number, barcode, remaining_quantity, reserved_quantity, received_date, location:warehouse_locations(code)`)
         .eq('product_id', currentItem.product_id)
-        .neq('barcode', currentLot.barcode)
         .order('received_date', { ascending: true });
 
       const alts: AlternativeLot[] = (lots || [])
@@ -411,12 +421,49 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
           location_code: (l.location as any)?.code || 'N/A',
           available_quantity: l.remaining_quantity - (l.reserved_quantity ?? 0),
         }));
+
+      // Group by location
+      const groupMap = new Map<string, LocationGroup>();
+      for (const lot of alts) {
+        const key = lot.location_code;
+        if (!groupMap.has(key)) {
+          groupMap.set(key, {
+            location_code: key,
+            total_available: 0,
+            lots: [],
+            is_recommended: key === currentLot.location_code,
+          });
+        }
+        const g = groupMap.get(key)!;
+        g.lots.push(lot);
+        g.total_available += lot.available_quantity;
+      }
+
+      // Sort: non-recommended first, then recommended, each group sorted by location code
+      const groups = Array.from(groupMap.values()).sort((a, b) => {
+        if (a.is_recommended !== b.is_recommended) return a.is_recommended ? 1 : -1;
+        return a.location_code.localeCompare(b.location_code);
+      });
+
       setAlternativeLots(alts);
+      setLocationGroups(groups);
     } catch (err) {
       console.error('Error fetching alternative lots:', err);
     } finally {
       setAlternativeLotsLoading(false);
     }
+  };
+
+  const selectLocationForOverride = (group: LocationGroup) => {
+    setSelectedLocation(group);
+    setSelectedOverrideLot(group.lots.length === 1 ? group.lots[0] : null);
+    setScanScenario({ type: 'override_selection', step: 'lot' });
+  };
+
+  const backToLocationStep = () => {
+    setSelectedLocation(null);
+    setSelectedOverrideLot(null);
+    setScanScenario({ type: 'override_selection', step: 'location' });
   };
 
   const handleConfirmOverride = async () => {
@@ -694,25 +741,31 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                 </div>
               ) : scanScenario?.type === 'override_selection' ? (
                 <div className="border border-orange-200 bg-orange-50 rounded-xl overflow-hidden">
+                  {/* Header */}
                   <div className="px-4 py-3 bg-orange-600 text-white flex items-center gap-2">
                     <RotateCcw className="h-4 w-4 flex-shrink-0" />
-                    <span className="text-sm font-semibold">Override Recommended Lot</span>
+                    <span className="text-sm font-semibold">
+                      {scanScenario.step === 'location' ? 'Pick from a Different Location' : `Lots at ${selectedLocation?.location_code}`}
+                    </span>
                   </div>
+
                   <div className="p-4 space-y-4">
+                    {/* System recommendation summary */}
                     <div className="bg-white border border-orange-100 rounded-xl p-3">
-                      <div className="text-xs text-gray-500 mb-1 font-semibold">System Recommended</div>
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-semibold text-gray-500 mb-1.5">System Recommended</div>
+                      <div className="flex items-center gap-4">
                         <div>
-                          <div className="text-xs text-gray-400 mb-0.5">Barcode</div>
+                          <div className="text-xs text-gray-400">Barcode</div>
                           <div className="font-bold text-green-700 font-mono text-sm">{currentLot?.barcode}</div>
                         </div>
                         <div>
-                          <div className="text-xs text-gray-400 mb-0.5 flex items-center gap-1"><MapPin className="h-3 w-3" /> Location</div>
+                          <div className="text-xs text-gray-400 flex items-center gap-0.5"><MapPin className="h-3 w-3" /> Location</div>
                           <div className="font-bold text-blue-700">{currentLot?.location_code}</div>
                         </div>
                       </div>
                     </div>
 
+                    {/* Reason — always shown */}
                     <div className="space-y-1.5">
                       <label className="block text-xs font-semibold text-orange-800">Reason for override (required)</label>
                       {(Object.keys(OVERRIDE_REASON_LABELS) as OverrideReason[]).filter(k => k !== 'other').map(key => (
@@ -730,29 +783,72 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                       ))}
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-orange-800 mb-1.5">Select alternative lot</label>
-                      {alternativeLotsLoading ? (
-                        <div className="text-xs text-gray-400 py-3 text-center">Loading available lots...</div>
-                      ) : alternativeLots.length === 0 ? (
-                        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-                          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-                          No other lots available for this product.
+                    {/* Step 1 — choose location */}
+                    {scanScenario.step === 'location' && (
+                      <div>
+                        <label className="block text-xs font-semibold text-orange-800 mb-1.5">Choose location to pick from</label>
+                        {alternativeLotsLoading ? (
+                          <div className="text-xs text-gray-400 py-3 text-center">Loading available locations...</div>
+                        ) : locationGroups.length === 0 ? (
+                          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+                            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                            No stock available for this product in any location.
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                            {locationGroups.map(group => (
+                              <button
+                                key={group.location_code}
+                                type="button"
+                                onClick={() => selectLocationForOverride(group)}
+                                className="w-full flex items-center justify-between p-3 rounded-xl border bg-white hover:bg-orange-50/60 active:bg-orange-100/60 border-orange-100 text-left transition-colors"
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <MapPin className="h-4 w-4 text-orange-500 flex-shrink-0" />
+                                  <div>
+                                    <div className="font-bold text-gray-800 text-sm">{group.location_code}</div>
+                                    <div className="text-xs text-gray-400">{group.lots.length} lot{group.lots.length !== 1 ? 's' : ''}</div>
+                                  </div>
+                                  {group.is_recommended && (
+                                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold">Recommended</span>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs text-gray-400">Available</div>
+                                  <div className="font-bold text-gray-700">{group.total_available}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="pt-2">
+                          <button
+                            onClick={() => { setScanScenario(null); setTimeout(() => inputRef.current?.focus(), 50); }}
+                            className="w-full py-2.5 border-2 border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-400 transition-colors"
+                          >
+                            Cancel
+                          </button>
                         </div>
-                      ) : (
+                      </div>
+                    )}
+
+                    {/* Step 2 — choose lot at selected location */}
+                    {scanScenario.step === 'lot' && selectedLocation && (
+                      <div>
+                        <label className="block text-xs font-semibold text-orange-800 mb-1.5">
+                          Select shipment lot at <span className="font-mono">{selectedLocation.location_code}</span>
+                        </label>
                         <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                          {alternativeLots.map(lot => (
+                          {selectedLocation.lots.map(lot => (
                             <button
                               key={lot.lot_id}
                               type="button"
                               onClick={() => setSelectedOverrideLot(lot)}
-                              className={`w-full flex items-center justify-between p-2.5 rounded-lg border text-left transition-colors ${selectedOverrideLot?.lot_id === lot.lot_id ? 'border-orange-400 bg-orange-100/60' : 'border-orange-100 bg-white hover:bg-orange-50/60'}`}
+                              className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-colors ${selectedOverrideLot?.lot_id === lot.lot_id ? 'border-orange-400 bg-orange-100/60' : 'border-orange-100 bg-white hover:bg-orange-50/60'}`}
                             >
                               <div>
                                 <div className="font-bold text-gray-800 font-mono text-sm">{lot.barcode}</div>
-                                <div className="flex items-center gap-1 text-xs text-gray-500 mt-0.5">
-                                  <MapPin className="h-3 w-3" /> {lot.location_code}
-                                </div>
+                                <div className="text-xs text-gray-400 mt-0.5">Lot: {lot.lot_number}</div>
                               </div>
                               <div className="text-right">
                                 <div className="text-xs text-gray-400">Available</div>
@@ -761,24 +857,23 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
                             </button>
                           ))}
                         </div>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <button
-                        onClick={() => { setScanScenario(null); setTimeout(() => inputRef.current?.focus(), 50); }}
-                        className="py-2.5 border-2 border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-400 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleConfirmOverride}
-                        disabled={!selectedOverrideLot || overrideProcessing}
-                        className="py-2.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-sm font-medium transition-colors"
-                      >
-                        {overrideProcessing ? 'Confirming...' : 'Confirm Override'}
-                      </button>
-                    </div>
+                        <div className="grid grid-cols-2 gap-2 pt-3">
+                          <button
+                            onClick={backToLocationStep}
+                            className="py-2.5 border-2 border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-400 transition-colors"
+                          >
+                            Back
+                          </button>
+                          <button
+                            onClick={handleConfirmOverride}
+                            disabled={!selectedOverrideLot || overrideProcessing}
+                            className="py-2.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-sm font-medium transition-colors"
+                          >
+                            {overrideProcessing ? 'Confirming...' : 'Confirm Override'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : scanScenario?.type === 'different_lot' ? (

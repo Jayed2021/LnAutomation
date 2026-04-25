@@ -110,6 +110,7 @@ export default function CreatePurchaseOrder() {
   // UI state
   const [shipmentNameTouched, setShipmentNameTouched] = useState(false);
   const [hideZeroQty, setHideZeroQty] = useState(false);
+  const [hideRecommended, setHideRecommended] = useState(false);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
@@ -1332,6 +1333,17 @@ export default function CreatePurchaseOrder() {
                     <EyeOff className="w-3.5 h-3.5" />
                     Hide 0 qty
                   </button>
+                  <button
+                    onClick={() => setHideRecommended(v => !v)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      hideRecommended
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <TrendingDown className="w-3.5 h-3.5" />
+                    {hideRecommended ? 'Badges hidden' : 'Hide badges'}
+                  </button>
                   <div className="relative">
                     <button
                       onClick={() => setShowProductSearch(!showProductSearch)}
@@ -1480,7 +1492,7 @@ export default function CreatePurchaseOrder() {
                             <div>
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium text-gray-900">{item.name}</span>
-                                {item.is_recommended && (
+                                {item.is_recommended && !hideRecommended && (
                                   <span
                                     title={item.recommendation_reason || undefined}
                                     className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full cursor-help"
@@ -1598,7 +1610,7 @@ export default function CreatePurchaseOrder() {
                   </tbody>
                 </table>
               </div>
-              {lineItems.some(i => i.is_recommended) && (
+              {lineItems.some(i => i.is_recommended) && !hideRecommended && (
                 <p className="text-xs text-gray-400 pt-1">
                   <span className="font-medium text-gray-500">Recommended</span> badges are based on current stock levels and average daily sales velocity over the last 60 days, compared against a 45-day lead time estimate. Products with no recent sales history fall back to minimum stock threshold.
                 </p>

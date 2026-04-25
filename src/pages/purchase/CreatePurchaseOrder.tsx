@@ -1137,7 +1137,7 @@ export default function CreatePurchaseOrder() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="flex gap-6 p-6 max-w-screen-xl mx-auto">
+      <div className="flex gap-6 p-6 max-w-[1700px] mx-auto">
         <div className="flex-1 space-y-6 min-w-0">
           <div className="flex items-center gap-3">
             <button
@@ -1498,7 +1498,7 @@ export default function CreatePurchaseOrder() {
                                     className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full cursor-help"
                                   >
                                     <TrendingDown className="w-3 h-3" />
-                                    Recommended
+                                    Reorder
                                   </span>
                                 )}
                               </div>
@@ -1612,7 +1612,7 @@ export default function CreatePurchaseOrder() {
               </div>
               {lineItems.some(i => i.is_recommended) && !hideRecommended && (
                 <p className="text-xs text-gray-400 pt-1">
-                  <span className="font-medium text-gray-500">Recommended</span> badges are based on current stock levels and average daily sales velocity over the last 60 days, compared against a 45-day lead time estimate. Products with no recent sales history fall back to minimum stock threshold.
+                  <span className="font-medium text-gray-500">Reorder</span> badges are based on current stock levels and average daily sales velocity over the last 60 days, compared against a 45-day lead time estimate. Products with no recent sales history fall back to minimum stock threshold.
                 </p>
               )}
             </div>
@@ -2079,7 +2079,7 @@ export default function CreatePurchaseOrder() {
           )}
         </div>
 
-        <div className="w-72 flex-shrink-0 space-y-4">
+        <div className="w-64 flex-shrink-0 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-5 sticky top-6">
             <h2 className="text-base font-semibold text-gray-800 mb-4">Summary</h2>
             <div className="space-y-2.5 text-sm">

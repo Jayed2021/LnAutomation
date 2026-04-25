@@ -30,6 +30,7 @@ interface ProductRow {
   original_supplier_sku: string | null;
   is_recommended: boolean;
   is_custom: boolean;
+  is_cost_item: boolean;
 }
 
 interface PaymentFile {
@@ -113,6 +114,7 @@ export default function CreatePurchaseOrder() {
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [showAddItemMenu, setShowAddItemMenu] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(null);
 
   const [costChangeDialog, setCostChangeDialog] = useState<{
@@ -195,7 +197,7 @@ export default function CreatePurchaseOrder() {
     const [itemsRes, paymentsRes, supplierProductsRes] = await Promise.all([
       supabase
         .from('purchase_order_items')
-        .select('id, sku, product_name, ordered_quantity, unit_price, product_image_url')
+        .select('id, sku, product_name, ordered_quantity, unit_price, product_image_url, is_cost_item')
         .eq('po_id', poId),
       supabase
         .from('supplier_payments')
@@ -245,6 +247,7 @@ export default function CreatePurchaseOrder() {
         original_supplier_sku: row.supplier_sku || null,
         is_recommended: currentQty <= threshold,
         is_custom: false,
+        is_cost_item: false,
       };
     });
 
@@ -269,7 +272,8 @@ export default function CreatePurchaseOrder() {
         supplier_sku: base?.supplier_sku || null,
         original_supplier_sku: base?.original_supplier_sku || null,
         is_recommended: base?.is_recommended || false,
-        is_custom: !base,
+        is_custom: !base || item.is_cost_item,
+        is_cost_item: item.is_cost_item || false,
       };
     });
 
@@ -423,6 +427,7 @@ export default function CreatePurchaseOrder() {
         original_supplier_sku: row.supplier_sku || null,
         is_recommended: isLow,
         is_custom: false,
+        is_cost_item: false,
       };
     });
 
@@ -551,6 +556,30 @@ export default function CreatePurchaseOrder() {
         original_supplier_sku: null,
         is_recommended: false,
         is_custom: true,
+        is_cost_item: false,
+      },
+    ]);
+  };
+
+  const addCostItem = () => {
+    setLineItems((prev) => [
+      ...prev,
+      {
+        product_id: '',
+        sku: '',
+        name: '',
+        image_url: null,
+        current_qty: 0,
+        low_stock_threshold: 0,
+        order_qty: 1,
+        unit_cost: 0,
+        currency,
+        original_unit_cost: 0,
+        supplier_sku: null,
+        original_supplier_sku: null,
+        is_recommended: false,
+        is_custom: true,
+        is_cost_item: true,
       },
     ]);
   };
@@ -732,20 +761,41 @@ export default function CreatePurchaseOrder() {
     if (poId) {
       await supabase.from('purchase_order_items').delete().eq('po_id', poId);
 
-      const itemsToInsert = lineItems
-        .filter((item) => item.order_qty > 0 && (item.sku || item.name))
-        .map((item) => ({
+      const validItems = lineItems.filter((item) => item.is_cost_item
+        ? item.unit_cost > 0 && item.name
+        : item.order_qty > 0 && (item.sku || item.name)
+      );
+
+      const physicalItems = validItems.filter((i) => !i.is_cost_item);
+      const costItems = validItems.filter((i) => i.is_cost_item);
+
+      // Convert each cost item to BDT and distribute equally across physical SKUs
+      const totalCostBDT = costItems.reduce((sum, item) => {
+        if (item.currency === 'BDT') return sum + item.unit_cost;
+        if (item.currency === 'USD') return sum + item.unit_cost * (parseFloat(usdToBdt) || 110);
+        if (item.currency === 'CNY') return sum + item.unit_cost * (parseFloat(cnyToBdt) || 15.17);
+        return sum;
+      }, 0);
+      const distributedCostPerSKU = physicalItems.length > 0 ? totalCostBDT / physicalItems.length : 0;
+
+      const itemsToInsert = validItems.map((item) => {
+        const baseLandedCost = item.is_cost_item
+          ? 0
+          : item.unit_cost * (effectiveSaveCurrency === 'BDT' ? 1 : getExchangeRate()) + distributedCostPerSKU;
+        return {
           po_id: poId,
           sku: item.sku,
           product_name: item.name,
-          ordered_quantity: item.order_qty,
+          ordered_quantity: item.is_cost_item ? 1 : item.order_qty,
           unit_price: item.unit_cost,
           product_image_url: item.image_url,
           received_quantity: 0,
           shipping_cost_per_unit: 0,
           import_duty_per_unit: 0,
-          landed_cost_per_unit: item.unit_cost * (effectiveSaveCurrency === 'BDT' ? 1 : getExchangeRate()),
-        }));
+          landed_cost_per_unit: baseLandedCost,
+          is_cost_item: item.is_cost_item,
+        };
+      });
 
       if (itemsToInsert.length > 0) {
         await supabase.from('purchase_order_items').insert(itemsToInsert);
@@ -1312,13 +1362,34 @@ export default function CreatePurchaseOrder() {
                       </div>
                     )}
                   </div>
-                  <button
-                    onClick={addCustomItem}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Custom Item
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowAddItemMenu((v) => !v)}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Item
+                      <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                    </button>
+                    {showAddItemMenu && (
+                      <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
+                        <button
+                          onClick={() => { addCustomItem(); setShowAddItemMenu(false); }}
+                          className="w-full flex flex-col items-start px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors border-b border-gray-100"
+                        >
+                          <span className="font-medium text-gray-900">Custom Physical Item</span>
+                          <span className="text-xs text-gray-500 mt-0.5">Received as goods (e.g. accessories)</span>
+                        </button>
+                        <button
+                          onClick={() => { addCostItem(); setShowAddItemMenu(false); }}
+                          className="w-full flex flex-col items-start px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors"
+                        >
+                          <span className="font-medium text-gray-900">Cost Line Item</span>
+                          <span className="text-xs text-gray-500 mt-0.5">Fee/charge distributed to landed cost</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1364,13 +1435,20 @@ export default function CreatePurchaseOrder() {
                         </td>
                         <td className="px-4 py-3">
                           {item.is_custom ? (
-                            <input
-                              type="text"
-                              value={item.name}
-                              onChange={(e) => updateLineItem(index, 'name', e.target.value)}
-                              placeholder="Description (e.g. Logo Cost, Shipping)"
-                              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-                            />
+                            <div className="space-y-1">
+                              <input
+                                type="text"
+                                value={item.name}
+                                onChange={(e) => updateLineItem(index, 'name', e.target.value)}
+                                placeholder={item.is_cost_item ? "e.g. Logo Cost, Supplier Shipping" : "Description"}
+                                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                              />
+                              {item.is_cost_item && (
+                                <span className="inline-flex items-center gap-1 text-xs bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-medium">
+                                  Cost — distributed to landed cost
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <div>
                               <div className="flex items-center gap-2">
@@ -1410,13 +1488,17 @@ export default function CreatePurchaseOrder() {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <input
-                            type="number"
-                            min="0"
-                            value={item.order_qty || ''}
-                            onChange={(e) => updateLineItem(index, 'order_qty', parseInt(e.target.value) || 0)}
-                            className="w-16 min-w-[4rem] border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
+                          {item.is_cost_item ? (
+                            <span className="text-xs text-gray-400 italic">—</span>
+                          ) : (
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.order_qty || ''}
+                              onChange={(e) => updateLineItem(index, 'order_qty', parseInt(e.target.value) || 0)}
+                              className="w-16 min-w-[4rem] border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            />
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           {item.is_custom ? (
@@ -1461,7 +1543,9 @@ export default function CreatePurchaseOrder() {
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-sm font-medium text-gray-900">
-                            {((item.order_qty || 0) * (item.unit_cost || 0)).toFixed(2)} {item.currency}
+                            {item.is_cost_item
+                              ? `${(item.unit_cost || 0).toFixed(2)} ${item.currency}`
+                              : `${((item.order_qty || 0) * (item.unit_cost || 0)).toFixed(2)} ${item.currency}`}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -1764,6 +1848,35 @@ export default function CreatePurchaseOrder() {
                   })}
                 </div>
               )}
+
+              {(() => {
+                const costItemsList = lineItems.filter((i) => i.is_cost_item && i.unit_cost > 0 && i.name);
+                const physicalCount = lineItems.filter((i) => !i.is_cost_item && i.order_qty > 0 && (i.sku || i.name)).length;
+                if (costItemsList.length === 0 || physicalCount === 0) return null;
+                const totalBDTCost = costItemsList.reduce((s, item) => {
+                  if (item.currency === 'BDT') return s + item.unit_cost;
+                  if (item.currency === 'USD') return s + item.unit_cost * (parseFloat(usdToBdt) || 110);
+                  if (item.currency === 'CNY') return s + item.unit_cost * (parseFloat(cnyToBdt) || 15.17);
+                  return s;
+                }, 0);
+                const perSKU = totalBDTCost / physicalCount;
+                return (
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2.5 space-y-1">
+                    <p className="text-xs font-semibold text-orange-800">Cost Distribution</p>
+                    {costItemsList.map((item, i) => (
+                      <p key={i} className="text-xs text-orange-700 flex justify-between">
+                        <span className="truncate mr-2">{item.name}</span>
+                        <span className="font-medium whitespace-nowrap">{item.unit_cost.toFixed(2)} {item.currency}</span>
+                      </p>
+                    ))}
+                    <div className="border-t border-orange-200 pt-1 flex justify-between text-xs font-semibold text-orange-800">
+                      <span>Per SKU (BDT):</span>
+                      <span>+৳{perSKU.toFixed(2)}</span>
+                    </div>
+                    <p className="text-xs text-orange-600">Distributed equally across {physicalCount} physical SKU{physicalCount !== 1 ? 's' : ''}</p>
+                  </div>
+                );
+              })()}
 
               <div className="border-t border-gray-100 pt-4 space-y-2.5">
                 {isLocalSupplier ? (

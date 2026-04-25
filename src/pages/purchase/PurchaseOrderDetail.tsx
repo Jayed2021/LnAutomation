@@ -40,6 +40,7 @@ interface POItem {
   unit_price: number;
   shipping_cost_per_unit: number;
   landed_cost_per_unit: number;
+  is_cost_item: boolean;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -172,7 +173,7 @@ export default function PurchaseOrderDetail() {
 
     const { data: itemsData } = await supabase
       .from('purchase_order_items')
-      .select('id, sku, product_name, product_image_url, ordered_quantity, received_quantity, unit_price, shipping_cost_per_unit, landed_cost_per_unit')
+      .select('id, sku, product_name, product_image_url, ordered_quantity, received_quantity, unit_price, shipping_cost_per_unit, landed_cost_per_unit, is_cost_item')
       .eq('po_id', id)
       .order('sku');
 
@@ -226,7 +227,8 @@ export default function PurchaseOrderDetail() {
     const cartons = parseInt(shippingCartons) || null;
     const cost = parseFloat(shippingCost) || 0;
 
-    const totalQty = items.reduce((s, i) => s + i.ordered_quantity, 0);
+    const physicalItems = items.filter((i) => !i.is_cost_item);
+    const totalQty = physicalItems.reduce((s, i) => s + i.ordered_quantity, 0);
     const perUnitShipping = totalQty > 0 ? cost / totalQty : 0;
 
     const getRate = () => {
@@ -246,7 +248,7 @@ export default function PurchaseOrderDetail() {
       })
       .eq('id', po.id);
 
-    for (const item of items) {
+    for (const item of physicalItems) {
       const landedCost = item.unit_price * rate + perUnitShipping;
       await supabase
         .from('purchase_order_items')
@@ -482,7 +484,9 @@ export default function PurchaseOrderDetail() {
     return { label: 'Pending', color: 'gray' };
   };
 
-  const totalValue = items.reduce((s, i) => s + i.ordered_quantity * i.unit_price, 0);
+  const physicalItemsList = items.filter((i) => !i.is_cost_item);
+  const costItemsList = items.filter((i) => i.is_cost_item);
+  const totalValue = physicalItemsList.reduce((s, i) => s + i.ordered_quantity * i.unit_price, 0);
   const sym = CURRENCY_SYMBOL[po?.currency || 'USD'] || '';
 
   const formatDate = (d: string | null | undefined) => {
@@ -912,108 +916,150 @@ export default function PurchaseOrderDetail() {
           <h2 className="text-base font-semibold text-gray-800">Order Items</h2>
         </div>
         <div className="overflow-x-auto">
-          {items.length === 0 ? (
+          {physicalItemsList.length === 0 && costItemsList.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
               <Package className="w-10 h-10 mb-2 text-gray-300" />
               <p className="text-sm">No items in this purchase order</p>
             </div>
           ) : (
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">SKU</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Quantity</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Received</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">Unit Cost ({po.currency})</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">Total Cost ({po.currency})</th>
-                  {po.shipping_cost_bdt > 0 && (
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">Landed Cost (BDT)</th>
-                  )}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {items.map((item) => {
-                  const itemStatus = getItemStatus(item);
-                  return (
-                    <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm font-mono text-gray-700">{item.sku}</span>
+            <>
+              {physicalItemsList.length > 0 && (
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">SKU</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Quantity</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Received</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">Unit Cost ({po.currency})</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">Total Cost ({po.currency})</th>
+                      {po.shipping_cost_bdt > 0 && (
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">Landed Cost (BDT)</th>
+                      )}
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {physicalItemsList.map((item) => {
+                      const itemStatus = getItemStatus(item);
+                      return (
+                        <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="text-sm font-mono text-gray-700">{item.sku}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
+                                {item.product_image_url ? (
+                                  <img
+                                    src={item.product_image_url}
+                                    alt={item.product_name}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs">IMG</div>
+                                )}
+                              </div>
+                              <span className="text-sm text-gray-900">{item.product_name}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="text-sm text-gray-900">{item.ordered_quantity}</span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`text-sm font-medium ${item.received_quantity > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                              {item.received_quantity}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="text-sm font-medium text-amber-600">
+                              {item.unit_price.toFixed(2)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="text-sm font-medium text-gray-900">
+                              {(item.ordered_quantity * item.unit_price).toFixed(2)}
+                            </span>
+                          </td>
+                          {po.shipping_cost_bdt > 0 && (
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className="text-sm font-medium text-gray-900">
+                                ৳{item.landed_cost_per_unit.toFixed(2)}
+                              </span>
+                            </td>
+                          )}
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <Badge variant={itemStatus.color as any}>
+                              {itemStatus.label}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t border-gray-200">
+                    <tr>
+                      <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-700">Total</td>
+                      <td className="px-6 py-3 text-sm font-bold text-gray-900">
+                        {physicalItemsList.reduce((s, i) => s + i.ordered_quantity, 0)}
                       </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
-                            {item.product_image_url ? (
-                              <img
-                                src={item.product_image_url}
-                                alt={item.product_name}
-                                className="w-full h-full object-cover"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs">IMG</div>
-                            )}
-                          </div>
-                          <span className="text-sm text-gray-900">{item.product_name}</span>
-                        </div>
+                      <td className="px-6 py-3 text-sm font-semibold text-emerald-600">
+                        {physicalItemsList.reduce((s, i) => s + i.received_quantity, 0)}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-900">{item.ordered_quantity}</span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`text-sm font-medium ${item.received_quantity > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
-                          {item.received_quantity}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm font-medium text-amber-600">
-                          {item.unit_price.toFixed(2)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm font-medium text-gray-900">
-                          {(item.ordered_quantity * item.unit_price).toFixed(2)}
-                        </span>
+                      <td className="px-6 py-3"></td>
+                      <td className="px-6 py-3 text-sm font-bold text-gray-900">
+                        {sym}{totalValue.toFixed(2)}
                       </td>
                       {po.shipping_cost_bdt > 0 && (
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="text-sm font-medium text-gray-900">
-                            ৳{item.landed_cost_per_unit.toFixed(2)}
-                          </span>
+                        <td className="px-6 py-3 text-sm font-bold text-gray-900">
+                          ৳{physicalItemsList.reduce((s, i) => s + i.landed_cost_per_unit * i.ordered_quantity, 0).toFixed(2)}
                         </td>
                       )}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <Badge variant={itemStatus.color as any}>
-                          {itemStatus.label}
-                        </Badge>
-                      </td>
+                      <td className="px-6 py-3"></td>
                     </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot className="bg-gray-50 border-t border-gray-200">
-                <tr>
-                  <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-700">Total</td>
-                  <td className="px-6 py-3 text-sm font-bold text-gray-900">
-                    {items.reduce((s, i) => s + i.ordered_quantity, 0)}
-                  </td>
-                  <td className="px-6 py-3 text-sm font-semibold text-emerald-600">
-                    {items.reduce((s, i) => s + i.received_quantity, 0)}
-                  </td>
-                  <td className="px-6 py-3"></td>
-                  <td className="px-6 py-3 text-sm font-bold text-gray-900">
-                    {sym}{totalValue.toFixed(2)}
-                  </td>
-                  {po.shipping_cost_bdt > 0 && (
-                    <td className="px-6 py-3 text-sm font-bold text-gray-900">
-                      ৳{items.reduce((s, i) => s + i.landed_cost_per_unit * i.ordered_quantity, 0).toFixed(2)}
-                    </td>
-                  )}
-                  <td className="px-6 py-3"></td>
-                </tr>
-              </tfoot>
-            </table>
+                  </tfoot>
+                </table>
+              )}
+
+              {costItemsList.length > 0 && (
+                <div className="border-t border-gray-100">
+                  <div className="px-6 py-3 bg-orange-50 border-b border-orange-100 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-semibold text-orange-800 uppercase tracking-wider">Additional Costs</span>
+                      <span className="ml-2 text-xs text-orange-600">— distributed into landed cost of physical items</span>
+                    </div>
+                    {physicalItemsList.length > 0 && (
+                      <span className="text-xs text-orange-700 font-medium">
+                        ৳{(costItemsList.reduce((s, i) => {
+                          const rate = po.currency === 'USD' ? po.usd_to_bdt_rate : po.currency === 'CNY' ? po.cny_to_bdt_rate : 1;
+                          return s + i.unit_price * rate;
+                        }, 0) / physicalItemsList.length).toFixed(2)} per SKU
+                      </span>
+                    )}
+                  </div>
+                  <table className="w-full">
+                    <tbody className="divide-y divide-orange-50">
+                      {costItemsList.map((item) => (
+                        <tr key={item.id} className="bg-orange-50/30">
+                          <td className="px-6 py-3 w-32">
+                            <span className="inline-flex items-center text-xs bg-orange-100 text-orange-700 border border-orange-200 px-2 py-0.5 rounded-full font-medium">COST</span>
+                          </td>
+                          <td className="px-6 py-3">
+                            <span className="text-sm text-gray-800">{item.product_name}</span>
+                          </td>
+                          <td className="px-6 py-3 text-right" colSpan={po.shipping_cost_bdt > 0 ? 6 : 5}>
+                            <span className="text-sm font-semibold text-orange-700">
+                              {sym}{item.unit_price.toFixed(2)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

@@ -5,7 +5,7 @@ export async function loadPOsForReceiving(): Promise<{ pos: POForReceiving[]; lo
   const [posRes, locsRes, sessionsRes] = await Promise.all([
     supabase
       .from('purchase_orders')
-      .select(`id, po_number, shipment_name, expected_delivery_date, notes, created_at, suppliers(name), purchase_order_items(id, sku, product_name, product_image_url, ordered_quantity, received_quantity, landed_cost_per_unit)`)
+      .select(`id, po_number, shipment_name, expected_delivery_date, notes, created_at, suppliers(name), purchase_order_items(id, sku, product_name, product_image_url, ordered_quantity, received_quantity, landed_cost_per_unit, is_cost_item)`)
       .in('status', ['ordered', 'confirmed', 'partially_received'])
       .order('expected_delivery_date'),
     supabase
@@ -43,7 +43,7 @@ export async function loadPOsForReceiving(): Promise<{ pos: POForReceiving[]; lo
       received_quantity: item.received_quantity ?? 0,
       landed_cost_per_unit: item.landed_cost_per_unit ?? 0,
       remaining: item.ordered_quantity - (item.received_quantity ?? 0)
-    })).filter((i: any) => i.remaining > 0),
+    })).filter((i: any) => i.remaining > 0 && !i.is_cost_item),
     activeSessions: (sessionsByPO[po.id] || []).map((s: any) => ({
       id: s.id,
       shipment_name: s.shipment_name,
@@ -376,15 +376,16 @@ export async function finalizeQC(
 
 async function updatePOStatus(poId: string, allowComplete: boolean) {
   const [itemsRes, currentPORes] = await Promise.all([
-    supabase.from('purchase_order_items').select('ordered_quantity, received_quantity').eq('po_id', poId),
+    supabase.from('purchase_order_items').select('ordered_quantity, received_quantity, is_cost_item').eq('po_id', poId),
     supabase.from('purchase_orders').select('status').eq('id', poId).maybeSingle()
   ]);
 
   const currentStatus = currentPORes.data?.status;
   if (currentStatus === 'closed' || currentStatus === 'received_complete') return;
 
-  const totalOrdered = (itemsRes.data || []).reduce((s, i) => s + (i.ordered_quantity ?? 0), 0);
-  const totalReceived = (itemsRes.data || []).reduce((s, i) => s + (i.received_quantity ?? 0), 0);
+  const physicalItems = (itemsRes.data || []).filter((i: any) => !i.is_cost_item);
+  const totalOrdered = physicalItems.reduce((s, i) => s + (i.ordered_quantity ?? 0), 0);
+  const totalReceived = physicalItems.reduce((s, i) => s + (i.received_quantity ?? 0), 0);
 
   if (allowComplete && totalReceived >= totalOrdered) {
     const { data: incompleteSessions } = await supabase

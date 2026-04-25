@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Save, Check, AlertCircle, Search, TrendingDown, Download, Paperclip, X, FileText } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Check, AlertCircle, Search, TrendingDown, Download, Paperclip, X, FileText, ChevronDown, ChevronUp, Loader2, RotateCcw, EyeOff } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRefresh } from '../../contexts/RefreshContext';
@@ -101,7 +101,14 @@ export default function CreatePurchaseOrder() {
 
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [isPaymentComplete, setIsPaymentComplete] = useState(false);
+  const [paymentCompleting, setPaymentCompleting] = useState(false);
+  const [paymentResetNote, setPaymentResetNote] = useState(false);
   const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
+
+  // UI state
+  const [shipmentNameTouched, setShipmentNameTouched] = useState(false);
+  const [hideZeroQty, setHideZeroQty] = useState(false);
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -310,6 +317,28 @@ export default function CreatePurchaseOrder() {
       ...prev,
     ]);
   }, []);
+
+  // Auto-reset payment complete when any payment value changes
+  const paymentsSignature = payments.map(p => `${p.amount_original}:${p.payment_currency}:${p.amount_bdt}:${p.id}`).join('|');
+  useEffect(() => {
+    if (isPaymentComplete) {
+      setIsPaymentComplete(false);
+      setPaymentResetNote(true);
+      setTimeout(() => setPaymentResetNote(false), 5000);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentsSignature]);
+
+  const handlePaymentComplete = () => {
+    if (!isPaymentSufficient || paymentCompleting) return;
+    setPaymentCompleting(true);
+    setTimeout(() => {
+      setIsPaymentComplete(true);
+      setPaymentCompleting(false);
+      setPaymentResetNote(false);
+      addChangeLog('Payment marked as complete');
+    }, 1200);
+  };
 
   const handleSaveRates = () => {
     const message = `Exchange rates saved as of ${rateDate}: 1 USD = ${usdToCny} CNY, 1 CNY = ${cnyToBdt} BDT, 1 USD = ${usdToBdt} BDT`;
@@ -777,10 +806,12 @@ export default function CreatePurchaseOrder() {
   };
 
   const handleSave = async () => {
+    if (!shipmentName.trim()) { setShipmentNameTouched(true); return; }
     await saveDraft();
   };
 
   const handleCreatePO = async () => {
+    if (!shipmentName.trim()) { setShipmentNameTouched(true); return; }
     if (!isPaymentSufficient) return;
     setCreating(true);
 
@@ -1082,16 +1113,27 @@ export default function CreatePurchaseOrder() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Shipment Name <span className="text-red-500">*</span>
+                  Shipment ID <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={shipmentName}
-                  onChange={(e) => setShipmentName(e.target.value)}
+                  onChange={(e) => { setShipmentName(e.target.value); if (e.target.value.trim()) setShipmentNameTouched(false); }}
+                  onBlur={() => setShipmentNameTouched(true)}
                   placeholder="e.g., MQ01"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:border-transparent ${
+                    shipmentNameTouched && !shipmentName.trim()
+                      ? 'border-red-400 focus:ring-red-300 bg-red-50'
+                      : 'border-gray-300 focus:ring-blue-500'
+                  }`}
                 />
-                <p className="text-xs text-gray-400 mt-1">This will be used for barcode generation (e.g., SKU_MQ01)</p>
+                {shipmentNameTouched && !shipmentName.trim() ? (
+                  <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Shipment ID is required
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1">Used for barcode generation (e.g., SKU_MQ01)</p>
+                )}
               </div>
             </div>
 
@@ -1191,10 +1233,28 @@ export default function CreatePurchaseOrder() {
           ) : (
             <div className="bg-white rounded-xl border border-gray-200">
               <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-800">
-                  Line Items — {selectedSupplier?.name}
-                </h2>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-base font-semibold text-gray-800">
+                    Line Items — {selectedSupplier?.name}
+                  </h2>
+                  {hideZeroQty && lineItems.filter(i => i.order_qty === 0).length > 0 && (
+                    <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                      {lineItems.filter(i => i.order_qty === 0).length} hidden
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setHideZeroQty(v => !v)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      hideZeroQty
+                        ? 'bg-gray-900 text-white border-gray-900'
+                        : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                    Hide 0 qty
+                  </button>
                   <div className="relative">
                     <button
                       onClick={() => setShowProductSearch(!showProductSearch)}
@@ -1262,6 +1322,7 @@ export default function CreatePurchaseOrder() {
                 </div>
               </div>
 
+
               <div className="overflow-x-auto max-h-[560px] overflow-y-auto" ref={tableContainerRef}>
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
@@ -1277,7 +1338,9 @@ export default function CreatePurchaseOrder() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {lineItems.map((item, index) => (
+                    {lineItems.map((item, index) => {
+                      if (hideZeroQty && item.order_qty === 0) return null;
+                      return (
                       <tr
                         key={index}
                         ref={(el) => {
@@ -1410,8 +1473,8 @@ export default function CreatePurchaseOrder() {
                           </button>
                         </td>
                       </tr>
-                    ))}
-                    {lineItems.length === 0 && (
+                    ); })}
+                    {lineItems.filter(i => !hideZeroQty || i.order_qty > 0).length === 0 && (
                       <tr>
                         <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">
                           No products added. Products from this supplier are listed above.
@@ -1765,49 +1828,91 @@ export default function CreatePurchaseOrder() {
                 )}
               </div>
 
-              <button
-                onClick={() => {
-                  if (!isPaymentSufficient) return;
-                  setIsPaymentComplete(!isPaymentComplete);
-                  if (!isPaymentComplete) addChangeLog('Payment marked as complete');
-                }}
-                disabled={!isPaymentSufficient}
-                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-medium transition-all ${
-                  isPaymentSufficient
-                    ? 'bg-emerald-50 border-emerald-300 text-emerald-700 cursor-pointer hover:bg-emerald-100'
-                    : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                {isPaymentSufficient && <Check className="w-4 h-4" />}
-                {isPaymentSufficient
-                  ? 'Payment Complete'
-                  : isLocalSupplier
-                  ? `Payment Complete — Pay ৳${(totalBDT - totalPaidBDT).toFixed(2)} more to unlock`
-                  : `Payment Complete — Pay $${balanceUSD.toFixed(2)} more to unlock`}
-              </button>
+              {/* Payment reset notice */}
+              {paymentResetNote && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                  <RotateCcw className="w-3.5 h-3.5 flex-shrink-0" />
+                  Payment status was reset because a payment entry changed.
+                </div>
+              )}
+
+              {isPaymentComplete ? (
+                <div className="space-y-2">
+                  <div className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold">
+                    <Check className="w-4 h-4" />
+                    Payment Confirmed
+                  </div>
+                  <button
+                    onClick={() => { setIsPaymentComplete(false); addChangeLog('Payment completion undone'); }}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Undo — Re-open payment
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={handlePaymentComplete}
+                  disabled={!isPaymentSufficient || paymentCompleting}
+                  className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                    isPaymentSufficient
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-700 cursor-pointer hover:bg-emerald-100 active:bg-emerald-200'
+                      : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  {paymentCompleting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : isPaymentSufficient ? (
+                    <Check className="w-4 h-4" />
+                  ) : null}
+                  {paymentCompleting
+                    ? 'Confirming...'
+                    : isPaymentSufficient
+                    ? 'Mark Payment Complete'
+                    : isLocalSupplier
+                    ? `Pay ৳${(totalBDT - totalPaidBDT).toFixed(2)} more to unlock`
+                    : `Pay $${balanceUSD.toFixed(2)} more to unlock`}
+                </button>
+              )}
             </div>
           )}
 
           {changeLog.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h2 className="text-base font-semibold text-gray-800 mb-4">Change Log</h2>
-              <div className="space-y-2">
-                {changeLog.map((entry, i) => (
-                  <div key={i} className="flex items-start gap-3 text-sm py-2 border-b border-gray-50 last:border-0">
-                    <span className="text-gray-400 text-xs whitespace-nowrap mt-0.5">
-                      {new Date(entry.created_at).toLocaleString('en-US', {
-                        month: 'numeric',
-                        day: 'numeric',
-                        year: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })}
-                    </span>
-                    <span className="text-gray-700">{entry.message}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <button
+                onClick={() => setActivityLogOpen(v => !v)}
+                className="w-full flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-2.5">
+                  <h2 className="text-base font-semibold text-gray-800">Change Log</h2>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                    {changeLog.length}
+                  </span>
+                </div>
+                {activityLogOpen
+                  ? <ChevronUp className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                  : <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                }
+              </button>
+              {activityLogOpen && (
+                <div className="px-6 pb-6 space-y-2 border-t border-gray-100">
+                  {changeLog.map((entry, i) => (
+                    <div key={i} className="flex items-start gap-3 text-sm py-2 border-b border-gray-50 last:border-0">
+                      <span className="text-gray-400 text-xs whitespace-nowrap mt-0.5">
+                        {new Date(entry.created_at).toLocaleString('en-US', {
+                          month: 'numeric',
+                          day: 'numeric',
+                          year: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })}
+                      </span>
+                      <span className="text-gray-700">{entry.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

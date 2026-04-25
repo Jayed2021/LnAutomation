@@ -199,7 +199,7 @@ export default function CreatePurchaseOrder() {
         .eq('po_id', poId),
       supabase
         .from('supplier_payments')
-        .select('id, payment_date, payment_currency, amount_original, cny_to_usd_rate, amount_usd_equivalent, remarks')
+        .select('id, payment_date, payment_currency, amount_original, cny_to_usd_rate, amount_usd_equivalent, amount_bdt, remarks')
         .eq('po_id', poId),
       supabase
         .from('product_suppliers')

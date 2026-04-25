@@ -175,7 +175,7 @@ export default function OrderDetail() {
   const handlePrintInvoice = async () => {
     if (!order) return;
     const [fifoLots, defaultPkg] = await Promise.all([
-      fetchFifoLotsForItems(items),
+      fetchFifoLotsForItems(items, order.id),
       fetchDefaultPackagingWithPrice(),
     ]);
     openPrintTab(buildInvoiceHtml(order, items, prescriptions, storeProfile, fifoLots, packagingItems, defaultPkg));
@@ -183,7 +183,7 @@ export default function OrderDetail() {
 
   const handlePrintPackingSlip = async () => {
     if (!order) return;
-    const fifoLots = await fetchFifoLotsForItems(items);
+    const fifoLots = await fetchFifoLotsForItems(items, order.id);
     openPrintTab(buildPackingSlipHtml(order, items, packagingItems, fifoLots, storeProfile));
   };
 

@@ -362,7 +362,7 @@ export default function Operations() {
       regular_price: row.product?.selling_price ?? null,
       product: undefined,
     })) as import('./orders/orderDetail/types').OrderItem[];
-    const fifoLots = await fetchFifoLotsForItems(fullItems);
+    const fifoLots = await fetchFifoLotsForItems(fullItems, order.id);
     const orderDetail = fullOrder ?? buildOrderDetailForPrint(order);
     openPrintTab(buildInvoiceHtml(orderDetail, fullItems, prescriptions as OrderPrescription[], storeProfile, fifoLots, packagingItems as PackagingItem[], defaultPkg));
   };
@@ -379,7 +379,7 @@ export default function Operations() {
         .then(r => (r.data ?? []) as OrderItem[]),
       fetchFullOrderForPrint(order.id),
     ]);
-    const fifoLots = await fetchFifoLotsForItems(fullItems);
+    const fifoLots = await fetchFifoLotsForItems(fullItems, order.id);
     const orderDetail = fullOrder ?? buildOrderDetailForPrint(order);
     openPrintTab(buildPackingSlipHtml(orderDetail, fullItems, packagingItems as PackagingItem[], fifoLots, storeProfile));
   };

@@ -195,12 +195,46 @@ export interface FifoLotInfo {
   location_code: string;
 }
 
+// Reads the lot/location for each order item.
+// Priority 1: existing order_lot_reservation — the exact lot the warehouse will pick from.
+// Priority 2: FIFO fallback for items with no reservation (shortage cases), excluding damaged locations.
 export async function fetchFifoLotsForItems(
-  items: { id: string; product_id: string | null; sku?: string }[]
+  items: { id: string; product_id: string | null; sku?: string }[],
+  orderId?: string
 ): Promise<Map<string, FifoLotInfo>> {
   const result = new Map<string, FifoLotInfo>();
 
-  const skusWithoutProduct = items.filter(i => !i.product_id && i.sku).map(i => i.sku!);
+  // Step 1: populate from existing reservations
+  const reservedItemIds = new Set<string>();
+  if (orderId) {
+    const { data: reservations } = await supabase
+      .from('order_lot_reservations')
+      .select(`
+        order_item_id,
+        lot:inventory_lots(
+          lot_number,
+          barcode,
+          location:warehouse_locations(code)
+        )
+      `)
+      .eq('order_id', orderId);
+
+    for (const r of reservations ?? []) {
+      const lot = (r as any).lot;
+      if (!lot) continue;
+      result.set(r.order_item_id, {
+        barcode: lot.barcode || lot.lot_number,
+        location_code: lot.location?.code || 'N/A',
+      });
+      reservedItemIds.add(r.order_item_id);
+    }
+  }
+
+  // Step 2: FIFO fallback for items not covered by a reservation
+  const unreservedItems = items.filter(i => !reservedItemIds.has(i.id));
+  if (unreservedItems.length === 0) return result;
+
+  const skusWithoutProduct = unreservedItems.filter(i => !i.product_id && i.sku).map(i => i.sku!);
   let skuToProductId = new Map<string, string>();
   if (skusWithoutProduct.length > 0) {
     const { data: prods } = await supabase
@@ -212,7 +246,7 @@ export async function fetchFifoLotsForItems(
     }
   }
 
-  const resolved = items.map(i => ({
+  const resolved = unreservedItems.map(i => ({
     id: i.id,
     product_id: i.product_id ?? (i.sku ? skuToProductId.get(i.sku) ?? null : null),
   })).filter(i => i.product_id);
@@ -223,10 +257,15 @@ export async function fetchFifoLotsForItems(
     resolved.map(async item => {
       const { data: lots } = await supabase
         .from('inventory_lots')
-        .select('lot_number, barcode, remaining_quantity, reserved_quantity, location:warehouse_locations(code)')
+        .select('lot_number, barcode, remaining_quantity, reserved_quantity, location:warehouse_locations(code, location_type)')
         .eq('product_id', item.product_id!)
         .order('received_date', { ascending: true });
-      const available = (lots ?? []).filter((l: any) => (l.remaining_quantity - (l.reserved_quantity ?? 0)) > 0);
+
+      const available = (lots ?? []).filter((l: any) =>
+        l.location?.location_type !== 'damaged' &&
+        (l.remaining_quantity - (l.reserved_quantity ?? 0)) > 0
+      );
+
       if (available.length > 0) {
         const lot = available[0] as any;
         result.set(item.id, {

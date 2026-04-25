@@ -15,7 +15,8 @@ import {
   Plus, Warehouse, MapPin, X, Download, Upload, Search,
   ScanLine, MoreHorizontal, Pencil, Trash2, ToggleLeft, ToggleRight,
   Printer, CheckSquare, Square, AlertTriangle, PackageCheck,
-  ArrowRight, Layers, ChevronDown, ChevronRight, Loader2
+  ArrowRight, Layers, ChevronDown, ChevronRight, Loader2,
+  LayoutGrid, Check, RefreshCw, Info
 } from 'lucide-react';
 
 interface WarehouseRow {
@@ -562,7 +563,309 @@ function RecentBulkTransfers() {
   );
 }
 
-type PageTab = 'locations' | 'consolidation' | 'bulk_transfer';
+interface SlotRule {
+  id: string;
+  category: string;
+  slots_per_unit: number;
+}
+
+function CategorySlotRules() {
+  const [rules, setRules] = useState<SlotRule[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [newCategory, setNewCategory] = useState('');
+  const [newSlots, setNewSlots] = useState('1');
+  const [adding, setAdding] = useState(false);
+  const [applyConfirm, setApplyConfirm] = useState<{ rule: SlotRule; count: number } | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  useEffect(() => {
+    loadAll();
+  }, []);
+
+  const loadAll = async () => {
+    setLoading(true);
+    const [rulesRes, catRes] = await Promise.all([
+      supabase.from('category_slot_rules').select('*').order('category'),
+      supabase.from('products').select('category').not('category', 'is', null).order('category'),
+    ]);
+    setRules(rulesRes.data || []);
+    const uniqueCats = [...new Set((catRes.data || []).map((r: any) => r.category as string).filter(Boolean))].sort();
+    setCategories(uniqueCats);
+    setLoading(false);
+  };
+
+  const saveEdit = async (rule: SlotRule) => {
+    const val = parseFloat(editValue);
+    if (!val || val <= 0) return;
+    setSavingId(rule.id);
+    await supabase.from('category_slot_rules').update({ slots_per_unit: val }).eq('id', rule.id);
+    setEditingId(null);
+    setEditValue('');
+    setSavingId(null);
+    loadAll();
+  };
+
+  const deleteRule = async (id: string) => {
+    setDeletingId(id);
+    await supabase.from('category_slot_rules').delete().eq('id', id);
+    setDeletingId(null);
+    loadAll();
+  };
+
+  const addRule = async () => {
+    const slots = parseFloat(newSlots);
+    if (!newCategory.trim() || !slots || slots <= 0) return;
+    setAdding(true);
+    const { error } = await supabase.from('category_slot_rules').upsert(
+      { category: newCategory.trim(), slots_per_unit: slots },
+      { onConflict: 'category' }
+    );
+    if (!error) {
+      setNewCategory('');
+      setNewSlots('1');
+      loadAll();
+    }
+    setAdding(false);
+  };
+
+  const checkApplyCount = async (rule: SlotRule) => {
+    const { count } = await supabase
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('category', rule.category)
+      .neq('slots_per_unit', rule.slots_per_unit);
+    setApplyConfirm({ rule, count: count ?? 0 });
+  };
+
+  const applyToProducts = async () => {
+    if (!applyConfirm) return;
+    setApplying(true);
+    await supabase
+      .from('products')
+      .update({ slots_per_unit: applyConfirm.rule.slots_per_unit })
+      .eq('category', applyConfirm.rule.category)
+      .neq('slots_per_unit', applyConfirm.rule.slots_per_unit);
+    setApplying(false);
+    setApplyConfirm(null);
+  };
+
+  const existingCategories = new Set(rules.map(r => r.category));
+  const availableCategories = categories.filter(c => !existingCategories.has(c));
+
+  return (
+    <div className="space-y-6">
+      {/* Info banner */}
+      <div className="flex gap-3 p-4 bg-sky-50 border border-sky-200 rounded-xl text-sm text-sky-800">
+        <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-sky-500" />
+        <div className="space-y-1">
+          <p className="font-medium">What are slots?</p>
+          <p className="text-xs text-sky-700 leading-relaxed">
+            A slot is the basic unit of space in a storage location. By default, 1 unit of any product
+            takes 1 slot — so a capacity of 100 means 100 units. Category rules let you set a default
+            "slots per unit" for an entire category. You can still override individual products on their
+            product page. Use <span className="font-medium">Apply to Products</span> to bulk-update all
+            products in a category to match the rule.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Rules table */}
+        <div className="lg:col-span-2">
+          <Card>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">Category Slot Rules</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Default slots per unit for each product category</p>
+              </div>
+              <button onClick={loadAll} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+            {loading ? (
+              <div className="p-8 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+              </div>
+            ) : rules.length === 0 ? (
+              <div className="p-10 text-center">
+                <LayoutGrid className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                <p className="text-sm text-gray-400">No category rules yet. Add one to get started.</p>
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Slots / Unit</th>
+                    <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {rules.map(rule => (
+                    <tr key={rule.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3 text-sm font-medium text-gray-900">{rule.category}</td>
+                      <td className="px-5 py-3">
+                        {editingId === rule.id ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="0.1"
+                              step="0.1"
+                              className="w-20 px-2 py-1 border border-blue-400 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              value={editValue}
+                              onChange={e => setEditValue(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(rule); if (e.key === 'Escape') { setEditingId(null); setEditValue(''); } }}
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => saveEdit(rule)}
+                              disabled={savingId === rule.id}
+                              className="p-1 text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => { setEditingId(null); setEditValue(''); }} className="p-1 text-gray-400 hover:text-gray-600">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => { setEditingId(rule.id); setEditValue(String(rule.slots_per_unit)); }}
+                            className="flex items-center gap-1.5 group"
+                          >
+                            <span className="text-sm font-mono font-semibold text-gray-800">{rule.slots_per_unit}</span>
+                            <Pencil className="w-3 h-3 text-gray-300 group-hover:text-blue-500 transition-colors" />
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => checkApplyCount(rule)}
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-colors"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Apply to Products
+                          </button>
+                          <button
+                            onClick={() => deleteRule(rule.id)}
+                            disabled={deletingId === rule.id}
+                            className="p-1.5 text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        </div>
+
+        {/* Add rule form */}
+        <div>
+          <Card>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-800">Add Rule</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Set default slots for a category</p>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="text-xs font-medium text-gray-700">Category *</label>
+                <input
+                  list="category-options"
+                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Type or pick a category"
+                  value={newCategory}
+                  onChange={e => setNewCategory(e.target.value)}
+                />
+                <datalist id="category-options">
+                  {availableCategories.map(c => <option key={c} value={c} />)}
+                </datalist>
+                {availableCategories.length > 0 && (
+                  <p className="text-xs text-gray-400 mt-1">{availableCategories.length} categor{availableCategories.length !== 1 ? 'ies' : 'y'} without a rule</p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-700">Slots per Unit *</label>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={newSlots}
+                  onChange={e => setNewSlots(e.target.value)}
+                />
+                <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
+                  e.g. 1 for eyeglasses, 1.5 for sunglasses with case, 2 for bulky sports goggles
+                </p>
+              </div>
+              <Button
+                onClick={addRule}
+                disabled={adding || !newCategory.trim() || !newSlots}
+                className="w-full"
+              >
+                {adding ? 'Adding...' : 'Add Rule'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* Apply confirmation modal */}
+      {applyConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <h2 className="text-base font-semibold text-gray-900">Apply Rule to Products</h2>
+              <button onClick={() => setApplyConfirm(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-3">
+              {applyConfirm.count === 0 ? (
+                <div className="flex items-center gap-2 p-3 bg-emerald-50 rounded-lg text-sm text-emerald-700">
+                  <Check className="w-4 h-4 flex-shrink-0" />
+                  All products in <span className="font-semibold mx-1">{applyConfirm.rule.category}</span> already have {applyConfirm.rule.slots_per_unit} slots per unit.
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-700">
+                    This will update <span className="font-semibold text-gray-900">{applyConfirm.count} product{applyConfirm.count !== 1 ? 's' : ''}</span> in{' '}
+                    <span className="font-semibold text-gray-900">{applyConfirm.rule.category}</span> to{' '}
+                    <span className="font-semibold text-gray-900">{applyConfirm.rule.slots_per_unit} slots per unit</span>.
+                  </p>
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-start gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    Products that already have a custom value different from {applyConfirm.rule.slots_per_unit} will be overwritten.
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <Button variant="outline" onClick={() => setApplyConfirm(null)}>
+                {applyConfirm.count === 0 ? 'Close' : 'Cancel'}
+              </Button>
+              {applyConfirm.count > 0 && (
+                <Button onClick={applyToProducts} disabled={applying}>
+                  {applying ? 'Applying...' : `Update ${applyConfirm.count} Product${applyConfirm.count !== 1 ? 's' : ''}`}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type PageTab = 'locations' | 'consolidation' | 'bulk_transfer' | 'slots';
 
 export default function WarehouseLocations() {
   const { lastRefreshed, setRefreshing } = useRefresh();
@@ -576,12 +879,14 @@ export default function WarehouseLocations() {
   const [showBulkTransfer, setShowBulkTransfer] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [whForm, setWhForm] = useState({ name: '', code: '', address: '' });
-  const [locForm, setLocForm] = useState({ name: '', location_type: 'storage', barcode: '' });
+  const [locForm, setLocForm] = useState({ name: '', location_type: 'storage', barcode: '', capacity: '' });
   const [saving, setSaving] = useState(false);
   const [editLocation, setEditLocation] = useState<LocationRow | null>(null);
   const [deleteLocation, setDeleteLocation] = useState<LocationRow | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [showBulkCapacity, setShowBulkCapacity] = useState(false);
+  const [bulkCapacityValue, setBulkCapacityValue] = useState('');
   const [showImportTools, setShowImportTools] = useState(false);
   const [expandedLocIds, setExpandedLocIds] = useState<Set<string>>(new Set());
 
@@ -656,14 +961,25 @@ export default function WarehouseLocations() {
     if (!locForm.name || !locForm.barcode) return;
     setSaving(true);
     try {
+      const capacityVal = locForm.capacity.trim() === '' ? null : parseInt(locForm.capacity, 10);
       await supabase.from('warehouse_locations').insert({
         warehouse_id: warehouseId, code: locForm.barcode.toUpperCase(),
-        name: locForm.name, location_type: locForm.location_type, barcode: locForm.barcode
+        name: locForm.name, location_type: locForm.location_type, barcode: locForm.barcode,
+        capacity: capacityVal,
       });
       setShowAddLocation(null);
-      setLocForm({ name: '', location_type: 'storage', barcode: '' });
+      setLocForm({ name: '', location_type: 'storage', barcode: '', capacity: '' });
       loadData();
     } catch (err) { console.error(err); } finally { setSaving(false); }
+  };
+
+  const bulkSetCapacity = async () => {
+    const capacityVal = bulkCapacityValue.trim() === '' ? null : parseInt(bulkCapacityValue, 10);
+    await supabase.from('warehouse_locations').update({ capacity: capacityVal }).in('id', Array.from(selectedIds));
+    setShowBulkCapacity(false);
+    setBulkCapacityValue('');
+    clearSelection();
+    loadData();
   };
 
   const toggleLocation = async (locId: string, current: boolean) => {
@@ -783,6 +1099,7 @@ export default function WarehouseLocations() {
           { key: 'locations', label: 'Locations', icon: Warehouse },
           { key: 'consolidation', label: 'Consolidation', icon: Layers },
           { key: 'bulk_transfer', label: 'Bulk Transfer', icon: ArrowRight },
+          { key: 'slots', label: 'Category Slots', icon: LayoutGrid },
         ] as { key: PageTab; label: string; icon: React.ElementType }[]).map(tab => (
           <button
             key={tab.key}
@@ -844,6 +1161,8 @@ export default function WarehouseLocations() {
           </div>
         </Card>
       )}
+
+      {activeTab === 'slots' && <CategorySlotRules />}
 
       {activeTab === 'locations' && showAddWarehouse && (
         <Card className="p-5">
@@ -925,6 +1244,18 @@ export default function WarehouseLocations() {
                       <div>
                         <label className="text-xs font-medium text-gray-700">Barcode *</label>
                         <input className="block mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm w-36 font-mono" placeholder="LN_B-1" value={locForm.barcode} onChange={e => setLocForm(f => ({ ...f, barcode: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-700">Capacity (slots)</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          className="block mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm w-28"
+                          placeholder="No limit"
+                          value={locForm.capacity}
+                          onChange={e => setLocForm(f => ({ ...f, capacity: e.target.value }))}
+                        />
                       </div>
                       <div className="flex gap-2">
                         <Button onClick={() => addLocation(wh.id)} disabled={saving || !locForm.name || !locForm.barcode} size="sm">Add</Button>
@@ -1070,6 +1401,12 @@ export default function WarehouseLocations() {
               <ToggleLeft className="w-4 h-4 text-gray-400" /> Deactivate
             </button>
             <button
+              onClick={() => { setBulkCapacityValue(''); setShowBulkCapacity(true); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+            >
+              <LayoutGrid className="w-4 h-4 text-sky-400" /> Set Capacity
+            </button>
+            <button
               onClick={() => setShowBulkDelete(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-sm font-medium text-red-300 transition-colors"
             >
@@ -1108,6 +1445,48 @@ export default function WarehouseLocations() {
           onClose={() => setShowBulkDelete(false)}
           onDeleted={() => { clearSelection(); loadData(); }}
         />
+      )}
+
+      {showBulkCapacity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <h2 className="text-base font-semibold text-gray-900">Set Capacity</h2>
+              <button onClick={() => setShowBulkCapacity(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <p className="text-sm text-gray-600">
+                Setting capacity for <span className="font-semibold text-gray-900">{selectedIds.size} location{selectedIds.size !== 1 ? 's' : ''}</span>.
+              </p>
+              <div>
+                <label className="text-xs font-medium text-gray-700">Capacity (slots)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Leave blank to remove limit"
+                  value={bulkCapacityValue}
+                  onChange={e => setBulkCapacityValue(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  <span className="font-medium text-gray-700">What is a slot?</span> 1 unit of any product takes 1 slot by default.
+                  Products with a custom "Slots per unit" value will count proportionally.
+                  Leave blank to remove the capacity limit on selected locations.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <Button variant="outline" onClick={() => setShowBulkCapacity(false)}>Cancel</Button>
+              <Button onClick={bulkSetCapacity}>Apply to {selectedIds.size} Location{selectedIds.size !== 1 ? 's' : ''}</Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showImport && (

@@ -117,6 +117,7 @@ export default function ProductDetail() {
   const [editLotError, setEditLotError] = useState<string | null>(null);
   const [expandedLots, setExpandedLots] = useState<Set<string>>(new Set());
   const [shipmentsOpen, setShipmentsOpen] = useState(false);
+  const [categorySlotRule, setCategorySlotRule] = useState<{ category: string; slots_per_unit: number } | null>(null);
 
   useEffect(() => {
     if (id) loadAll(id);
@@ -137,7 +138,17 @@ export default function ProductDetail() {
         supabase.from('warehouse_locations').select('id, code, name').eq('is_active', true).order('code'),
       ]);
 
-      if (prodRes.data) setProduct(prodRes.data);
+      if (prodRes.data) {
+        setProduct(prodRes.data);
+        if (prodRes.data.category) {
+          supabase
+            .from('category_slot_rules')
+            .select('category, slots_per_unit')
+            .eq('category', prodRes.data.category)
+            .maybeSingle()
+            .then(({ data }) => setCategorySlotRule(data ?? null));
+        }
+      }
 
       const mappedLots: Lot[] = (lotRes.data || []).map((l: any) => ({
         id: l.id,
@@ -906,6 +917,22 @@ export default function ProductDetail() {
                     <p className="text-xs text-gray-400 mt-1.5 leading-relaxed max-w-xs">
                       How many slots in a storage location this product occupies per unit. Default is 1. Set higher for physically larger items (e.g. 2 means only half as many fit in a location).
                     </p>
+                    {categorySlotRule && categorySlotRule.slots_per_unit !== (editForm.slots_per_unit ?? 1) && (
+                      <button
+                        type="button"
+                        onClick={() => setEditForm(f => ({ ...f, slots_per_unit: categorySlotRule.slots_per_unit }))}
+                        className="mt-2 flex items-center gap-1.5 text-xs text-sky-600 hover:text-sky-700 transition-colors"
+                      >
+                        <SlidersHorizontal className="w-3 h-3" />
+                        Category default for <span className="font-semibold mx-0.5">{categorySlotRule.category}</span>: {categorySlotRule.slots_per_unit} — click to use
+                      </button>
+                    )}
+                    {categorySlotRule && categorySlotRule.slots_per_unit === (editForm.slots_per_unit ?? 1) && (
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600">
+                        <Check className="w-3 h-3" />
+                        Matches category default ({categorySlotRule.slots_per_unit} slots)
+                      </p>
+                    )}
                   </div>
                 </>
               )}

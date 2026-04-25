@@ -481,7 +481,7 @@ export function OrderItemsCard({ order, items, prescriptions, userId, onUpdated 
                 <td className="py-3">
                   <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
                   <div className="text-xs text-blue-600">{item.sku}</div>
-                  {!editing && RESERVATION_STATUSES.includes(order.cs_status) && item.product_id && (() => {
+                  {!editing && RESERVATION_STATUSES.includes(order.cs_status) && item.sku !== 'FEE' && item.sku !== 'RX' && (() => {
                     const rows = reservedByItem[item.id] ?? [];
                     const totalReserved = rows.reduce((s, r) => s + r.quantity, 0);
                     const needed = item.quantity;

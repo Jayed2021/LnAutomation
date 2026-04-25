@@ -134,6 +134,42 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
         return;
       }
 
+      // Load existing reservations — these are the authoritative lot assignments for this order.
+      // An order with reservations must show the reserved lot even if free available qty is 0.
+      const { data: reservationRows } = await supabase
+        .from('order_lot_reservations')
+        .select(`
+          order_item_id,
+          quantity,
+          lot:inventory_lots(
+            id, lot_number, barcode, remaining_quantity, reserved_quantity, received_date,
+            location:warehouse_locations(code)
+          )
+        `)
+        .eq('order_id', order.id);
+
+      type ReservationEntry = {
+        lot_id: string; lot_number: string; barcode: string;
+        location_code: string; quantity: number; remaining_quantity: number; received_date: string;
+      };
+      const reservationMap = new Map<string, ReservationEntry[]>();
+      for (const r of reservationRows ?? []) {
+        const lot = (r as any).lot;
+        if (!lot) continue;
+        const entry: ReservationEntry = {
+          lot_id: lot.id,
+          lot_number: lot.lot_number,
+          barcode: lot.barcode || lot.lot_number,
+          location_code: lot.location?.code || 'N/A',
+          quantity: r.quantity,
+          remaining_quantity: lot.remaining_quantity,
+          received_date: lot.received_date,
+        };
+        const existing = reservationMap.get(r.order_item_id) ?? [];
+        existing.push(entry);
+        reservationMap.set(r.order_item_id, existing);
+      }
+
       let prescriptionItemIds = new Set<string>();
       if (isLabPick) {
         const { data: prescriptions } = await supabase
@@ -167,11 +203,42 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
           continue;
         }
 
+        // If a reservation exists for this item, use it as the primary lot recommendation.
+        // The reservation is the system's claim on that stock — show it regardless of free qty.
+        const itemReservations = reservationMap.get(item.id);
+        if (itemReservations && itemReservations.length > 0) {
+          const { data: product } = await supabase
+            .from('products').select('id').eq('sku', item.sku).maybeSingle();
+
+          const lotRecs: LotRecommendation[] = itemReservations.map(r => ({
+            lot_id: r.lot_id,
+            lot_number: r.lot_number,
+            barcode: r.barcode,
+            location_code: r.location_code,
+            available_quantity: r.remaining_quantity,
+            received_date: r.received_date,
+            recommended_quantity: r.quantity,
+          }));
+
+          states.push({
+            item_id: item.id,
+            product_id: product?.id ?? '',
+            sku: item.sku,
+            product_name: item.product_name,
+            quantity: item.quantity,
+            already_picked: item.picked_quantity,
+            lots: lotRecs,
+            picked_this_session: 0,
+            scanned_count: 0,
+            done: false,
+            has_prescription: prescriptionItemIds.has(item.id),
+          });
+          continue;
+        }
+
+        // No reservation — FIFO free-stock fallback (shortage / manual order case).
         const { data: product } = await supabase
-          .from('products')
-          .select('id')
-          .eq('sku', item.sku)
-          .maybeSingle();
+          .from('products').select('id').eq('sku', item.sku).maybeSingle();
 
         if (!product) {
           states.push({
@@ -193,13 +260,8 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
         const { data: lots } = await supabase
           .from('inventory_lots')
           .select(`
-            id,
-            lot_number,
-            barcode,
-            remaining_quantity,
-            reserved_quantity,
-            received_date,
-            location:warehouse_locations(code, name)
+            id, lot_number, barcode, remaining_quantity, reserved_quantity, received_date,
+            location:warehouse_locations(code, location_type)
           `)
           .eq('product_id', product.id)
           .order('received_date', { ascending: true });
@@ -209,6 +271,7 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
 
         for (const lot of lots || []) {
           if (remaining <= 0) break;
+          if ((lot.location as any)?.location_type === 'damaged') continue;
           const availableQty = lot.remaining_quantity - (lot.reserved_quantity ?? 0);
           if (availableQty <= 0) continue;
           const pickQty = Math.min(remaining, availableQty);
@@ -420,18 +483,21 @@ export function PickModal({ order, isLabPick = false, onClose }: PickModalProps)
     try {
       const { data: lots } = await supabase
         .from('inventory_lots')
-        .select(`id, lot_number, barcode, remaining_quantity, reserved_quantity, received_date, location:warehouse_locations(code)`)
+        .select(`id, lot_number, barcode, remaining_quantity, reserved_quantity, received_date, location:warehouse_locations(code, location_type)`)
         .eq('product_id', currentItem.product_id)
         .order('received_date', { ascending: true });
 
+      // Include all lots with physical stock, excluding damaged locations.
+      // Reserved stock is shown too — the warehouse person is explicitly overriding, so they
+      // may pick from any physically-available location (including reserved-for-other-orders stock).
       const alts: AlternativeLot[] = (lots || [])
-        .filter(l => (l.remaining_quantity - (l.reserved_quantity ?? 0)) > 0)
+        .filter(l => l.remaining_quantity > 0 && (l.location as any)?.location_type !== 'damaged')
         .map(l => ({
           lot_id: l.id,
           barcode: l.barcode || l.lot_number,
           lot_number: l.lot_number,
           location_code: (l.location as any)?.code || 'N/A',
-          available_quantity: l.remaining_quantity - (l.reserved_quantity ?? 0),
+          available_quantity: l.remaining_quantity,
         }));
 
       // Group by location

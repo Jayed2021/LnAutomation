@@ -57,16 +57,41 @@ async function verifyHmacSignature(
   return computedSignature === signatureHeader;
 }
 
+async function logWebhookError(
+  supabase: ReturnType<typeof createClient>,
+  wooOrderId: number | null,
+  errorMessage: string
+): Promise<void> {
+  try {
+    // Insert error log and prune rows older than 14 days in parallel
+    await Promise.all([
+      supabase.from("webhook_error_log").insert({
+        woo_order_id: wooOrderId,
+        error_message: errorMessage,
+      }),
+      supabase
+        .from("webhook_error_log")
+        .delete()
+        .lt("received_at", new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()),
+    ]);
+  } catch (_) {
+    // Non-blocking — never fail the response due to logging
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
-  try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
 
+  // Track woo_order_id as early as possible so error logging can reference it
+  let wooOrderId: number | null = null;
+
+  try {
     const rawBody = await req.text();
 
     const { data: wooConfig } = await supabase
@@ -78,6 +103,13 @@ Deno.serve(async (req: Request) => {
       const signature = req.headers.get("X-WC-Webhook-Signature");
       const isValid = await verifyHmacSignature(rawBody, signature, wooConfig.webhook_secret);
       if (!isValid) {
+        // Log signature failures — these indicate a misconfigured webhook secret
+        // or a replay/spoofing attempt. Attempt to extract order id from the body.
+        try {
+          const partial = JSON.parse(rawBody);
+          wooOrderId = partial?.id ?? null;
+        } catch (_) {}
+        await logWebhookError(supabase, wooOrderId, "Invalid webhook signature");
         return new Response(
           JSON.stringify({ error: "Invalid webhook signature" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -96,14 +128,17 @@ Deno.serve(async (req: Request) => {
     try {
       payload = JSON.parse(rawBody);
     } catch {
+      await logWebhookError(supabase, null, "Invalid JSON payload — could not parse webhook body");
       return new Response(
         JSON.stringify({ error: "Invalid JSON payload" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const wooOrderId = payload?.id;
+    wooOrderId = payload?.id ?? null;
+
     if (!wooOrderId) {
+      await logWebhookError(supabase, null, "Invalid webhook payload: missing order id");
       return new Response(
         JSON.stringify({ error: "Invalid webhook payload: missing order id" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -358,8 +393,10 @@ Deno.serve(async (req: Request) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err: any) {
+    const message = err?.message || "Internal server error";
+    await logWebhookError(supabase, wooOrderId, message);
     return new Response(
-      JSON.stringify({ error: err?.message || "Internal server error" }),
+      JSON.stringify({ error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

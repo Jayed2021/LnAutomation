@@ -8,7 +8,8 @@ import {
   ArrowLeft, ShoppingCart, Eye, EyeOff, CheckCircle2,
   XCircle, RefreshCw, Clock, ToggleLeft, ToggleRight,
   AlertCircle, Info, Plus, Pencil, ChevronDown, ChevronUp,
-  PlayCircle, Image, CheckCheck, Webhook, Zap, Trash2, RotateCcw
+  PlayCircle, Image, CheckCheck, Webhook, Zap, Trash2, RotateCcw,
+  AlertTriangle
 } from 'lucide-react';
 
 interface WooConfig {
@@ -38,6 +39,13 @@ interface SyncLog {
   error_message: string | null;
   last_synced_page: number;
   total_pages: number;
+}
+
+interface WebhookError {
+  id: string;
+  woo_order_id: number | null;
+  error_message: string;
+  received_at: string;
 }
 
 interface LiveLogEntry {
@@ -78,6 +86,10 @@ export default function WooCommerceSettings() {
   const [webhookWorking, setWebhookWorking] = useState(false);
   const [webhookNotice, setWebhookNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [checkingWebhook, setCheckingWebhook] = useState(false);
+
+  const [webhookErrors, setWebhookErrors] = useState<WebhookError[]>([]);
+  const [webhookErrorsExpanded, setWebhookErrorsExpanded] = useState(false);
+  const [webhookErrorsLoaded, setWebhookErrorsLoaded] = useState(false);
 
   const [imageMigrating, setImageMigrating] = useState(false);
   const [imageMigrationDone, setImageMigrationDone] = useState(false);
@@ -127,6 +139,25 @@ export default function WooCommerceSettings() {
       .order('started_at', { ascending: false })
       .limit(10);
     setSyncLogs(data || []);
+  };
+
+  const loadWebhookErrors = async () => {
+    const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await supabase
+      .from('webhook_error_log')
+      .select('id, woo_order_id, error_message, received_at')
+      .gte('received_at', cutoff)
+      .order('received_at', { ascending: false })
+      .limit(50);
+    setWebhookErrors(data || []);
+    setWebhookErrorsLoaded(true);
+  };
+
+  const toggleWebhookErrors = () => {
+    if (!webhookErrorsExpanded && !webhookErrorsLoaded) {
+      loadWebhookErrors();
+    }
+    setWebhookErrorsExpanded(v => !v);
   };
 
   const callProxy = async (body: Record<string, unknown>) => {
@@ -1126,6 +1157,86 @@ export default function WooCommerceSettings() {
                     ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
                     : <XCircle className="w-4 h-4 flex-shrink-0" />}
                   {webhookNotice.message}
+                </div>
+              )}
+
+              {config?.webhook_id && (
+                <div className="border-t border-gray-100 pt-4">
+                  <button
+                    onClick={toggleWebhookErrors}
+                    className="w-full flex items-center justify-between group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-gray-400" />
+                      <span className="text-xs font-medium text-gray-600">Recent Errors</span>
+                      {webhookErrorsLoaded && webhookErrors.length > 0 && (
+                        <span className="inline-flex items-center justify-center text-xs font-semibold bg-red-100 text-red-700 rounded-full px-1.5 py-0.5 leading-none">
+                          {webhookErrors.length}
+                        </span>
+                      )}
+                      {webhookErrorsLoaded && webhookErrors.length === 0 && (
+                        <span className="text-xs text-emerald-600 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> None in last 14 days
+                        </span>
+                      )}
+                    </div>
+                    {webhookErrorsExpanded
+                      ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                      : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+                  </button>
+
+                  {webhookErrorsExpanded && (
+                    <div className="mt-3">
+                      {!webhookErrorsLoaded ? (
+                        <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                          <RefreshCw className="w-3 h-3 animate-spin" /> Loading...
+                        </div>
+                      ) : webhookErrors.length === 0 ? (
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 text-xs text-emerald-700">
+                          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                          No webhook errors in the last 14 days.
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-red-100 overflow-hidden">
+                          <table className="w-full">
+                            <thead className="bg-red-50">
+                              <tr>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-red-600 uppercase tracking-wider">Time</th>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-red-600 uppercase tracking-wider">Order #</th>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-red-600 uppercase tracking-wider">Error</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-red-50 bg-white">
+                              {webhookErrors.map(err => (
+                                <tr key={err.id} className="hover:bg-red-50/40 transition-colors">
+                                  <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">
+                                    {formatTs(err.received_at)}
+                                  </td>
+                                  <td className="px-3 py-2 text-xs font-mono">
+                                    {err.woo_order_id
+                                      ? <span className="text-gray-700">#{err.woo_order_id}</span>
+                                      : <span className="text-gray-400">—</span>}
+                                  </td>
+                                  <td className="px-3 py-2 text-xs text-gray-600 max-w-xs truncate" title={err.error_message}>
+                                    {err.error_message}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <div className="px-3 py-2 bg-gray-50 border-t border-red-100 flex items-center justify-between">
+                            <p className="text-xs text-gray-400">Showing last 14 days · {webhookErrors.length} error{webhookErrors.length !== 1 ? 's' : ''}</p>
+                            <button
+                              onClick={loadWebhookErrors}
+                              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                            >
+                              <RefreshCw className="w-3 h-3" /> Refresh
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

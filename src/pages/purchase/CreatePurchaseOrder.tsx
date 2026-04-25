@@ -776,7 +776,8 @@ export default function CreatePurchaseOrder() {
         if (item.currency === 'CNY') return sum + item.unit_cost * (parseFloat(cnyToBdt) || 15.17);
         return sum;
       }, 0);
-      const distributedCostPerSKU = physicalItems.length > 0 ? totalCostBDT / physicalItems.length : 0;
+      const totalPhysicalUnits = physicalItems.reduce((s, i) => s + i.order_qty, 0);
+      const distributedCostPerSKU = totalPhysicalUnits > 0 ? totalCostBDT / totalPhysicalUnits : 0;
 
       const itemsToInsert = validItems.map((item) => {
         const baseLandedCost = item.is_cost_item
@@ -1851,15 +1852,17 @@ export default function CreatePurchaseOrder() {
 
               {(() => {
                 const costItemsList = lineItems.filter((i) => i.is_cost_item && i.unit_cost > 0 && i.name);
-                const physicalCount = lineItems.filter((i) => !i.is_cost_item && i.order_qty > 0 && (i.sku || i.name)).length;
-                if (costItemsList.length === 0 || physicalCount === 0) return null;
+                const physicalItemsPreview = lineItems.filter((i) => !i.is_cost_item && i.order_qty > 0 && (i.sku || i.name));
+                const physicalCount = physicalItemsPreview.length;
+                const totalPhysicalUnitsPreview = physicalItemsPreview.reduce((s, i) => s + i.order_qty, 0);
+                if (costItemsList.length === 0 || totalPhysicalUnitsPreview === 0) return null;
                 const totalBDTCost = costItemsList.reduce((s, item) => {
                   if (item.currency === 'BDT') return s + item.unit_cost;
                   if (item.currency === 'USD') return s + item.unit_cost * (parseFloat(usdToBdt) || 110);
                   if (item.currency === 'CNY') return s + item.unit_cost * (parseFloat(cnyToBdt) || 15.17);
                   return s;
                 }, 0);
-                const perSKU = totalBDTCost / physicalCount;
+                const perSKU = totalBDTCost / totalPhysicalUnitsPreview;
                 return (
                   <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2.5 space-y-1">
                     <p className="text-xs font-semibold text-orange-800">Cost Distribution</p>
@@ -1870,10 +1873,10 @@ export default function CreatePurchaseOrder() {
                       </p>
                     ))}
                     <div className="border-t border-orange-200 pt-1 flex justify-between text-xs font-semibold text-orange-800">
-                      <span>Per SKU (BDT):</span>
+                      <span>Per unit (BDT):</span>
                       <span>+৳{perSKU.toFixed(2)}</span>
                     </div>
-                    <p className="text-xs text-orange-600">Distributed equally across {physicalCount} physical SKU{physicalCount !== 1 ? 's' : ''}</p>
+                    <p className="text-xs text-orange-600">Distributed across {totalPhysicalUnitsPreview.toLocaleString()} units ({physicalCount} SKU{physicalCount !== 1 ? 's' : ''})</p>
                   </div>
                 );
               })()}

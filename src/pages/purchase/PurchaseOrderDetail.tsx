@@ -1029,14 +1029,17 @@ export default function PurchaseOrderDetail() {
                       <span className="text-xs font-semibold text-orange-800 uppercase tracking-wider">Additional Costs</span>
                       <span className="ml-2 text-xs text-orange-600">— distributed into landed cost of physical items</span>
                     </div>
-                    {physicalItemsList.length > 0 && (
-                      <span className="text-xs text-orange-700 font-medium">
-                        ৳{(costItemsList.reduce((s, i) => {
-                          const rate = po.currency === 'USD' ? po.usd_to_bdt_rate : po.currency === 'CNY' ? po.cny_to_bdt_rate : 1;
-                          return s + i.unit_price * rate;
-                        }, 0) / physicalItemsList.length).toFixed(2)} per SKU
-                      </span>
-                    )}
+                    {physicalItemsList.length > 0 && (() => {
+                      const totalUnits = physicalItemsList.reduce((s, i) => s + i.ordered_quantity, 0);
+                      if (totalUnits === 0) return null;
+                      const rate = po.currency === 'USD' ? po.usd_to_bdt_rate : po.currency === 'CNY' ? po.cny_to_bdt_rate : 1;
+                      const totalCostBDT = costItemsList.reduce((s, i) => s + i.unit_price * rate, 0);
+                      return (
+                        <span className="text-xs text-orange-700 font-medium">
+                          ৳{(totalCostBDT / totalUnits).toFixed(2)} per unit
+                        </span>
+                      );
+                    })()}
                   </div>
                   <table className="w-full">
                     <tbody className="divide-y divide-orange-50">

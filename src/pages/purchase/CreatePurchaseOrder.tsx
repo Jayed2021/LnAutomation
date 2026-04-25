@@ -29,6 +29,7 @@ interface ProductRow {
   supplier_sku: string | null;
   original_supplier_sku: string | null;
   is_recommended: boolean;
+  recommendation_reason: string | null;
   is_custom: boolean;
   is_cost_item: boolean;
 }
@@ -228,7 +229,7 @@ export default function CreatePurchaseOrder() {
       });
     }
 
-    const allProductRows: ProductRow[] = supplierProducts.map((row: any) => {
+    const baseProductRows: ProductRow[] = supplierProducts.map((row: any) => {
       const p = row.products;
       const currentQty = stockMap[p.id] || 0;
       const threshold = p.low_stock_threshold || 10;
@@ -246,10 +247,13 @@ export default function CreatePurchaseOrder() {
         supplier_sku: row.supplier_sku || null,
         original_supplier_sku: row.supplier_sku || null,
         is_recommended: currentQty <= threshold,
+        recommendation_reason: null,
         is_custom: false,
         is_cost_item: false,
       };
     });
+
+    const allProductRows = await applyReorderSignals(baseProductRows, po.supplier_id);
 
     setAllSupplierProducts(allProductRows);
 
@@ -272,6 +276,7 @@ export default function CreatePurchaseOrder() {
         supplier_sku: base?.supplier_sku || null,
         original_supplier_sku: base?.original_supplier_sku || null,
         is_recommended: base?.is_recommended || false,
+        recommendation_reason: base?.recommendation_reason || null,
         is_custom: !base || item.is_cost_item,
         is_cost_item: item.is_cost_item || false,
       };
@@ -360,6 +365,23 @@ export default function CreatePurchaseOrder() {
     }
   };
 
+  const applyReorderSignals = async (rows: ProductRow[], supplierId: string): Promise<ProductRow[]> => {
+    const { data, error } = await supabase.rpc('get_reorder_signals', { p_supplier_id: supplierId });
+    if (error || !data) return rows;
+    const signalMap: Record<string, { is_recommended: boolean; recommendation_reason: string }> = {};
+    (data as any[]).forEach((s) => {
+      signalMap[s.product_id] = {
+        is_recommended: s.is_recommended,
+        recommendation_reason: s.recommendation_reason,
+      };
+    });
+    return rows.map((row) => {
+      const signal = signalMap[row.product_id];
+      if (!signal) return row;
+      return { ...row, is_recommended: signal.is_recommended, recommendation_reason: signal.recommendation_reason };
+    });
+  };
+
   const handleSupplierChange = async (supplierId: string) => {
     setSelectedSupplierId(supplierId);
     if (!supplierId) {
@@ -407,11 +429,10 @@ export default function CreatePurchaseOrder() {
       });
     }
 
-    const rows: ProductRow[] = data.map((row: any) => {
+    const baseRows: ProductRow[] = data.map((row: any) => {
       const p = row.products;
       const currentQty = stockMap[p.id] || 0;
       const threshold = p.low_stock_threshold || 10;
-      const isLow = currentQty <= threshold;
       return {
         product_id: p.id,
         sku: p.sku,
@@ -425,11 +446,14 @@ export default function CreatePurchaseOrder() {
         original_unit_cost: row.unit_price || 0,
         supplier_sku: row.supplier_sku || null,
         original_supplier_sku: row.supplier_sku || null,
-        is_recommended: isLow,
+        is_recommended: currentQty <= threshold,
+        recommendation_reason: null,
         is_custom: false,
         is_cost_item: false,
       };
     });
+
+    const rows = await applyReorderSignals(baseRows, supplierId);
 
     rows.sort((a, b) => {
       if (a.is_recommended && !b.is_recommended) return -1;
@@ -555,6 +579,7 @@ export default function CreatePurchaseOrder() {
         supplier_sku: null,
         original_supplier_sku: null,
         is_recommended: false,
+        recommendation_reason: null,
         is_custom: true,
         is_cost_item: false,
       },
@@ -578,6 +603,7 @@ export default function CreatePurchaseOrder() {
         supplier_sku: null,
         original_supplier_sku: null,
         is_recommended: false,
+        recommendation_reason: null,
         is_custom: true,
         is_cost_item: true,
       },
@@ -1455,9 +1481,12 @@ export default function CreatePurchaseOrder() {
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium text-gray-900">{item.name}</span>
                                 {item.is_recommended && (
-                                  <span className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                                  <span
+                                    title={item.recommendation_reason || undefined}
+                                    className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full cursor-help"
+                                  >
                                     <TrendingDown className="w-3 h-3" />
-                                    Low Stock
+                                    Recommended
                                   </span>
                                 )}
                               </div>
@@ -1569,6 +1598,11 @@ export default function CreatePurchaseOrder() {
                   </tbody>
                 </table>
               </div>
+              {lineItems.some(i => i.is_recommended) && (
+                <p className="text-xs text-gray-400 pt-1">
+                  <span className="font-medium text-gray-500">Recommended</span> badges are based on current stock levels and average daily sales velocity over the last 60 days, compared against a 45-day lead time estimate. Products with no recent sales history fall back to minimum stock threshold.
+                </p>
+              )}
             </div>
           )}
 
